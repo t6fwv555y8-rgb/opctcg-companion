@@ -1,0 +1,30 @@
+[package]
+name = "optcg-companion"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "OPTCG Companion HUD overlay desktop application"
+default-run = "optcg-companion"
+
+[build-dependencies]
+tauri-build = { version = "2.0", features = [] }
+
+[dependencies]
+optcg_core = { path = "../crates/optcg_core" }
+optcg_database = { path = "../crates/optcg_database" }
+optcg_rules = { path = "../crates/optcg_rules" }
+optcg_events = { path = "../crates/optcg_events" }
+tauri = { version = "2.0", features = [] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+parking_lot = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+dirs = "5.0"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]

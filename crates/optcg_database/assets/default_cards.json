@@ -1,0 +1,74 @@
+{
+  "cards": [
+    {
+      "card_id": "ST01-001",
+      "name": "Monkey.D.Luffy",
+      "card_type": "leader",
+      "cost": 0,
+      "power": 5000,
+      "counter": 0,
+      "color": "Red",
+      "rush": false,
+      "blocker": false,
+      "double_attack": false,
+      "banish": false,
+      "text": "[DON!! x2] This Leader gains +2000 power."
+    },
+    {
+      "card_id": "ST01-002",
+      "name": "Usopp",
+      "card_type": "character",
+      "cost": 2,
+      "power": 4000,
+      "counter": 1000,
+      "color": "Red",
+      "rush": false,
+      "blocker": false,
+      "double_attack": false,
+      "banish": false,
+      "text": "[Counter] +1000"
+    },
+    {
+      "card_id": "ST01-003",
+      "name": "Karoo",
+      "card_type": "character",
+      "cost": 1,
+      "power": 3000,
+      "counter": 1000,
+      "color": "Red",
+      "rush": false,
+      "blocker": false,
+      "double_attack": false,
+      "banish": false,
+      "text": ""
+    },
+    {
+      "card_id": "ST01-010",
+      "name": "Nami",
+      "card_type": "character",
+      "cost": 3,
+      "power": 5000,
+      "counter": 0,
+      "color": "Red",
+      "rush": false,
+      "blocker": true,
+      "double_attack": false,
+      "banish": false,
+      "text": "[Blocker]"
+    },
+    {
+      "card_id": "ST01-012",
+      "name": "Sanji",
+      "card_type": "character",
+      "cost": 5,
+      "power": 6000,
+      "counter": 0,
+      "color": "Red",
+      "rush": true,
+      "blocker": false,
+      "double_attack": false,
+      "banish": false,
+      "text": "[Rush]"
+    }
+  ]
+}

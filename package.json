@@ -1,0 +1,18 @@
+{
+  "name": "optcg-companion",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Real-time OPTCG Simulator companion HUD overlay",
+  "scripts": {
+    "dev": "concurrently -k -n tauri,stream -c blue,green \"npm run dev:tauri\" \"npm run dev:stream\"",
+    "dev:tauri": "cd src-ui && npm run tauri:dev",
+    "dev:stream": "python3 scripts/mock_stream.py",
+    "dev:ui": "cd src-ui && npm run dev",
+    "build": "cd src-ui && npm run tauri build",
+    "install:all": "npm install && cd src-ui && npm install",
+    "vision": "python3 scripts/vision_pipeline.py"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}

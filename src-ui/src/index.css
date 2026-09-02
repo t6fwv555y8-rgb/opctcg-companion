@@ -1,0 +1,42 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  background: transparent !important;
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  width: 100%;
+}
+
+body {
+  font-family: "Inter", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.hud-panel {
+  @apply rounded-lg border border-hud-border bg-hud-bg backdrop-blur-md shadow-lg;
+}
+
+.hud-title {
+  @apply text-xs font-semibold uppercase tracking-wider text-hud-accent;
+}
+
+.stat-value {
+  @apply font-mono text-sm text-white;
+}
+
+.pulse-dot {
+  @apply inline-block h-2 w-2 rounded-full;
+}
+
+.pulse-dot.connected {
+  @apply bg-hud-success animate-pulse;
+}
+
+.pulse-dot.disconnected {
+  @apply bg-hud-danger;
+}

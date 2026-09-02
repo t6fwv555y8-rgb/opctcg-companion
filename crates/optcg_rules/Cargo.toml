@@ -1,0 +1,19 @@
+[package]
+name = "optcg_rules"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Legal move generator, combat math, beam search, and MCTS for OPTCG Companion"
+
+[dependencies]
+optcg_core = { path = "../optcg_core" }
+optcg_database = { path = "../optcg_database" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+rand = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+optcg_database = { path = "../optcg_database" }
