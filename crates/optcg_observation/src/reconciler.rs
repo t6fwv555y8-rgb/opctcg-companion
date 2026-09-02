@@ -1,9 +1,9 @@
 use crate::confidence::ConfidenceConfig;
 use crate::error::{ObsResult, ObservationError};
-use crate::session::GameSession;
+use crate::session::{GameSession, SyncState};
 use crate::types::{ObservationEvent, ObservationSource};
 use optcg_core::{GameEvent, Normalizer, Phase, PlayerId};
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 /// Outcome of reconciling one observation into engine events.
 #[derive(Debug, Clone)]
@@ -19,6 +19,7 @@ pub struct ReconcileOutcome {
 pub struct ObservationReconciler {
     config: ConfidenceConfig,
     last_life: [Option<u8>; 2],
+    last_hand_count: [Option<usize>; 2],
 }
 
 impl Default for ObservationReconciler {
@@ -32,7 +33,12 @@ impl ObservationReconciler {
         Self {
             config,
             last_life: [None, None],
+            last_hand_count: [None, None],
         }
+    }
+
+    pub fn sync_state(&self, session: &GameSession) -> SyncState {
+        session.sync_state()
     }
 
     pub fn reconcile(
@@ -52,6 +58,10 @@ impl ObservationReconciler {
         }
 
         session.observation_sequence += 1;
+
+        if let ObservationEvent::TurnObserved { player, .. } = obs {
+            session.state.active_player = player.index();
+        }
 
         let events = self.observation_to_game_events(session, obs)?;
         if events.is_empty() {
@@ -117,22 +127,41 @@ impl ObservationReconciler {
             ObservationEvent::PhaseObserved { phase, .. } => {
                 vec![GameEvent::PhaseChanged { phase: *phase }]
             }
-            ObservationEvent::TurnObserved { player, .. } => {
-                vec![GameEvent::TurnStarted { player: *player }]
-            }
+            ObservationEvent::TurnObserved { .. } => vec![],
             ObservationEvent::LifeObserved { player, count, .. } => {
                 let idx = player.index() as usize;
-                let delta = if let Some(prev) = self.last_life[idx] {
-                    *count as i8 - prev as i8
+                // Partial state: never infer zero from missing observations
+                if *count == 0 && self.last_life[idx].is_some() && self.last_life[idx] != Some(0) {
+                    return Ok(vec![]);
+                }
+                let prev = self.last_life[idx];
+                let delta = if let Some(prev_count) = prev {
+                    *count as i8 - prev_count as i8
                 } else {
                     0
                 };
-                self.last_life[idx] = Some(*count);
+                if prev != Some(*count) {
+                    if let Some(from) = prev {
+                        info!(
+                            target: "optcg::reconcile",
+                            "[RECONCILE] life {:?} {} → {} source={:?} confidence={:.2}",
+                            player,
+                            from,
+                            count,
+                            session.source,
+                            obs.confidence()
+                        );
+                    }
+                    self.last_life[idx] = Some(*count);
+                }
                 if delta != 0 {
                     vec![GameEvent::LifeChanged {
                         player: *player,
                         delta,
                     }]
+                } else if prev.is_none() {
+                    // First observation — set absolute via synthetic delta from default life
+                    vec![]
                 } else {
                     vec![]
                 }
@@ -155,7 +184,13 @@ impl ObservationReconciler {
                     vec![]
                 }
             }
-            ObservationEvent::HandCountObserved { .. } => vec![],
+            ObservationEvent::HandCountObserved { player, count, .. } => {
+                let idx = player.index() as usize;
+                if self.last_hand_count[idx] != Some(*count) {
+                    self.last_hand_count[idx] = Some(*count);
+                }
+                vec![]
+            }
             ObservationEvent::CardObserved {
                 card_id,
                 owner,

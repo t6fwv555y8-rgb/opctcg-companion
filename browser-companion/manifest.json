@@ -4,7 +4,11 @@
   "version": "0.1.0",
   "description": "Observes player-visible OPTCG simulator state and bridges to local companion",
   "permissions": ["activeTab"],
-  "host_permissions": ["http://127.0.0.1:9003/*", "http://localhost:9003/*"],
+  "host_permissions": [
+    "http://127.0.0.1:9003/*",
+    "http://localhost:9003/*",
+    "https://onesimulator.slidingcodes.com/*"
+  ],
   "background": {
     "service_worker": "dist/background.js",
     "type": "module"

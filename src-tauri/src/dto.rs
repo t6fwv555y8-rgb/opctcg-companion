@@ -118,11 +118,21 @@ pub struct StateUpdatePayload {
 #[serde(rename_all = "snake_case")]
 pub enum SourceSelectionDto {
     Auto,
-    DesktopSimulator,
-    BrowserSimulator,
+    #[serde(alias = "browser_simulator")]
+    OneSimulator,
+    #[serde(alias = "desktop_simulator")]
+    OptcgSim,
     Mock,
     Replay,
     ScreenVision,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SyncStateDto {
+    Synced,
+    Partial,
+    Degraded,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -153,6 +163,7 @@ pub struct ObservationStatusDto {
     pub adapters: Vec<AdapterInfoDto>,
     pub latency: LatencySnapshot,
     pub searching: bool,
+    pub sync_state: SyncStateDto,
 }
 
 /// Source-aware connection label for HUD.

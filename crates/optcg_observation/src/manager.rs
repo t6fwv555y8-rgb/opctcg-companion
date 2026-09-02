@@ -1,7 +1,7 @@
 use crate::adapter::{AdapterStatus, ObservationAdapter};
 use crate::adapters::{
-    BrowserSimulatorAdapter, DesktopSimulatorAdapter, MockAdapter, ReplayAdapter,
-    ScreenVisionAdapter,
+    optcgsim::{OptcgSimAdapter, OptcgSimConfig, OptcgSimStatus},
+    BrowserSimulatorAdapter, MockAdapter, ReplayAdapter, ScreenVisionAdapter,
 };
 use crate::error::{ObsResult, ObservationError};
 use crate::types::{ObservationEnvelope, ObservationSource};
@@ -18,8 +18,12 @@ use tracing::{info, warn};
 pub enum SourceSelection {
     #[default]
     Auto,
-    DesktopSimulator,
-    BrowserSimulator,
+    /// OneSimulator browser bridge
+    #[serde(alias = "browser_simulator")]
+    OneSimulator,
+    /// OPTCGSim desktop adapter
+    #[serde(alias = "desktop_simulator")]
+    OptcgSim,
     Mock,
     Replay,
     ScreenVision,
@@ -29,11 +33,22 @@ impl SourceSelection {
     pub fn to_source(&self) -> Option<ObservationSource> {
         match self {
             Self::Auto => None,
-            Self::DesktopSimulator => Some(ObservationSource::DesktopSimulator),
-            Self::BrowserSimulator => Some(ObservationSource::BrowserSimulator),
+            Self::OneSimulator => Some(ObservationSource::BrowserSimulator),
+            Self::OptcgSim => Some(ObservationSource::DesktopSimulator),
             Self::Mock => Some(ObservationSource::Mock),
             Self::Replay => Some(ObservationSource::Replay),
             Self::ScreenVision => Some(ObservationSource::ScreenVision),
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Auto => "Auto Detect",
+            Self::OneSimulator => "OneSimulator",
+            Self::OptcgSim => "OPTCGSim",
+            Self::Mock => "Mock",
+            Self::Replay => "Replay",
+            Self::ScreenVision => "Screen Vision",
         }
     }
 }
@@ -49,7 +64,7 @@ pub struct AdapterInfo {
 /// Central manager for all observation adapters — one authoritative source at a time.
 pub struct AdapterManager {
     mock: Arc<MockAdapter>,
-    desktop: Arc<DesktopSimulatorAdapter>,
+    optcgsim: Arc<OptcgSimAdapter>,
     browser: Arc<BrowserSimulatorAdapter>,
     screen_vision: Arc<ScreenVisionAdapter>,
     replay: Arc<ReplayAdapter>,
@@ -60,9 +75,11 @@ pub struct AdapterManager {
 
 impl AdapterManager {
     pub fn new(desktop_log_path: PathBuf) -> Self {
+        let mut optcgsim_config = OptcgSimConfig::default();
+        optcgsim_config.custom_log_paths.push(desktop_log_path);
         Self {
             mock: Arc::new(MockAdapter::default_port()),
-            desktop: Arc::new(DesktopSimulatorAdapter::new(desktop_log_path)),
+            optcgsim: Arc::new(OptcgSimAdapter::new(optcgsim_config)),
             browser: Arc::new(BrowserSimulatorAdapter::default_port()),
             screen_vision: Arc::new(ScreenVisionAdapter::new()),
             replay: Arc::new(ReplayAdapter::new()),
@@ -80,6 +97,10 @@ impl AdapterManager {
     pub fn with_browser_port(mut self, port: u16) -> Self {
         self.browser = Arc::new(BrowserSimulatorAdapter::new(port));
         self
+    }
+
+    pub fn optcgsim_status(&self) -> OptcgSimStatus {
+        self.optcgsim.status_info()
     }
 
     pub fn selection(&self) -> SourceSelection {
@@ -101,12 +122,13 @@ impl AdapterManager {
     pub async fn auto_detect(&self) -> Vec<AdapterInfo> {
         let mut infos = Vec::new();
 
-        let desktop_detected = self.desktop.detect().await.unwrap_or(false);
+        let optcgsim_detected = self.optcgsim.detect().await.unwrap_or(false);
+        let optcgsim_status = self.optcgsim.status_info();
         infos.push(AdapterInfo {
             source: ObservationSource::DesktopSimulator,
-            status: self.desktop.status(),
-            detected: desktop_detected,
-            label: ObservationSource::DesktopSimulator.label().into(),
+            status: self.optcgsim.status(),
+            detected: optcgsim_detected,
+            label: optcgsim_status.label,
         });
 
         let browser_detected = self.browser.detect().await.unwrap_or(false);
@@ -114,7 +136,7 @@ impl AdapterManager {
             source: ObservationSource::BrowserSimulator,
             status: self.browser.status(),
             detected: browser_detected,
-            label: ObservationSource::BrowserSimulator.label().into(),
+            label: "OneSimulator · LIVE".into(),
         });
 
         infos.push(AdapterInfo {
@@ -136,22 +158,24 @@ impl AdapterManager {
 
     pub async fn resolve_auto_source(&self) -> ObservationSource {
         let infos = self.auto_detect().await;
-        if infos
-            .iter()
-            .any(|i| i.source == ObservationSource::DesktopSimulator && i.detected)
-        {
-            return ObservationSource::DesktopSimulator;
-        }
+        // Browser bridge takes priority when actively observing
         if infos
             .iter()
             .any(|i| i.source == ObservationSource::BrowserSimulator && i.detected)
         {
             return ObservationSource::BrowserSimulator;
         }
+        if infos
+            .iter()
+            .any(|i| i.source == ObservationSource::DesktopSimulator && i.detected)
+        {
+            return ObservationSource::DesktopSimulator;
+        }
         ObservationSource::Mock
     }
 
     pub fn all_statuses(&self) -> Vec<AdapterInfo> {
+        let optcgsim_status = self.optcgsim.status_info();
         vec![
             AdapterInfo {
                 source: ObservationSource::Mock,
@@ -161,15 +185,16 @@ impl AdapterManager {
             },
             AdapterInfo {
                 source: ObservationSource::DesktopSimulator,
-                status: self.desktop.status(),
-                detected: !self.desktop.status().eq(&AdapterStatus::Unavailable),
-                label: ObservationSource::DesktopSimulator.label().into(),
+                status: self.optcgsim.status(),
+                detected: optcgsim_status.process_detected
+                    || optcgsim_status.installation.is_some(),
+                label: optcgsim_status.label,
             },
             AdapterInfo {
                 source: ObservationSource::BrowserSimulator,
                 status: self.browser.status(),
                 detected: self.browser.status().is_live(),
-                label: ObservationSource::BrowserSimulator.label().into(),
+                label: "OneSimulator".into(),
             },
             AdapterInfo {
                 source: ObservationSource::ScreenVision,
@@ -210,7 +235,7 @@ impl AdapterManager {
     ) -> ObsResult<()> {
         match source {
             ObservationSource::Mock => self.mock.start(sender).await,
-            ObservationSource::DesktopSimulator => self.desktop.start(sender).await,
+            ObservationSource::DesktopSimulator => self.optcgsim.start(sender).await,
             ObservationSource::BrowserSimulator => self.browser.start(sender).await,
             ObservationSource::ScreenVision => self.screen_vision.start(sender).await,
             ObservationSource::Replay => {
@@ -230,7 +255,7 @@ impl AdapterManager {
         if let Some(source) = active {
             match source {
                 ObservationSource::Mock => self.mock.stop().await?,
-                ObservationSource::DesktopSimulator => self.desktop.stop().await?,
+                ObservationSource::DesktopSimulator => self.optcgsim.stop().await?,
                 ObservationSource::BrowserSimulator => self.browser.stop().await?,
                 ObservationSource::ScreenVision => self.screen_vision.stop().await?,
                 ObservationSource::Replay => self.replay.stop().await?,
@@ -277,7 +302,7 @@ mod tests {
         let (tx, _rx) = mpsc::channel(8);
         manager.set_selection(SourceSelection::Mock);
         manager.start(tx).await.unwrap();
-        manager.set_selection(SourceSelection::BrowserSimulator);
+        manager.set_selection(SourceSelection::OneSimulator);
         let (tx2, _rx2) = mpsc::channel(8);
         manager.start(tx2).await.unwrap();
         assert_eq!(
@@ -288,5 +313,11 @@ mod tests {
             |i| i.source == ObservationSource::Mock && i.status == AdapterStatus::Disconnected
         ));
         manager.stop().await.unwrap();
+    }
+
+    #[test]
+    fn source_selection_labels() {
+        assert_eq!(SourceSelection::OneSimulator.label(), "OneSimulator");
+        assert_eq!(SourceSelection::OptcgSim.label(), "OPTCGSim");
     }
 }

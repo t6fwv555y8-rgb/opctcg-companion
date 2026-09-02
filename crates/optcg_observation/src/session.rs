@@ -5,6 +5,26 @@ use uuid::Uuid;
 
 pub type GameSessionId = Uuid;
 
+/// Sync confidence indicator for HUD.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SyncState {
+    #[default]
+    Synced,
+    Partial,
+    Degraded,
+}
+
+impl SyncState {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Synced => "SYNCED",
+            Self::Partial => "PARTIAL",
+            Self::Degraded => "DEGRADED",
+        }
+    }
+}
+
 /// Active observation session bound to one authoritative source.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GameSession {
@@ -32,5 +52,15 @@ impl GameSession {
 
     pub fn reset_for_source(&mut self, source: crate::types::ObservationSource) {
         *self = Self::new(source);
+    }
+
+    pub fn sync_state(&self) -> SyncState {
+        if self.confidence >= 0.85 {
+            SyncState::Synced
+        } else if self.confidence >= 0.5 {
+            SyncState::Partial
+        } else {
+            SyncState::Degraded
+        }
     }
 }

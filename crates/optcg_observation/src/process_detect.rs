@@ -13,6 +13,25 @@ pub struct DetectedApplication {
 /// Known simulator process name hints (configurable, not hardcoded to one product).
 pub const SIMULATOR_PROCESS_HINTS: &[&str] = &["optcg", "onepiece", "simulator", "tcg", "cardgame"];
 
+pub const OPTCGSIM_PROCESS_HINTS: &[&str] = &["optcgsim", "OPTCGSim", "optcg sim"];
+
+/// Detect OPTCGSim-specific processes/windows.
+pub fn detect_optcgsim_processes() -> Vec<DetectedApplication> {
+    detect_simulator_processes()
+        .into_iter()
+        .filter(|app| {
+            let name = app.process_name.to_ascii_lowercase();
+            name.contains("optcg")
+                || name.contains("optcgsim")
+                || app
+                    .window_title
+                    .as_ref()
+                    .map(|t| t.to_ascii_lowercase().contains("optcg"))
+                    .unwrap_or(false)
+        })
+        .collect()
+}
+
 /// Detect whether a configured simulator appears to be running.
 pub fn detect_simulator_processes() -> Vec<DetectedApplication> {
     #[cfg(target_os = "windows")]
@@ -79,5 +98,6 @@ mod tests {
     #[test]
     fn detect_does_not_panic() {
         let _ = detect_simulator_processes();
+        let _ = detect_optcgsim_processes();
     }
 }

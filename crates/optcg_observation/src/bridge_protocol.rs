@@ -1,9 +1,12 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Normalized browser-visible game snapshot (never includes hidden info).
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct BrowserGameSnapshot {
     pub timestamp: i64,
+    pub source: Option<String>,
+    pub sequence: Option<u64>,
     pub turn: Option<u32>,
     pub phase: Option<String>,
     pub active_player: Option<String>,
@@ -11,6 +14,7 @@ pub struct BrowserGameSnapshot {
     pub self_player: Option<BrowserPlayerSnapshot>,
     pub opponent: Option<BrowserPlayerSnapshot>,
     pub combat: Option<BrowserCombatSnapshot>,
+    pub diagnostics: Option<AdapterDiagnostics>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -26,6 +30,7 @@ pub struct BrowserPlayerSnapshot {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct ObservedCard {
     pub card_id: Option<String>,
+    pub instance_key: Option<String>,
     pub name: Option<String>,
     pub power: Option<u32>,
     pub rested: Option<bool>,
@@ -36,6 +41,16 @@ pub struct BrowserCombatSnapshot {
     pub attacker: Option<ObservedCard>,
     pub target: Option<ObservedCard>,
     pub displayed_power: Option<u32>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct AdapterDiagnostics {
+    pub site_detected: Option<bool>,
+    pub game_detected: Option<bool>,
+    pub ui_recognized: Option<bool>,
+    pub message: Option<String>,
+    #[serde(default)]
+    pub found: HashMap<String, bool>,
 }
 
 /// Wire protocol message from browser companion extension.

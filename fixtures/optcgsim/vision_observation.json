@@ -1,0 +1,15 @@
+{
+  "phase": "Main",
+  "turn": 3,
+  "self_life": 5,
+  "opponent_life": 4,
+  "self_active_don": 1,
+  "self_rested_don": 1,
+  "opponent_active_don": 1,
+  "opponent_rested_don": 0,
+  "self_hand_count": 3,
+  "opponent_hand_count": 5,
+  "board_card_ids": ["OP01-025"],
+  "combat_power": null,
+  "confidence": 0.85
+}

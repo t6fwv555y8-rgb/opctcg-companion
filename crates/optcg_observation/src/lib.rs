@@ -24,7 +24,7 @@ pub use manager::{AdapterInfo, AdapterManager, SourceSelection};
 pub use pipeline::{ObservationPipeline, ObservationPipelineConfig, PipelineResult};
 pub use reconciler::{ObservationReconciler, ReconcileOutcome};
 pub use recording::ObservationRecorder;
-pub use session::{GameSession, GameSessionId};
+pub use session::{GameSession, GameSessionId, SyncState};
 pub use types::*;
 
 #[cfg(test)]

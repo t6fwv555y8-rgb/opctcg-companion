@@ -5,9 +5,11 @@
   "type": "module",
   "scripts": {
     "build": "tsc && node scripts/bundle.mjs",
-    "watch": "tsc --watch"
+    "watch": "tsc --watch",
+    "test": "npm run build && node --test tests/*.test.mjs"
   },
   "devDependencies": {
+    "linkedom": "^0.18.5",
     "typescript": "^5.6.3"
   }
 }

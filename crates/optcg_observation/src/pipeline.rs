@@ -97,6 +97,10 @@ impl ObservationPipeline {
         self.latency.snapshot()
     }
 
+    pub fn sync_state(&self) -> crate::session::SyncState {
+        self.session.lock().sync_state()
+    }
+
     pub fn set_selection(&self, selection: SourceSelection) {
         self.manager.set_selection(selection);
     }
@@ -202,6 +206,8 @@ impl ObservationPipeline {
                         gs.connection.websocket_connected = envelope.source
                             == ObservationSource::Mock
                             || envelope.source == ObservationSource::BrowserSimulator;
+                        gs.connection.file_monitor_active =
+                            envelope.source == ObservationSource::DesktopSimulator;
                         gs.connection.latency_ms = start.elapsed().as_millis() as u64;
                         gs.connection.events_processed += 1;
                         gs.timestamp = Utc::now();

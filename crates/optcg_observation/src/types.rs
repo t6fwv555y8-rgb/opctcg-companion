@@ -17,8 +17,8 @@ impl ObservationSource {
     pub fn label(&self) -> &'static str {
         match self {
             Self::Mock => "Mock Game",
-            Self::DesktopSimulator => "Desktop Simulator",
-            Self::BrowserSimulator => "Browser Simulator",
+            Self::DesktopSimulator => "OPTCGSim",
+            Self::BrowserSimulator => "OneSimulator",
             Self::ScreenVision => "Screen Vision",
             Self::Replay => "Replay",
         }

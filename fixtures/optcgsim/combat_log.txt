@@ -1,0 +1,4 @@
+Player 1 entered Main Phase
+Player 1 played OP01-025
+Player 1 life: 5
+Player 2 life: 4

@@ -1,7 +1,6 @@
-use crate::dto::{AdapterInfoDto, ObservationStatusDto, SourceSelectionDto};
+use crate::dto::{AdapterInfoDto, ObservationStatusDto, SourceSelectionDto, SyncStateDto};
 use optcg_observation::{
-    AdapterManager, LatencySnapshot, ObservationPipeline, ObservationPipelineConfig,
-    SourceSelection,
+    AdapterManager, ObservationPipeline, ObservationPipelineConfig, SourceSelection, SyncState,
 };
 use parking_lot::RwLock;
 use std::path::PathBuf;
@@ -56,8 +55,8 @@ pub fn spawn_pipeline_listener(
 pub fn selection_from_dto(dto: SourceSelectionDto) -> SourceSelection {
     match dto {
         SourceSelectionDto::Auto => SourceSelection::Auto,
-        SourceSelectionDto::DesktopSimulator => SourceSelection::DesktopSimulator,
-        SourceSelectionDto::BrowserSimulator => SourceSelection::BrowserSimulator,
+        SourceSelectionDto::OneSimulator => SourceSelection::OneSimulator,
+        SourceSelectionDto::OptcgSim => SourceSelection::OptcgSim,
         SourceSelectionDto::Mock => SourceSelection::Mock,
         SourceSelectionDto::Replay => SourceSelection::Replay,
         SourceSelectionDto::ScreenVision => SourceSelection::ScreenVision,
@@ -67,11 +66,19 @@ pub fn selection_from_dto(dto: SourceSelectionDto) -> SourceSelection {
 pub fn selection_to_dto(sel: SourceSelection) -> SourceSelectionDto {
     match sel {
         SourceSelection::Auto => SourceSelectionDto::Auto,
-        SourceSelection::DesktopSimulator => SourceSelectionDto::DesktopSimulator,
-        SourceSelection::BrowserSimulator => SourceSelectionDto::BrowserSimulator,
+        SourceSelection::OneSimulator => SourceSelectionDto::OneSimulator,
+        SourceSelection::OptcgSim => SourceSelectionDto::OptcgSim,
         SourceSelection::Mock => SourceSelectionDto::Mock,
         SourceSelection::Replay => SourceSelectionDto::Replay,
         SourceSelection::ScreenVision => SourceSelectionDto::ScreenVision,
+    }
+}
+
+fn sync_state_to_dto(state: SyncState) -> SyncStateDto {
+    match state {
+        SyncState::Synced => SyncStateDto::Synced,
+        SyncState::Partial => SyncStateDto::Partial,
+        SyncState::Degraded => SyncStateDto::Degraded,
     }
 }
 
@@ -86,12 +93,22 @@ pub fn build_observation_status(
         .map(AdapterInfoDto::from)
         .collect();
     let latency = pipeline.latency();
+    let sync_state = sync_state_to_dto(pipeline.sync_state());
+
+    let active_label = active.map(|s| {
+        if s == optcg_observation::ObservationSource::DesktopSimulator {
+            manager.optcgsim_status().label
+        } else {
+            s.label().to_string()
+        }
+    });
 
     ObservationStatusDto {
         selection: selection_to_dto(manager.selection()),
-        active_source: active.map(|s| s.label().to_string()),
+        active_source: active_label,
         adapters,
         latency,
         searching: active.is_none(),
+        sync_state,
     }
 }

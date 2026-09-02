@@ -17,11 +17,13 @@ export type AdapterStatusKind =
 
 export type SourceSelectionKind =
   | "auto"
-  | "desktop_simulator"
-  | "browser_simulator"
+  | "one_simulator"
+  | "optcgsim"
   | "mock"
   | "replay"
   | "screen_vision";
+
+export type SyncStateKind = "synced" | "partial" | "degraded";
 
 export type SurvivalStatus = "SURVIVES" | "COUNTER_REQUIRED" | "LETHAL";
 
@@ -101,6 +103,7 @@ export interface ObservationStatusDto {
   adapters: AdapterInfoDto[];
   latency: LatencySnapshot;
   searching: boolean;
+  sync_state: SyncStateKind;
 }
 
 export interface CombatCalculation {

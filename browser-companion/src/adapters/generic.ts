@@ -1,12 +1,4 @@
-import type { BrowserGameSnapshot, ObservableGameSnapshot } from "../types";
-
-/** Site-specific adapter interface — one small module per supported online simulator. */
-export interface SimulatorSiteAdapter {
-  id: string;
-  matches(location: Location): boolean;
-  detectGame(): boolean;
-  observe(): ObservableGameSnapshot;
-}
+import type { BrowserGameSnapshot, ObservableGameSnapshot, SimulatorSiteAdapter } from "../types.js";
 
 /** Generic fallback adapter — reads coarse visible text only, never hidden DOM. */
 export class GenericSiteAdapter implements SimulatorSiteAdapter {

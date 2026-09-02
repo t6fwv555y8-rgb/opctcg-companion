@@ -1,0 +1,36 @@
+{
+  "timestamp": 1000,
+  "source": "onesimulator",
+  "turn": 3,
+  "phase": "Main",
+  "self": {
+    "life": 5,
+    "hand_count": 3,
+    "active_don": 1,
+    "rested_don": 1,
+    "board": [
+      {
+        "card_id": "OP01-001",
+        "instance_key": "0:leader:0:OP01-001:ld0",
+        "rested": false
+      },
+      {
+        "card_id": "OP01-025",
+        "instance_key": "0:character:0:OP01-025:c1",
+        "rested": false
+      },
+      {
+        "card_id": "OP01-025",
+        "instance_key": "0:character:1:OP01-025:c2",
+        "rested": false
+      }
+    ]
+  },
+  "opponent": {
+    "life": 4,
+    "hand_count": 5,
+    "active_don": 1,
+    "rested_don": 0,
+    "board": []
+  }
+}

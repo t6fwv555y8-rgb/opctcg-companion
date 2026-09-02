@@ -1,5 +1,5 @@
 /** Background service worker — keeps bridge connection lifecycle isolated from tabs. */
-import { connectBridge, pingBridge } from "./bridge";
+import { connectBridge, pingBridge } from "./bridge.js";
 
 connectBridge();
 setInterval(pingBridge, 15000);

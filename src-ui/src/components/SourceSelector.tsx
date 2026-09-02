@@ -7,9 +7,9 @@ interface Props {
 
 const OPTIONS: { value: SourceSelectionKind; label: string }[] = [
   { value: "auto", label: "Auto Detect" },
-  { value: "desktop_simulator", label: "Desktop Simulator" },
-  { value: "browser_simulator", label: "Online / Browser" },
-  { value: "mock", label: "Mock Game" },
+  { value: "one_simulator", label: "OneSimulator" },
+  { value: "optcgsim", label: "OPTCGSim" },
+  { value: "mock", label: "Mock" },
   { value: "replay", label: "Replay" },
 ];
 
@@ -18,7 +18,7 @@ export function SourceSelector({ observation, onSelect }: Props) {
 
   return (
     <div className="hud-panel p-3">
-      <div className="hud-title">Observation Source</div>
+      <div className="hud-title">Game Source</div>
       <div className="mt-2 grid grid-cols-2 gap-1">
         {OPTIONS.map((opt) => (
           <button
