@@ -1,24 +1,35 @@
 import type { BrowserGameSnapshot } from "../../types.js";
 import { extractOneSimulatorSnapshot } from "./extract.js";
 
+const SETTLE_MS = 120;
 const DEBOUNCE_MS = 80;
 
 let debounceTimer: number | null = null;
+let settleTimer: number | null = null;
 let observer: MutationObserver | null = null;
 let lastSnapshot: BrowserGameSnapshot | null = null;
 let onUpdate: ((snap: BrowserGameSnapshot) => void) | null = null;
+let pendingMutations = 0;
 
 function gameRoot(): Element | null {
   return document.querySelector(".game-board-shell") ?? document.body;
 }
 
 function scheduleExtract(): void {
+  pendingMutations += 1;
   if (debounceTimer !== null) window.clearTimeout(debounceTimer);
+  if (settleTimer !== null) window.clearTimeout(settleTimer);
+
   debounceTimer = window.setTimeout(() => {
     debounceTimer = null;
-    const snap = extractOneSimulatorSnapshot();
-    lastSnapshot = snap;
-    onUpdate?.(snap);
+    // Animation settling — wait for DOM to stabilize before extraction
+    settleTimer = window.setTimeout(() => {
+      settleTimer = null;
+      pendingMutations = 0;
+      const snap = extractOneSimulatorSnapshot();
+      lastSnapshot = snap;
+      onUpdate?.(snap);
+    }, SETTLE_MS);
   }, DEBOUNCE_MS);
 }
 
@@ -67,6 +78,10 @@ export function stopOneSimulatorObserver(): void {
     window.clearTimeout(debounceTimer);
     debounceTimer = null;
   }
+  if (settleTimer !== null) {
+    window.clearTimeout(settleTimer);
+    settleTimer = null;
+  }
   observer?.disconnect();
   observer = null;
   onUpdate = null;
@@ -74,4 +89,8 @@ export function stopOneSimulatorObserver(): void {
 
 export function getLastSnapshot(): BrowserGameSnapshot | null {
   return lastSnapshot;
+}
+
+export function getPendingMutations(): number {
+  return pendingMutations;
 }

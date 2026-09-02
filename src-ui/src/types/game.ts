@@ -23,7 +23,28 @@ export type SourceSelectionKind =
   | "replay"
   | "screen_vision";
 
-export type SyncStateKind = "synced" | "partial" | "degraded";
+export type SyncStateKind =
+  | "synced"
+  | "partial"
+  | "recovering"
+  | "degraded"
+  | "desynced";
+
+export type HudOperatingStateKind =
+  | "searching"
+  | "connecting"
+  | "syncing"
+  | "live"
+  | "partial"
+  | "lost";
+
+export interface AnalysisEligibilityDto {
+  eligible: boolean;
+  confidence: number;
+  reasons: string[];
+  mode: string;
+  hud_label: string | null;
+}
 
 export type SurvivalStatus = "SURVIVES" | "COUNTER_REQUIRED" | "LETHAL";
 
@@ -104,6 +125,8 @@ export interface ObservationStatusDto {
   latency: LatencySnapshot;
   searching: boolean;
   sync_state: SyncStateKind;
+  hud_state: HudOperatingStateKind;
+  analysis: AnalysisEligibilityDto;
 }
 
 export interface CombatCalculation {

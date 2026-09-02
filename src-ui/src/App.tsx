@@ -1,5 +1,7 @@
-import { useCompanionBridge } from "./hooks/useCompanionBridge";
 import { BlockerWarning } from "./components/BlockerWarning";
+import { useCompanionBridge } from "./hooks/useCompanionBridge";
+import { CalibrationPanel } from "./components/CalibrationPanel";
+import { DebugPanel } from "./components/DebugPanel";
 import { CombatPanel } from "./components/CombatPanel";
 import { ConnectionStatus } from "./components/ConnectionStatus";
 import { GameStatePanel } from "./components/GameStatePanel";
@@ -8,7 +10,7 @@ import { SourceStatusHud } from "./components/SourceStatusHud";
 import { StrategyPanel } from "./components/StrategyPanel";
 import { TurnIndicator } from "./components/TurnIndicator";
 
-const DEBUG = false;
+const DEBUG = Boolean((import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV);
 
 export default function App() {
   const bridge = useCompanionBridge();
@@ -70,6 +72,8 @@ export default function App() {
             observation={bridge.observation}
             onSelect={bridge.setObservationSource}
           />
+          <CalibrationPanel />
+          <DebugPanel enabled={DEBUG} />
           <ConnectionStatus connection={bridge.snapshot?.connection ?? null} />
         </>
       )}

@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-use super::vision::RegionConfig;
+use super::regions::RegionConfig;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]

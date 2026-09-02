@@ -1,10 +1,8 @@
-import type {
-  BrowserCombatSnapshot,
-  BrowserGameSnapshot,
-  BrowserPlayerSnapshot,
-  ObservedCard,
-} from "../../types.js";
+import type { BrowserCombatSnapshot, BrowserGameSnapshot, BrowserPlayerSnapshot, ObservedCard } from "../../types.js";
 import { diagnoseGameUi } from "./diagnostics.js";
+import { observeCombat, combatToSnapshot } from "./combat.js";
+import { detectGameSession } from "./session.js";
+import { diagnosticsWithHealth } from "./health.js";
 import {
   buildInstanceKey,
   toObservedCard,
@@ -171,16 +169,9 @@ function extractTurn(doc: Document): number | null {
 }
 
 function extractCombat(doc: Document): BrowserCombatSnapshot | null {
-  const board = doc.querySelector(SELECTORS.gameBoard);
-  if (!board) return null;
-  const text = board.textContent ?? "";
-  if (!/battle|attack|counter|block/i.test(text)) return null;
-  const powerM = text.match(/(\d{4,5})\s*(?:power|→|->)/i);
-  return {
-    attacker: null,
-    target: null,
-    displayed_power: powerM ? Number(powerM[1]) : null,
-  };
+  const observed = observeCombat(doc);
+  if (observed) return combatToSnapshot(observed);
+  return null;
 }
 
 function buildPlayerSnapshot(
@@ -201,7 +192,8 @@ function buildPlayerSnapshot(
 export function extractOneSimulatorSnapshot(
   doc: Document = document,
 ): BrowserGameSnapshot {
-  const diag = diagnoseGameUi(doc);
+  const diag = diagnosticsWithHealth(doc);
+  const session = detectGameSession(doc);
   const selfPid = resolveSelfPlayerId(doc);
   const playerIds = new Set<string>();
   doc.querySelectorAll(SELECTORS.cardPlayer).forEach((el) => {
@@ -227,7 +219,13 @@ export function extractOneSimulatorSnapshot(
     self: buildPlayerSnapshot(selfId, doc),
     opponent: buildPlayerSnapshot(oppId, doc),
     combat: extractCombat(doc),
-    diagnostics: diag,
+    diagnostics: {
+      ...diag,
+      found: {
+        ...diag.found,
+        session_active: session.phase === "active",
+      },
+    },
   };
 }
 

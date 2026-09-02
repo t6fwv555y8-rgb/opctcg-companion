@@ -115,6 +115,18 @@ impl AdapterManager {
         *self.replay_path.lock() = Some(path);
     }
 
+    pub fn set_replay_speed(&self, speed: crate::adapters::replay::ReplaySpeed) {
+        self.replay.set_speed(speed);
+    }
+
+    pub fn replay_step_forward(&self) -> bool {
+        self.replay.step_forward()
+    }
+
+    pub fn replay_position(&self) -> (usize, usize) {
+        (self.replay.position(), self.replay.total())
+    }
+
     pub fn active_source(&self) -> Option<ObservationSource> {
         *self.active.lock()
     }

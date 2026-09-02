@@ -60,6 +60,12 @@ fn main() {
             commands::set_overlay_opacity,
             commands::set_click_through,
             commands::inject_event,
+            commands::get_debug_status,
+            commands::get_calibration_profile,
+            commands::save_calibration_profile,
+            commands::capture_debug_snapshot,
+            commands::set_replay_speed,
+            commands::replay_step_forward,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();

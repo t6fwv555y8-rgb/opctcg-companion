@@ -101,12 +101,47 @@ impl ObservationPipeline {
         self.session.lock().sync_state()
     }
 
+    pub fn sync_status(&self) -> crate::sync_status::SyncStatus {
+        let session = self.session.lock();
+        crate::sync_status::SyncStatus::from_confidence(session.confidence, true)
+    }
+
+    pub fn analysis_eligibility(&self) -> crate::analysis::AnalysisEligibility {
+        let session = self.session.lock();
+        let gs = &session.state;
+        crate::analysis::AnalysisEligibility::evaluate(
+            session.confidence,
+            true,
+            gs.player_one().life > 0,
+            gs.combat.active,
+            true,
+        )
+    }
+
+    pub fn validation_status(&self) -> Vec<crate::validation::AdapterValidationStatus> {
+        crate::validation::all_adapter_validation()
+    }
+
     pub fn set_selection(&self, selection: SourceSelection) {
         self.manager.set_selection(selection);
     }
 
     pub fn set_replay_path(&self, path: PathBuf) {
         self.manager.set_replay_path(path);
+    }
+
+    pub fn set_replay_speed(&self, label: &str) {
+        use crate::adapters::replay::ReplaySpeed;
+        self.manager
+            .set_replay_speed(ReplaySpeed::from_label(label));
+    }
+
+    pub fn replay_step_forward(&self) -> bool {
+        self.manager.replay_step_forward()
+    }
+
+    pub fn replay_position(&self) -> (usize, usize) {
+        self.manager.replay_position()
     }
 
     pub async fn start(
@@ -188,6 +223,13 @@ impl ObservationPipeline {
                 let mut session_guard = session.lock();
                 if session_guard.source != envelope.source {
                     session_guard.reset_for_source(envelope.source);
+                }
+                if matches!(
+                    envelope.event,
+                    crate::types::ObservationEvent::GameDetected { .. }
+                ) {
+                    session_guard.reset_for_source(envelope.source);
+                    session_guard.state.combat.reset();
                 }
                 reconciler
                     .lock()

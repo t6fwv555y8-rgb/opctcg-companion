@@ -4,7 +4,8 @@ use optcg_observation::{
         detector::{discover_combat_logs, discover_installation},
         log_reader::IncrementalLogReader,
         parser::OptcgSimLogParser,
-        vision::{RegionConfig, VisionPipeline},
+        regions::{NormalizedRegion, RegionConfig},
+        vision::VisionPipeline,
         OptcgSimConfig,
     },
     bridge_protocol::BrowserGameSnapshot,
@@ -117,7 +118,7 @@ fn optcgsim_combat_logs_post_game_only() {
 #[test]
 fn optcgsim_vision_fixture_pipeline() {
     let fixture_path = fixture("optcgsim/vision_observation.json");
-    let pipeline = VisionPipeline::new(RegionConfig::default()).with_fixture(&fixture_path);
+    let mut pipeline = VisionPipeline::new(RegionConfig::default()).with_fixture(&fixture_path);
     let obs = pipeline.capture_observation().expect("fixture observation");
     let events = obs.to_observation_events();
     let state = reconcile_events(ObservationSource::DesktopSimulator, events);

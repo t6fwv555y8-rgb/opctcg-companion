@@ -12,12 +12,13 @@ use tokio::sync::mpsc;
 use tracing::info;
 
 /// Playback speed for replay adapter.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReplaySpeed {
     Half,
     Normal,
     Double,
     Maximum,
+    Step,
 }
 
 impl ReplaySpeed {
@@ -27,6 +28,17 @@ impl ReplaySpeed {
             Self::Normal => 100,
             Self::Double => 50,
             Self::Maximum => 0,
+            Self::Step => u64::MAX,
+        }
+    }
+
+    pub fn from_label(label: &str) -> Self {
+        match label.to_lowercase().as_str() {
+            "half" | "0.5x" => Self::Half,
+            "double" | "2x" => Self::Double,
+            "maximum" | "max" => Self::Maximum,
+            "step" => Self::Step,
+            _ => Self::Normal,
         }
     }
 }
@@ -36,6 +48,8 @@ pub struct ReplayAdapter {
     status: Arc<Mutex<AdapterStatus>>,
     envelopes: Arc<Mutex<Vec<ObservationEnvelope>>>,
     speed: Arc<Mutex<ReplaySpeed>>,
+    index: Arc<Mutex<usize>>,
+    step_signal: Arc<Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
     shutdown: Arc<Mutex<Option<mpsc::Sender<()>>>>,
 }
 
@@ -45,6 +59,8 @@ impl ReplayAdapter {
             status: Arc::new(Mutex::new(AdapterStatus::Unavailable)),
             envelopes: Arc::new(Mutex::new(Vec::new())),
             speed: Arc::new(Mutex::new(ReplaySpeed::Normal)),
+            index: Arc::new(Mutex::new(0)),
+            step_signal: Arc::new(Mutex::new(None)),
             shutdown: Arc::new(Mutex::new(None)),
         }
     }
@@ -52,12 +68,29 @@ impl ReplayAdapter {
     pub fn load(&self, path: &PathBuf) -> ObsResult<()> {
         let lines = load_replay_lines(path)?;
         *self.envelopes.lock() = lines;
+        *self.index.lock() = 0;
         *self.status.lock() = AdapterStatus::Connected;
         Ok(())
     }
 
     pub fn set_speed(&self, speed: ReplaySpeed) {
         *self.speed.lock() = speed;
+    }
+
+    pub fn step_forward(&self) -> bool {
+        if let Some(tx) = self.step_signal.lock().take() {
+            let _ = tx.send(());
+            return true;
+        }
+        false
+    }
+
+    pub fn position(&self) -> usize {
+        *self.index.lock()
+    }
+
+    pub fn total(&self) -> usize {
+        self.envelopes.lock().len()
     }
 }
 
@@ -92,23 +125,34 @@ impl ObservationAdapter for ReplayAdapter {
         let (stop_tx, mut stop_rx) = mpsc::channel(1);
         *self.shutdown.lock() = Some(stop_tx);
         *self.status.lock() = AdapterStatus::Observing;
+        *self.index.lock() = 0;
 
-        let speed = *self.speed.lock();
+        let speed = Arc::clone(&self.speed);
         let status = Arc::clone(&self.status);
+        let index = Arc::clone(&self.index);
+        let step_signal = Arc::clone(&self.step_signal);
 
         tokio::spawn(async move {
             info!(count = envelopes.len(), "replay adapter starting");
-            for mut envelope in envelopes {
+            for (i, mut envelope) in envelopes.into_iter().enumerate() {
                 if stop_rx.try_recv().is_ok() {
                     break;
                 }
+                *index.lock() = i;
                 envelope.timestamp_ms = Utc::now().timestamp_millis();
                 envelope.source = ObservationSource::Replay;
                 if sender.send(envelope).await.is_err() {
                     break;
                 }
-                if speed.delay_ms() > 0 {
-                    tokio::time::sleep(Duration::from_millis(speed.delay_ms())).await;
+
+                let current_speed = *speed.lock();
+                let delay = current_speed.delay_ms();
+                if delay == u64::MAX {
+                    let (tx, rx) = tokio::sync::oneshot::channel();
+                    *step_signal.lock() = Some(tx);
+                    let _ = rx.await;
+                } else if delay > 0 {
+                    tokio::time::sleep(Duration::from_millis(delay)).await;
                 }
             }
             *status.lock() = AdapterStatus::Disconnected;
@@ -169,5 +213,13 @@ mod tests {
         ));
 
         adapter.stop().await.unwrap();
+    }
+
+    #[test]
+    fn step_mode_waits_for_signal() {
+        let adapter = ReplayAdapter::new();
+        adapter.set_speed(ReplaySpeed::Step);
+        assert_eq!(ReplaySpeed::Step.delay_ms(), u64::MAX);
+        assert!(!adapter.step_forward());
     }
 }

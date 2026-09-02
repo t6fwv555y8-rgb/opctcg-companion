@@ -1,13 +1,14 @@
-use crate::dto::{ConnectionStatusDto, GameStateDto, OverlaySettings, StateUpdatePayload};
+use crate::dto::{
+    ConnectionStatusDto, DebugStatusDto, GameStateDto, ObservationStatusDto, OverlaySettings,
+    SourceSelectionDto, StateUpdatePayload,
+};
 use crate::runtime::{build_observation_status, RuntimeHandles};
 use crate::state::AppState;
-use optcg_observation::SourceSelection;
 use optcg_rules::{CombatAnalysis, LegalAction, MctsResult, ScoredAction, StrategyRecommendation};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::{command, AppHandle, Emitter, Manager, State, WebviewWindow};
 
-use crate::dto::{ObservationStatusDto, SourceSelectionDto};
 use optcg_rules::RulesEngine;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -144,6 +145,86 @@ pub fn set_click_through(window: WebviewWindow, enabled: bool) -> Result<(), Str
     window
         .set_ignore_cursor_events(enabled)
         .map_err(|e| e.to_string())
+}
+
+#[command]
+pub fn get_debug_status(
+    state: State<'_, AppState>,
+    runtime: State<'_, RuntimeHandles>,
+) -> DebugStatusDto {
+    let gs = state.inner().game_state.read();
+    let validation: Vec<crate::dto::AdapterValidationDto> = runtime
+        .pipeline
+        .validation_status()
+        .into_iter()
+        .map(|v| crate::dto::AdapterValidationDto {
+            adapter: v.adapter,
+            implementation: format!("{:?}", v.implementation),
+            fixture_tests: format!("{:?}", v.fixture_tests),
+            live_validation: format!("{:?}", v.live_validation),
+        })
+        .collect();
+    DebugStatusDto {
+        observation_sequence: gs.event_sequence,
+        event_sequence: gs.event_sequence,
+        sync_status: crate::runtime::build_observation_status(&runtime.manager, &runtime.pipeline)
+            .sync_state,
+        capture_stats: None,
+        validation,
+    }
+}
+
+#[command]
+pub fn get_calibration_profile() -> Result<optcg_observation::CalibrationProfile, String> {
+    Ok(optcg_observation::load_or_default(1920, 1080))
+}
+
+#[command]
+pub fn save_calibration_profile(
+    profile: optcg_observation::CalibrationProfile,
+) -> Result<(), String> {
+    optcg_observation::save_profile(&profile)
+}
+
+#[command]
+pub fn set_replay_speed(runtime: State<'_, RuntimeHandles>, speed: String) {
+    runtime.pipeline.set_replay_speed(&speed);
+}
+
+#[command]
+pub fn replay_step_forward(runtime: State<'_, RuntimeHandles>) -> bool {
+    runtime.pipeline.replay_step_forward()
+}
+
+#[command]
+pub fn capture_debug_snapshot(
+    state: State<'_, AppState>,
+    runtime: State<'_, RuntimeHandles>,
+) -> Result<serde_json::Value, String> {
+    let gs = state.inner().game_state.read().clone();
+    let snapshot = serde_json::json!({
+        "schemaVersion": 1,
+        "gameState": GameStateDto::from(&gs),
+        "observation": build_observation_status(&runtime.manager, &runtime.pipeline),
+        "calibration": optcg_observation::load_or_default(1920, 1080),
+        "timestamp": chrono::Utc::now().to_rfc3339(),
+    });
+
+    if std::env::var("OPTCG_DEBUG_CAPTURE").is_ok() {
+        let dir = dirs::data_local_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join("optcg-companion")
+            .join("debug-captures");
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let path = dir.join(format!(
+            "debug-{}.json",
+            chrono::Utc::now().format("%Y%m%d-%H%M%S")
+        ));
+        std::fs::write(&path, serde_json::to_string_pretty(&snapshot).unwrap())
+            .map_err(|e| e.to_string())?;
+    }
+
+    Ok(snapshot)
 }
 
 #[command]

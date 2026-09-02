@@ -1,6 +1,6 @@
 use crate::dto::{AdapterInfoDto, ObservationStatusDto, SourceSelectionDto, SyncStateDto};
 use optcg_observation::{
-    AdapterManager, ObservationPipeline, ObservationPipelineConfig, SourceSelection, SyncState,
+    AdapterManager, AnalysisEligibility, ObservationPipeline, SourceSelection, SyncStatus,
 };
 use parking_lot::RwLock;
 use std::path::PathBuf;
@@ -12,6 +12,8 @@ pub struct RuntimeHandles {
     pub pipeline: Arc<ObservationPipeline>,
     pub manager: Arc<AdapterManager>,
 }
+
+use optcg_observation::ObservationPipelineConfig;
 
 pub fn default_pipeline_config(data_dir: PathBuf) -> ObservationPipelineConfig {
     ObservationPipelineConfig {
@@ -74,11 +76,40 @@ pub fn selection_to_dto(sel: SourceSelection) -> SourceSelectionDto {
     }
 }
 
-fn sync_state_to_dto(state: SyncState) -> SyncStateDto {
+fn sync_status_to_dto(state: SyncStatus) -> SyncStateDto {
     match state {
-        SyncState::Synced => SyncStateDto::Synced,
-        SyncState::Partial => SyncStateDto::Partial,
-        SyncState::Degraded => SyncStateDto::Degraded,
+        SyncStatus::Synced => SyncStateDto::Synced,
+        SyncStatus::Partial => SyncStateDto::Partial,
+        SyncStatus::Recovering => SyncStateDto::Recovering,
+        SyncStatus::Degraded => SyncStateDto::Degraded,
+        SyncStatus::Desynced => SyncStateDto::Desynced,
+    }
+}
+
+fn hud_state_from(searching: bool, live: bool, sync: SyncStatus) -> crate::dto::HudOperatingState {
+    use crate::dto::HudOperatingState;
+    if searching {
+        return HudOperatingState::Searching;
+    }
+    if !live {
+        return HudOperatingState::Connecting;
+    }
+    match sync {
+        SyncStatus::Synced => HudOperatingState::Live,
+        SyncStatus::Partial | SyncStatus::Degraded => HudOperatingState::Partial,
+        SyncStatus::Recovering => HudOperatingState::Syncing,
+        SyncStatus::Desynced => HudOperatingState::Lost,
+    }
+}
+
+fn analysis_to_dto(a: AnalysisEligibility) -> crate::dto::AnalysisEligibilityDto {
+    let hud_label = a.hud_label().map(|s| s.to_string());
+    crate::dto::AnalysisEligibilityDto {
+        eligible: a.eligible,
+        confidence: a.confidence,
+        reasons: a.reasons,
+        mode: format!("{:?}", a.mode).to_lowercase(),
+        hud_label,
     }
 }
 
@@ -93,7 +124,10 @@ pub fn build_observation_status(
         .map(AdapterInfoDto::from)
         .collect();
     let latency = pipeline.latency();
-    let sync_state = sync_state_to_dto(pipeline.sync_state());
+    let sync = pipeline.sync_status();
+    let sync_state = sync_status_to_dto(sync);
+    let live = adapters.iter().any(|a| a.live);
+    let searching = active.is_none();
 
     let active_label = active.map(|s| {
         if s == optcg_observation::ObservationSource::DesktopSimulator {
@@ -108,7 +142,9 @@ pub fn build_observation_status(
         active_source: active_label,
         adapters,
         latency,
-        searching: active.is_none(),
+        searching,
         sync_state,
+        hud_state: hud_state_from(searching, live, sync),
+        analysis: analysis_to_dto(pipeline.analysis_eligibility()),
     }
 }

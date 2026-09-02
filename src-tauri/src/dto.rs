@@ -1,5 +1,5 @@
 use optcg_core::{CombatState, ConnectionStatus, GameState, LastEventInfo, Phase, PlayerState};
-use optcg_observation::{AdapterInfo, AdapterStatus, LatencySnapshot, ObservationSource};
+use optcg_observation::{AdapterInfo, AdapterStatus, LatencySnapshot};
 use optcg_rules::{CombatAnalysis, StrategyRecommendation};
 use serde::{Deserialize, Serialize};
 
@@ -132,7 +132,46 @@ pub enum SourceSelectionDto {
 pub enum SyncStateDto {
     Synced,
     Partial,
+    Recovering,
     Degraded,
+    Desynced,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HudOperatingState {
+    Searching,
+    Connecting,
+    Syncing,
+    Live,
+    Partial,
+    Lost,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnalysisEligibilityDto {
+    pub eligible: bool,
+    pub confidence: f32,
+    pub reasons: Vec<String>,
+    pub mode: String,
+    pub hud_label: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdapterValidationDto {
+    pub adapter: String,
+    pub implementation: String,
+    pub fixture_tests: String,
+    pub live_validation: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DebugStatusDto {
+    pub observation_sequence: u64,
+    pub event_sequence: u64,
+    pub sync_status: SyncStateDto,
+    pub capture_stats: Option<optcg_observation::CaptureStats>,
+    pub validation: Vec<AdapterValidationDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -164,6 +203,8 @@ pub struct ObservationStatusDto {
     pub latency: LatencySnapshot,
     pub searching: bool,
     pub sync_state: SyncStateDto,
+    pub hud_state: HudOperatingState,
+    pub analysis: AnalysisEligibilityDto,
 }
 
 /// Source-aware connection label for HUD.

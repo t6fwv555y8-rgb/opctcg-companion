@@ -1,6 +1,9 @@
 pub mod adapter;
 pub mod adapters;
+pub mod analysis;
 pub mod bridge_protocol;
+pub mod calibration;
+pub mod capture;
 pub mod confidence;
 pub mod diff;
 pub mod error;
@@ -8,15 +11,22 @@ pub mod latency;
 pub mod manager;
 pub mod pipeline;
 pub mod process_detect;
+pub mod recognition;
 pub mod reconciler;
 pub mod recording;
 pub mod session;
+pub mod sync_status;
+pub mod temporal;
 pub mod types;
+pub mod validation;
+pub mod window;
 pub mod window_source;
 
 pub use adapter::{AdapterStatus, ObservationAdapter};
+pub use analysis::{AnalysisEligibility, AnalysisMode};
 pub use bridge_protocol::BrowserGameSnapshot;
-pub use confidence::ConfidenceConfig;
+pub use calibration::{load_or_default, save_profile, CalibrationProfile};
+pub use capture::{CaptureConfig, CaptureStats, CapturedFrame};
 pub use diff::SnapshotDiffer;
 pub use error::ObservationError;
 pub use latency::{LatencySnapshot, LatencyTracker};
@@ -25,7 +35,9 @@ pub use pipeline::{ObservationPipeline, ObservationPipelineConfig, PipelineResul
 pub use reconciler::{ObservationReconciler, ReconcileOutcome};
 pub use recording::ObservationRecorder;
 pub use session::{GameSession, GameSessionId, SyncState};
+pub use sync_status::{SyncContext, SyncStatus};
 pub use types::*;
+pub use validation::{AdapterValidationStatus, ImplementationStatus, LiveValidationStatus};
 
 #[cfg(test)]
 mod extra_tests {

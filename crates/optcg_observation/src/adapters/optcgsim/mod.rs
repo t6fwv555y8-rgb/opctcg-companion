@@ -5,6 +5,7 @@ pub mod config;
 pub mod detector;
 pub mod log_reader;
 pub mod parser;
+pub mod regions;
 pub mod versions;
 pub mod vision;
 
@@ -12,7 +13,8 @@ pub use config::{ObservationMode, OptcgSimConfig, OptcgSimStatus};
 pub use detector::{discover_combat_logs, discover_installation, DetectedInstallation};
 pub use log_reader::IncrementalLogReader;
 pub use parser::OptcgSimLogParser;
-pub use vision::{RegionConfig, VisionObservation, VisionPipeline};
+pub use regions::{NormalizedRegion, RegionConfig};
+pub use vision::{VisionObservation, VisionPipeline};
 
 use crate::adapter::{AdapterStatus, ObservationAdapter};
 use crate::confidence::ConfidenceConfig;
@@ -182,7 +184,21 @@ impl ObservationAdapter for OptcgSimAdapter {
                 });
             }
             ObservationMode::VisualFallback | ObservationMode::ReplayOnly => {
-                let vision = VisionPipeline::new(config.vision_regions.clone());
+                let regions = config.vision_regions.clone();
+                let mut vision = VisionPipeline::new(regions);
+                if let Some(streaming) = sim_status
+                    .lock()
+                    .installation
+                    .as_ref()
+                    .and_then(|i| i.streaming_assets.clone())
+                {
+                    let index = card_art::CardArtIndex::build_from_streaming_assets(&streaming);
+                    if index.len() > 0 {
+                        vision = vision.with_card_index(index);
+                    }
+                }
+                let vision = Arc::new(Mutex::new(vision));
+                let vision_clone = Arc::clone(&vision);
                 if mode == ObservationMode::ReplayOnly {
                     warn!("OPTCGSim CombatLogs are replay-only — using visual fallback for live if process running");
                 }
@@ -191,22 +207,28 @@ impl ObservationAdapter for OptcgSimAdapter {
                         if stop_rx.try_recv().is_ok() {
                             break;
                         }
-                        if let Some(obs) = vision.capture_observation() {
-                            for event in obs.to_observation_events() {
-                                *seq.lock() += 1;
-                                let envelope = ObservationEnvelope {
-                                    sequence: *seq.lock(),
-                                    timestamp_ms: Utc::now().timestamp_millis(),
-                                    source: ObservationSource::DesktopSimulator,
-                                    event,
-                                };
-                                if sender.send(envelope).await.is_err() {
-                                    *status.lock() = AdapterStatus::Disconnected;
-                                    return;
-                                }
+                        let events = if let Some(obs) = {
+                            let obs = vision_clone.lock().capture_observation();
+                            obs
+                        } {
+                            obs.to_observation_events()
+                        } else {
+                            Vec::new()
+                        };
+                        for event in events {
+                            *seq.lock() += 1;
+                            let envelope = ObservationEnvelope {
+                                sequence: *seq.lock(),
+                                timestamp_ms: Utc::now().timestamp_millis(),
+                                source: ObservationSource::DesktopSimulator,
+                                event,
+                            };
+                            if sender.send(envelope).await.is_err() {
+                                *status.lock() = AdapterStatus::Disconnected;
+                                return;
                             }
                         }
-                        tokio::time::sleep(Duration::from_millis(500)).await;
+                        tokio::time::sleep(std::time::Duration::from_millis(125)).await;
                     }
                     *status.lock() = AdapterStatus::Disconnected;
                 });
