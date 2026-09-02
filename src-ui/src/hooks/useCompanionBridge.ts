@@ -3,7 +3,9 @@ import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   CompanionBridge,
+  ObservationStatusDto,
   OverlaySettings,
+  SourceSelectionKind,
   StateUpdatePayload,
 } from "../types/game";
 
@@ -11,6 +13,9 @@ const HEALTH_POLL_MS = 5000;
 
 export function useCompanionBridge(): CompanionBridge {
   const [snapshot, setSnapshot] = useState<StateUpdatePayload | null>(null);
+  const [observation, setObservation] = useState<ObservationStatusDto | null>(
+    null,
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [overlay, setOverlay] = useState<OverlaySettings>({
@@ -24,6 +29,7 @@ export function useCompanionBridge(): CompanionBridge {
       const payload = await invoke<StateUpdatePayload>("get_state_snapshot");
       if (!mounted.current) return;
       setSnapshot(payload);
+      setObservation(payload.observation ?? null);
       setError(null);
       setLoading(false);
     } catch (e) {
@@ -43,9 +49,10 @@ export function useCompanionBridge(): CompanionBridge {
       (event) => {
         if (!mounted.current) return;
         setSnapshot(event.payload);
+        setObservation(event.payload.observation ?? null);
         setLoading(false);
         setError(null);
-      }
+      },
     );
 
     const healthId = setInterval(refreshSnapshot, HEALTH_POLL_MS);
@@ -79,12 +86,30 @@ export function useCompanionBridge(): CompanionBridge {
     }
   }, []);
 
+  const setObservationSource = useCallback(
+    async (selection: SourceSelectionKind) => {
+      try {
+        const status = await invoke<ObservationStatusDto>(
+          "set_observation_source",
+          { selection },
+        );
+        setObservation(status);
+        await refreshSnapshot();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [refreshSnapshot],
+  );
+
   return {
     snapshot,
+    observation,
     loading,
     error,
     overlay,
     toggleOverlay,
     setOpacity,
+    setObservationSource,
   };
 }

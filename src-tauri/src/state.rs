@@ -1,3 +1,4 @@
+use crate::dto::ObservationStatusDto;
 use crate::dto::{ConnectionStatusDto, GameStateDto, OverlaySettings, StateUpdatePayload};
 use optcg_database::Database;
 use optcg_rules::{BeamSearch, BeamSearchConfig, CombatMath, MctsConfig, MctsEngine, RulesEngine};
@@ -33,19 +34,33 @@ impl AppState {
         optcg_database::CardRepository::new(&self.database)
     }
 
-    pub fn build_update_payload(&self) -> StateUpdatePayload {
+    pub fn build_update_payload(
+        &self,
+        observation: Option<ObservationStatusDto>,
+    ) -> StateUpdatePayload {
         let gs = self.game_state.read();
         let repo = self.repo();
         let combat_analysis = CombatMath::analyze_current_combat(&gs, &repo);
         let strategy = RulesEngine::recommend(&gs, &repo).ok().flatten();
-        let latency_ms = gs.connection.latency_ms;
+        let mut latency_ms = gs.connection.latency_ms;
+        if let Some(ref obs) = observation {
+            latency_ms = obs.latency.total_latency_ms;
+        }
+
+        let mut connection = ConnectionStatusDto::from_state(&gs);
+        if let Some(ref obs) = observation {
+            if let Some(ref src) = obs.active_source {
+                connection = connection.with_source_label(Some(src));
+            }
+        }
 
         StateUpdatePayload {
             game_state: GameStateDto::from(&*gs),
-            connection: ConnectionStatusDto::from_state(&gs),
+            connection,
             combat_analysis,
             strategy,
             latency_ms,
+            observation,
         }
     }
 }

@@ -1,8 +1,14 @@
 use crate::dto::{ConnectionStatusDto, GameStateDto, OverlaySettings, StateUpdatePayload};
+use crate::runtime::{build_observation_status, RuntimeHandles};
 use crate::state::AppState;
+use optcg_observation::SourceSelection;
 use optcg_rules::{CombatAnalysis, LegalAction, MctsResult, ScoredAction, StrategyRecommendation};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use tauri::{command, AppHandle, Emitter, Manager, State, WebviewWindow};
+
+use crate::dto::{ObservationStatusDto, SourceSelectionDto};
+use optcg_rules::RulesEngine;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RecommendationsPayload {
@@ -61,8 +67,55 @@ pub fn get_legal_actions(state: State<'_, AppState>) -> Vec<LegalAction> {
 }
 
 #[command]
-pub fn get_state_snapshot(state: State<'_, AppState>) -> StateUpdatePayload {
-    state.inner().build_update_payload()
+pub fn get_state_snapshot(
+    state: State<'_, AppState>,
+    runtime: State<'_, RuntimeHandles>,
+) -> StateUpdatePayload {
+    state
+        .inner()
+        .build_update_payload(Some(build_observation_status(
+            &runtime.manager,
+            &runtime.pipeline,
+        )))
+}
+
+#[command]
+pub fn get_observation_status(runtime: State<'_, RuntimeHandles>) -> ObservationStatusDto {
+    build_observation_status(&runtime.manager, &runtime.pipeline)
+}
+
+#[command]
+pub async fn set_observation_source(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    runtime: State<'_, RuntimeHandles>,
+    selection: SourceSelectionDto,
+    replay_path: Option<String>,
+) -> Result<ObservationStatusDto, String> {
+    if let Some(path) = replay_path {
+        runtime.pipeline.set_replay_path(path.into());
+    }
+
+    let sel = crate::runtime::selection_from_dto(selection);
+    let (result_tx, result_rx) = tokio::sync::mpsc::channel(128);
+    crate::runtime::spawn_pipeline_listener(
+        result_rx,
+        app.clone(),
+        Arc::clone(&state.inner().game_state),
+        Arc::clone(&runtime.manager),
+        Arc::clone(&runtime.pipeline),
+    );
+
+    runtime
+        .pipeline
+        .start(sel, result_tx)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(build_observation_status(
+        &runtime.manager,
+        &runtime.pipeline,
+    ))
 }
 
 #[command]
@@ -99,20 +152,52 @@ pub fn inject_event(
     state: State<'_, AppState>,
     payload: String,
 ) -> Result<(), String> {
-    let processor = app
-        .try_state::<crate::runtime::RuntimeHandles>()
+    use chrono::Utc;
+    use optcg_observation::{ObservationEnvelope, ObservationEvent, ObservationSource};
+
+    let runtime = app
+        .try_state::<RuntimeHandles>()
         .ok_or_else(|| "runtime not initialized".to_string())?;
-    processor
-        .processor
-        .submit_blocking(payload, optcg_events::EventSource::Manual)
+
+    let envelope = ObservationEnvelope {
+        sequence: state.inner().game_state.read().event_sequence + 1,
+        timestamp_ms: Utc::now().timestamp_millis(),
+        source: ObservationSource::Mock,
+        event: ObservationEvent::StructuredRaw {
+            raw: payload,
+            source: ObservationSource::Mock,
+            confidence: 1.0,
+        },
+    };
+
+    // Process synchronously through reconciler path
+    let mut session = optcg_observation::GameSession::new(ObservationSource::Mock);
+    {
+        let gs = state.inner().game_state.read().clone();
+        session.state = gs;
+    }
+    let mut reconciler = optcg_observation::ObservationReconciler::default();
+    reconciler
+        .reconcile(&mut session, &envelope.event)
         .map_err(|e| e.to_string())?;
-    emit_state_update(&app, state.inner());
+    *state.inner().game_state.write() = session.state;
+
+    emit_state_update(
+        &app,
+        state.inner(),
+        Some(build_observation_status(
+            &runtime.manager,
+            &runtime.pipeline,
+        )),
+    );
     Ok(())
 }
 
-pub fn emit_state_update(app: &AppHandle, app_state: &AppState) {
-    let payload = app_state.build_update_payload();
+pub fn emit_state_update(
+    app: &AppHandle,
+    app_state: &AppState,
+    observation: Option<ObservationStatusDto>,
+) {
+    let payload = app_state.build_update_payload(observation);
     let _ = app.emit("game-state-updated", payload);
 }
-
-use optcg_rules::RulesEngine;

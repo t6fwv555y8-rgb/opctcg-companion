@@ -51,8 +51,7 @@ impl EventProcessor {
                             gs.connection.latency_ms = start.elapsed().as_millis() as u64;
                             if inbound.source == EventSource::WebSocket {
                                 gs.connection.websocket_connected = true;
-                                gs.connection.status =
-                                    optcg_core::ConnectionStatus::Connected;
+                                gs.connection.status = optcg_core::ConnectionStatus::Connected;
                             }
                             ProcessResult {
                                 last_event: info,
@@ -130,7 +129,10 @@ mod integration_tests {
             .await
             .unwrap();
         processor
-            .submit("DON_ATTACHED|PLAYER_1|LEADER|1".into(), EventSource::WebSocket)
+            .submit(
+                "DON_ATTACHED|PLAYER_1|LEADER|1".into(),
+                EventSource::WebSocket,
+            )
             .await
             .unwrap();
 

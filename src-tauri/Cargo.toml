@@ -15,6 +15,8 @@ optcg_core = { path = "../crates/optcg_core" }
 optcg_database = { path = "../crates/optcg_database" }
 optcg_rules = { path = "../crates/optcg_rules" }
 optcg_events = { path = "../crates/optcg_events" }
+chrono = { workspace = true }
+optcg_observation = { path = "../crates/optcg_observation" }
 tauri = { version = "2.0", features = [] }
 serde = { workspace = true }
 serde_json = { workspace = true }

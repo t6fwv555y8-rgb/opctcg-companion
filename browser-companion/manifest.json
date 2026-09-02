@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "OPTCG Companion Bridge",
+  "version": "0.1.0",
+  "description": "Observes player-visible OPTCG simulator state and bridges to local companion",
+  "permissions": ["activeTab"],
+  "host_permissions": ["http://127.0.0.1:9003/*", "http://localhost:9003/*"],
+  "background": {
+    "service_worker": "dist/background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["dist/content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "OPTCG Companion"
+  }
+}

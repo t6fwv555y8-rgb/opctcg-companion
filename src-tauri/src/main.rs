@@ -5,18 +5,14 @@ mod dto;
 mod runtime;
 mod state;
 
-use commands::emit_state_update;
 use optcg_database::{AssetParser, Database};
-use optcg_events::{
-    spawn_result_listener, EventProcessor, EventSource, FileMonitor, FileMonitorConfig,
-    WebSocketServer, WebSocketServerConfig,
-};
+use optcg_observation::{ObservationPipeline, SourceSelection};
 use parking_lot::RwLock;
-use runtime::RuntimeHandles;
+use runtime::{default_pipeline_config, spawn_pipeline_listener, RuntimeHandles};
 use state::AppState;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tauri::{Manager, State};
+use tauri::Manager;
 use tracing_subscriber::EnvFilter;
 
 fn main() {
@@ -24,25 +20,30 @@ fn main() {
         .with_env_filter(EnvFilter::from_default_env().add_directive("info".parse().unwrap()))
         .init();
 
-    let db_path = dirs_data_path().join("optcg_companion.db");
-    if let Some(parent) = db_path.parent() {
+    let data_dir = dirs_data_path();
+    if let Some(parent) = data_dir.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
 
+    let db_path = data_dir.join("optcg_companion.db");
     let database = Database::open(db_path.to_str().unwrap_or("optcg_companion.db"))
         .expect("failed to open database");
     let _ = AssetParser::seed_defaults(&database);
 
     let game_state = Arc::new(RwLock::new(optcg_core::GameState::new()));
-    let (processor, result_rx) = EventProcessor::new(Arc::clone(&game_state));
-    let processor = Arc::new(processor);
+    let pipeline = Arc::new(ObservationPipeline::new(
+        Arc::clone(&game_state),
+        default_pipeline_config(data_dir),
+    ));
+    let manager = pipeline.manager();
 
     let app_state = AppState::new(database, Arc::clone(&game_state));
 
     tauri::Builder::default()
         .manage(app_state)
         .manage(RuntimeHandles {
-            processor: Arc::clone(&processor),
+            pipeline: Arc::clone(&pipeline),
+            manager: Arc::clone(&manager),
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_game_state,
@@ -53,6 +54,8 @@ fn main() {
             commands::get_combat_analysis,
             commands::get_legal_actions,
             commands::get_state_snapshot,
+            commands::get_observation_status,
+            commands::set_observation_source,
             commands::toggle_overlay,
             commands::set_overlay_opacity,
             commands::set_click_through,
@@ -60,68 +63,17 @@ fn main() {
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
-            let app_state: State<AppState> = handle.state();
-            let gs = Arc::clone(&app_state.inner().game_state);
+            let gs = Arc::clone(&game_state);
+            let mgr = Arc::clone(&manager);
+            let pipe = Arc::clone(&pipeline);
 
-            // WebSocket server thread
-            let ws_processor = Arc::clone(&processor);
-            let ws_gs = Arc::clone(&gs);
-            std::thread::spawn(move || {
-                let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
-                rt.block_on(async {
-                    {
-                        let mut state = ws_gs.write();
-                        state.connection.status = optcg_core::ConnectionStatus::Connecting;
-                    }
-                    let hook: Arc<dyn Fn(bool) + Send + Sync> = Arc::new(move |connected| {
-                        let mut state = ws_gs.write();
-                        state.connection.websocket_connected = connected;
-                        state.connection.status = if connected {
-                            optcg_core::ConnectionStatus::Connected
-                        } else {
-                            optcg_core::ConnectionStatus::Disconnected
-                        };
-                    });
-                    let server =
-                        WebSocketServer::new(ws_processor, WebSocketServerConfig::default())
-                            .with_connect_hook(hook);
-                    if let Err(e) = server.run().await {
-                        tracing::error!(error = %e, "websocket server failed");
-                    }
-                });
-            });
+            let (result_tx, result_rx) = tokio::sync::mpsc::channel(512);
+            spawn_pipeline_listener(result_rx, handle, gs, mgr, pipe);
 
-            // File monitor → pipeline
-            let fm_processor = Arc::clone(&processor);
-            let watch_path = dirs_data_path().join("logs");
-            let monitor = FileMonitor::new(FileMonitorConfig {
-                watch_path,
-                debounce_ms: 100,
-            });
-            std::thread::spawn(move || {
-                let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
-                rt.block_on(async {
-                    let (tx, mut rx) = tokio::sync::mpsc::channel(128);
-                    if monitor.start(tx).await.is_ok() {
-                        while let Some(line) = rx.recv().await {
-                            let _ = fm_processor.submit(line, EventSource::FileMonitor).await;
-                        }
-                    }
-                });
-            });
-
-            // Pipeline result → Tauri event broadcast
-            let broadcast_handle = handle.clone();
-            spawn_result_listener(result_rx, move |result| {
-                if let Some(state) = broadcast_handle.try_state::<AppState>() {
-                    emit_state_update(&broadcast_handle, state.inner());
-                }
-                if result.error.is_none() {
-                    tracing::debug!(
-                        seq = result.last_event.sequence,
-                        latency_ms = result.latency_ms,
-                        "state broadcast"
-                    );
+            let start_pipeline = Arc::clone(&pipeline);
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = start_pipeline.start(SourceSelection::Auto, result_tx).await {
+                    tracing::warn!(error = %e, "auto start failed, using mock adapter");
                 }
             });
 

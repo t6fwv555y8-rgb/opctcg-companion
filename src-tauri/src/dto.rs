@@ -1,4 +1,5 @@
 use optcg_core::{CombatState, ConnectionStatus, GameState, LastEventInfo, Phase, PlayerState};
+use optcg_observation::{AdapterInfo, AdapterStatus, LatencySnapshot, ObservationSource};
 use optcg_rules::{CombatAnalysis, StrategyRecommendation};
 use serde::{Deserialize, Serialize};
 
@@ -110,6 +111,58 @@ pub struct StateUpdatePayload {
     pub combat_analysis: Option<CombatAnalysis>,
     pub strategy: Option<StrategyRecommendation>,
     pub latency_ms: u64,
+    pub observation: Option<ObservationStatusDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceSelectionDto {
+    Auto,
+    DesktopSimulator,
+    BrowserSimulator,
+    Mock,
+    Replay,
+    ScreenVision,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdapterInfoDto {
+    pub source: String,
+    pub status: AdapterStatus,
+    pub detected: bool,
+    pub label: String,
+    pub live: bool,
+}
+
+impl From<AdapterInfo> for AdapterInfoDto {
+    fn from(info: AdapterInfo) -> Self {
+        Self {
+            source: info.source.label().to_lowercase().replace(' ', "_"),
+            status: info.status,
+            detected: info.detected,
+            label: info.label,
+            live: info.status.is_live(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ObservationStatusDto {
+    pub selection: SourceSelectionDto,
+    pub active_source: Option<String>,
+    pub adapters: Vec<AdapterInfoDto>,
+    pub latency: LatencySnapshot,
+    pub searching: bool,
+}
+
+/// Source-aware connection label for HUD.
+impl ConnectionStatusDto {
+    pub fn with_source_label(mut self, source: Option<&str>) -> Self {
+        if let Some(src) = source {
+            self.label = format!("{src} · LIVE");
+        }
+        self
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

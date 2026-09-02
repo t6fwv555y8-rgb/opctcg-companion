@@ -2,6 +2,38 @@
 
 Real-time desktop companion HUD overlay for the One Piece Card Game (OPTCG) Simulator. Provides optimal strategy recommendations, live combat math, blocker warnings, and system connectivity monitoring with a sub-100ms polling budget.
 
+## Milestone 2 — Real-Time State Pipeline
+
+The companion now implements a full vertical slice:
+
+```
+mock_stream.py → ws://127.0.0.1:9002 → EventProcessor → GameEvent → GameState
+    → CombatMath / StrategyEngine → Tauri emit → React HUD (push updates)
+```
+
+### Event formats
+
+**Pipe-delimited (preferred):**
+```
+PHASE_CHANGED|MAIN
+DON_ATTACHED|PLAYER_1|LEADER|1
+ATTACK_DECLARED|PLAYER_1|ST01-002|LEADER|PLAYER_2|6000
+LIFE_CHANGED|PLAYER_2|-1
+```
+
+**JSON (legacy + mock stream wrapper):**
+```json
+{"type": "PHASE_CHANGED", "raw": "PHASE_CHANGED|MAIN"}
+```
+
+### Mock stream options
+
+```bash
+python3 scripts/mock_stream.py                  # deterministic, 1s interval
+python3 scripts/mock_stream.py --random         # randomized events
+python3 scripts/mock_stream.py --interval 0.5   # faster stream
+```
+
 ## Architecture
 
 ```

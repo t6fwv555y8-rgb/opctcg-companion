@@ -6,6 +6,23 @@ export type ConnectionStatusKind =
   | "connected"
   | "error";
 
+export type AdapterStatusKind =
+  | "unavailable"
+  | "detecting"
+  | "connected"
+  | "observing"
+  | "degraded"
+  | "disconnected"
+  | "error";
+
+export type SourceSelectionKind =
+  | "auto"
+  | "desktop_simulator"
+  | "browser_simulator"
+  | "mock"
+  | "replay"
+  | "screen_vision";
+
 export type SurvivalStatus = "SURVIVES" | "COUNTER_REQUIRED" | "LETHAL";
 
 export interface LastEventInfo {
@@ -63,6 +80,29 @@ export interface ConnectionStatusDto {
   last_error: string | null;
 }
 
+export interface LatencySnapshot {
+  observation_latency_ms: number;
+  analysis_latency_ms: number;
+  total_latency_ms: number;
+  last_updated: string | null;
+}
+
+export interface AdapterInfoDto {
+  source: string;
+  status: AdapterStatusKind;
+  detected: boolean;
+  label: string;
+  live: boolean;
+}
+
+export interface ObservationStatusDto {
+  selection: SourceSelectionKind;
+  active_source: string | null;
+  adapters: AdapterInfoDto[];
+  latency: LatencySnapshot;
+  searching: boolean;
+}
+
 export interface CombatCalculation {
   attacker_power: number;
   defender_power: number;
@@ -106,6 +146,7 @@ export interface StateUpdatePayload {
   combat_analysis: CombatAnalysis | null;
   strategy: StrategyRecommendation | null;
   latency_ms: number;
+  observation: ObservationStatusDto | null;
 }
 
 export interface OverlaySettings {
@@ -115,9 +156,11 @@ export interface OverlaySettings {
 
 export interface CompanionBridge {
   snapshot: StateUpdatePayload | null;
+  observation: ObservationStatusDto | null;
   loading: boolean;
   error: string | null;
   overlay: OverlaySettings;
   toggleOverlay: (enabled?: boolean) => Promise<void>;
   setOpacity: (opacity: number) => Promise<void>;
+  setObservationSource: (selection: SourceSelectionKind) => Promise<void>;
 }

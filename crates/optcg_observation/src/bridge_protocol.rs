@@ -1,0 +1,72 @@
+use serde::{Deserialize, Serialize};
+
+/// Normalized browser-visible game snapshot (never includes hidden info).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct BrowserGameSnapshot {
+    pub timestamp: i64,
+    pub turn: Option<u32>,
+    pub phase: Option<String>,
+    pub active_player: Option<String>,
+    #[serde(rename = "self")]
+    pub self_player: Option<BrowserPlayerSnapshot>,
+    pub opponent: Option<BrowserPlayerSnapshot>,
+    pub combat: Option<BrowserCombatSnapshot>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct BrowserPlayerSnapshot {
+    pub life: Option<u8>,
+    pub hand_count: Option<u8>,
+    pub active_don: Option<u8>,
+    pub rested_don: Option<u8>,
+    #[serde(default)]
+    pub board: Vec<ObservedCard>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct ObservedCard {
+    pub card_id: Option<String>,
+    pub name: Option<String>,
+    pub power: Option<u32>,
+    pub rested: Option<bool>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct BrowserCombatSnapshot {
+    pub attacker: Option<ObservedCard>,
+    pub target: Option<ObservedCard>,
+    pub displayed_power: Option<u32>,
+}
+
+/// Wire protocol message from browser companion extension.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum BridgeMessage {
+    #[serde(rename = "snapshot")]
+    Snapshot(BrowserGameSnapshot),
+    Ping,
+    Pong,
+}
+
+pub const MAX_BRIDGE_PAYLOAD: usize = 256 * 1024;
+
+pub fn validate_bridge_payload(bytes: &[u8]) -> Result<BridgeMessage, String> {
+    if bytes.len() > MAX_BRIDGE_PAYLOAD {
+        return Err(format!("payload exceeds {} bytes", MAX_BRIDGE_PAYLOAD));
+    }
+    serde_json::from_slice(bytes).map_err(|e| format!("malformed json: {e}"))
+}
+
+/// Parse a raw browser snapshot (HTTP POST body) or wrapped bridge message.
+pub fn parse_snapshot_payload(bytes: &[u8]) -> Result<BrowserGameSnapshot, String> {
+    if bytes.len() > MAX_BRIDGE_PAYLOAD {
+        return Err(format!("payload exceeds {} bytes", MAX_BRIDGE_PAYLOAD));
+    }
+    if let Ok(msg) = serde_json::from_slice::<BridgeMessage>(bytes) {
+        return match msg {
+            BridgeMessage::Snapshot(snap) => Ok(snap),
+            _ => Err("expected snapshot message".into()),
+        };
+    }
+    serde_json::from_slice(bytes).map_err(|e| format!("malformed snapshot json: {e}"))
+}

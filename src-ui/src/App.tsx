@@ -3,8 +3,12 @@ import { BlockerWarning } from "./components/BlockerWarning";
 import { CombatPanel } from "./components/CombatPanel";
 import { ConnectionStatus } from "./components/ConnectionStatus";
 import { GameStatePanel } from "./components/GameStatePanel";
+import { SourceSelector } from "./components/SourceSelector";
+import { SourceStatusHud } from "./components/SourceStatusHud";
 import { StrategyPanel } from "./components/StrategyPanel";
 import { TurnIndicator } from "./components/TurnIndicator";
+
+const DEBUG = false;
 
 export default function App() {
   const bridge = useCompanionBridge();
@@ -34,6 +38,8 @@ export default function App() {
         </div>
       </header>
 
+      <SourceStatusHud observation={bridge.observation} debug={DEBUG} />
+
       <TurnIndicator gameState={gs} />
 
       {bridge.error && (
@@ -50,7 +56,6 @@ export default function App() {
         </div>
       ) : (
         <>
-          {/* LEVEL 1 — CRITICAL */}
           <BlockerWarning
             combat={combat}
             analysis={bridge.snapshot?.combat_analysis ?? null}
@@ -59,20 +64,18 @@ export default function App() {
             combat={combat}
             analysis={bridge.snapshot?.combat_analysis ?? null}
           />
-
-          {/* LEVEL 2 — STRATEGY */}
           <StrategyPanel strategy={bridge.snapshot?.strategy ?? null} />
-
-          {/* LEVEL 3 — STATE */}
           <GameStatePanel gameState={gs} />
-
-          {/* LEVEL 4 — SYSTEM */}
+          <SourceSelector
+            observation={bridge.observation}
+            onSelect={bridge.setObservationSource}
+          />
           <ConnectionStatus connection={bridge.snapshot?.connection ?? null} />
         </>
       )}
 
       <footer className="mt-auto px-1 text-center text-[9px] text-slate-500">
-        Event-driven · ws://127.0.0.1:9002
+        Observation adapters · mock :9002 · browser :9003
       </footer>
     </div>
   );

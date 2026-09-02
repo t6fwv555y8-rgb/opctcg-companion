@@ -46,10 +46,7 @@ impl WebSocketServer {
         }
     }
 
-    pub fn with_connect_hook(
-        mut self,
-        hook: Arc<dyn Fn(bool) + Send + Sync>,
-    ) -> Self {
+    pub fn with_connect_hook(mut self, hook: Arc<dyn Fn(bool) + Send + Sync>) -> Self {
         self.on_connect = Some(hook);
         self
     }
@@ -105,9 +102,7 @@ async fn handle_connection(
         match msg {
             Ok(Message::Text(text)) => {
                 let start = std::time::Instant::now();
-                let submit_result = processor
-                    .submit(text.clone(), EventSource::WebSocket)
-                    .await;
+                let submit_result = processor.submit(text.clone(), EventSource::WebSocket).await;
                 let elapsed = start.elapsed().as_millis() as u64;
 
                 match submit_result {
