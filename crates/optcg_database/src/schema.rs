@@ -1,6 +1,6 @@
 use crate::error::DbResult;
 use parking_lot::Mutex;
-use rusqlite::{Connection, params};
+use rusqlite::{params, Connection};
 use tracing::info;
 
 const SCHEMA_SQL: &str = r#"

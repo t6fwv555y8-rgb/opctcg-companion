@@ -1,58 +1,29 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
-  CombatAnalysis,
   CompanionBridge,
-  ConnectionStatus,
-  GameState,
-  LegalAction,
-  RecommendationsPayload,
-} from "../types/companion";
+  OverlaySettings,
+  StateUpdatePayload,
+} from "../types/game";
 
-const POLL_INTERVAL_MS = 100;
-
-async function safeInvoke<T>(cmd: string): Promise<T | null> {
-  try {
-    return await invoke<T>(cmd);
-  } catch {
-    return null;
-  }
-}
+const HEALTH_POLL_MS = 5000;
 
 export function useCompanionBridge(): CompanionBridge {
-  const [gameState, setGameState] = useState<GameState | null>(null);
-  const [recommendations, setRecommendations] =
-    useState<RecommendationsPayload | null>(null);
-  const [combatAnalysis, setCombatAnalysis] = useState<CombatAnalysis | null>(
-    null
-  );
-  const [connectionStatus, setConnectionStatus] =
-    useState<ConnectionStatus | null>(null);
-  const [legalActions, setLegalActions] = useState<LegalAction[]>([]);
+  const [snapshot, setSnapshot] = useState<StateUpdatePayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [clickThrough, setClickThroughState] = useState(false);
+  const [overlay, setOverlay] = useState<OverlaySettings>({
+    click_through: false,
+    opacity: 0.92,
+  });
   const mounted = useRef(true);
 
-  const poll = useCallback(async () => {
-    if (!mounted.current) return;
-
+  const refreshSnapshot = useCallback(async () => {
     try {
-      const [gs, recs, combat, conn, actions] = await Promise.all([
-        invoke<GameState>("get_game_state"),
-        invoke<RecommendationsPayload>("get_recommendations"),
-        invoke<CombatAnalysis | null>("get_combat_analysis"),
-        invoke<ConnectionStatus>("get_connection_status"),
-        invoke<LegalAction[]>("get_legal_actions"),
-      ]);
-
+      const payload = await invoke<StateUpdatePayload>("get_state_snapshot");
       if (!mounted.current) return;
-
-      setGameState(gs);
-      setRecommendations(recs);
-      setCombatAnalysis(combat);
-      setConnectionStatus(conn);
-      setLegalActions(actions);
+      setSnapshot(payload);
       setError(null);
       setLoading(false);
     } catch (e) {
@@ -64,34 +35,56 @@ export function useCompanionBridge(): CompanionBridge {
 
   useEffect(() => {
     mounted.current = true;
-    poll();
-    const id = setInterval(poll, POLL_INTERVAL_MS);
+
+    refreshSnapshot();
+
+    const unlistenPromise = listen<StateUpdatePayload>(
+      "game-state-updated",
+      (event) => {
+        if (!mounted.current) return;
+        setSnapshot(event.payload);
+        setLoading(false);
+        setError(null);
+      }
+    );
+
+    const healthId = setInterval(refreshSnapshot, HEALTH_POLL_MS);
+
     return () => {
       mounted.current = false;
-      clearInterval(id);
+      clearInterval(healthId);
+      unlistenPromise.then((unlisten) => unlisten());
     };
-  }, [poll]);
+  }, [refreshSnapshot]);
 
-  const setClickThrough = useCallback(async (enabled: boolean) => {
+  const toggleOverlay = useCallback(async (enabled?: boolean) => {
     try {
-      await invoke("set_click_through", { enabled });
-      setClickThroughState(enabled);
+      const settings = await invoke<OverlaySettings>("toggle_overlay", {
+        enabled,
+      });
+      setOverlay(settings);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+
+  const setOpacity = useCallback(async (opacity: number) => {
+    try {
+      const settings = await invoke<OverlaySettings>("set_overlay_opacity", {
+        opacity,
+      });
+      setOverlay(settings);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
   }, []);
 
   return {
-    gameState,
-    recommendations,
-    combatAnalysis,
-    connectionStatus,
-    legalActions,
+    snapshot,
     loading,
     error,
-    clickThrough,
-    setClickThrough,
+    overlay,
+    toggleOverlay,
+    setOpacity,
   };
 }
-
-export { safeInvoke };

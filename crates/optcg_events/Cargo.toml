@@ -8,6 +8,7 @@ description = "File system notifications and local WebSocket server for OPTCG Co
 
 [dependencies]
 optcg_core = { path = "../optcg_core" }
+chrono = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }

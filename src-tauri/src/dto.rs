@@ -1,0 +1,119 @@
+use optcg_core::{CombatState, ConnectionStatus, GameState, LastEventInfo, Phase, PlayerState};
+use optcg_rules::{CombatAnalysis, StrategyRecommendation};
+use serde::{Deserialize, Serialize};
+
+/// Serializable game state snapshot for the frontend (authoritative DTO).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GameStateDto {
+    pub game_id: String,
+    pub turn_number: u32,
+    pub active_player: u8,
+    pub phase: Phase,
+    pub player_one: PlayerStateDto,
+    pub player_two: PlayerStateDto,
+    pub combat: CombatState,
+    pub event_sequence: u64,
+    pub last_event: Option<LastEventInfo>,
+    pub timestamp: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlayerStateDto {
+    pub player_index: u8,
+    pub leader_id: String,
+    pub leader_power: u32,
+    pub life: u32,
+    pub active_don: u32,
+    pub rested_don: u32,
+    pub hand_count: u32,
+    pub deck_count: u32,
+    pub trash_count: u32,
+    pub board_count: u32,
+}
+
+impl From<&PlayerState> for PlayerStateDto {
+    fn from(p: &PlayerState) -> Self {
+        Self {
+            player_index: p.player_index,
+            leader_id: p.leader.card_id.clone(),
+            leader_power: p.leader.effective_power(),
+            life: p.life,
+            active_don: p.don_active,
+            rested_don: p.don_rested,
+            hand_count: p.hand_count,
+            deck_count: p.deck_count,
+            trash_count: p.trash_count,
+            board_count: p.characters.len() as u32,
+        }
+    }
+}
+
+impl From<&GameState> for GameStateDto {
+    fn from(state: &GameState) -> Self {
+        Self {
+            game_id: state.game_id.to_string(),
+            turn_number: state.turn_number,
+            active_player: state.active_player,
+            phase: state.phase,
+            player_one: PlayerStateDto::from(&state.players[0]),
+            player_two: PlayerStateDto::from(&state.players[1]),
+            combat: state.combat.clone(),
+            event_sequence: state.event_sequence,
+            last_event: state.last_event.clone(),
+            timestamp: state.timestamp.to_rfc3339(),
+        }
+    }
+}
+
+/// Connection status DTO for HUD.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectionStatusDto {
+    pub status: ConnectionStatus,
+    pub label: String,
+    pub websocket_connected: bool,
+    pub file_monitor_active: bool,
+    pub latency_ms: u64,
+    pub events_processed: u64,
+    pub event_sequence: u64,
+    pub last_error: Option<String>,
+}
+
+impl ConnectionStatusDto {
+    pub fn from_state(state: &GameState) -> Self {
+        let status = state.connection.status;
+        let label = match status {
+            ConnectionStatus::Connected => "SIMULATOR CONNECTED",
+            ConnectionStatus::Connecting => "CONNECTING...",
+            ConnectionStatus::Disconnected => "WAITING FOR SIMULATOR",
+            ConnectionStatus::Error => "CONNECTION ERROR",
+        }
+        .to_string();
+
+        Self {
+            status,
+            label,
+            websocket_connected: state.connection.websocket_connected,
+            file_monitor_active: state.connection.file_monitor_active,
+            latency_ms: state.connection.latency_ms,
+            events_processed: state.connection.events_processed,
+            event_sequence: state.event_sequence,
+            last_error: state.connection.last_error.clone(),
+        }
+    }
+}
+
+/// Payload emitted to frontend on every meaningful state change.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StateUpdatePayload {
+    pub game_state: GameStateDto,
+    pub connection: ConnectionStatusDto,
+    pub combat_analysis: Option<CombatAnalysis>,
+    pub strategy: Option<StrategyRecommendation>,
+    pub latency_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OverlaySettings {
+    pub click_through: bool,
+    pub opacity: f64,
+}

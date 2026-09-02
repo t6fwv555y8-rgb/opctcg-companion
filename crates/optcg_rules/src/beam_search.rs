@@ -1,9 +1,9 @@
 use crate::engine::{ActionType, LegalAction, RulesEngine};
 use crate::error::RulesResult;
-use optcg_core::{GameState, Normalizer, RawEvent};
+use crate::sim::simulate_action;
+use optcg_core::GameState;
 use optcg_database::CardRepository;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 
 /// Configuration for beam search sequencing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -98,10 +98,7 @@ impl BeamSearch {
                 ScoredAction {
                     action,
                     score,
-                    sequence: sequence
-                        .iter()
-                        .map(|a| a.description.clone())
-                        .collect(),
+                    sequence: sequence.iter().map(|a| a.description.clone()).collect(),
                 }
             })
             .collect();
@@ -135,54 +132,6 @@ impl BeamSearch {
     }
 
     fn apply_action(state: &mut GameState, action: &LegalAction) {
-        let event = match action.action_type {
-            ActionType::AttachDon => RawEvent {
-                event_type: "DON_ATTACHED".into(),
-                payload: json!({
-                    "player": action.target_player.unwrap_or(state.active_player),
-                    "card_id": action.card_id,
-                    "amount": 1
-                }),
-            },
-            ActionType::PlayCharacter | ActionType::PlayStage | ActionType::PlayEvent => {
-                RawEvent {
-                    event_type: "CARD_PLAYED".into(),
-                    payload: json!({
-                        "player": action.target_player.unwrap_or(state.active_player),
-                        "card_id": action.card_id,
-                        "zone": "character"
-                    }),
-                }
-            }
-            ActionType::AttackLeader | ActionType::AttackCharacter => RawEvent {
-                event_type: "COMBAT_DECLARED".into(),
-                payload: json!({
-                    "attacker": action.card_id,
-                    "target": action.target_id,
-                    "target_player": action.target_player
-                }),
-            },
-            ActionType::ActivateBlocker => RawEvent {
-                event_type: "BLOCKER_OFFERED".into(),
-                payload: json!({
-                    "player": action.target_player,
-                    "blocker_id": action.card_id
-                }),
-            },
-            ActionType::EndTurn => RawEvent {
-                event_type: "TURN_END".into(),
-                payload: json!({
-                    "next_player": 1 - state.active_player
-                }),
-            },
-            ActionType::EndPhase => RawEvent {
-                event_type: "PHASE_CHANGED".into(),
-                payload: json!({
-                    "phase": "End",
-                    "active_player": state.active_player
-                }),
-            },
-        };
-        let _ = Normalizer::apply_event(state, &event);
+        simulate_action(state, action);
     }
 }

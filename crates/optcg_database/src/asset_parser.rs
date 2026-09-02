@@ -106,14 +106,19 @@ impl AssetParser {
     }
 
     pub fn to_definition(entry: &JsonCardEntry) -> CardDefinition {
+        let card_type = parse_card_type(&entry.card_type);
         CardDefinition {
             card_id: entry.card_id.clone(),
             name: entry.name.clone(),
-            card_type: parse_card_type(&entry.card_type),
+            card_type,
             cost: entry.cost,
             power: entry.power,
             counter: entry.counter,
             color: entry.color.clone(),
+            attributes: optcg_core::CardAttributes {
+                color: entry.color.clone(),
+                card_type,
+            },
             keywords: Keywords {
                 rush: entry.rush,
                 blocker: entry.blocker,
@@ -121,7 +126,7 @@ impl AssetParser {
                 banish: entry.banish,
                 counter: entry.counter,
             },
-            text: entry.text.clone(),
+            rules_text: entry.text.clone(),
         }
     }
 

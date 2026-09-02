@@ -1,11 +1,10 @@
 use crate::error::{EventsError, EventsResult};
+use crate::pipeline::{EventProcessor, EventSource, ProcessResult};
 use futures_util::{SinkExt, StreamExt};
-use optcg_core::{Normalizer, RawEvent};
-use parking_lot::RwLock;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::broadcast;
+use tokio::sync::mpsc;
 use tokio_tungstenite::{accept_async, tungstenite::Message};
 use tracing::{error, info, warn};
 
@@ -31,30 +30,31 @@ impl WebSocketServerConfig {
     }
 }
 
-type SharedGameState = Arc<RwLock<optcg_core::GameState>>;
-
-/// Local async WebSocket server for external stream injection.
+/// Local async WebSocket server forwarding raw events into the pipeline.
 pub struct WebSocketServer {
     config: WebSocketServerConfig,
-    state: SharedGameState,
-    event_tx: broadcast::Sender<String>,
+    processor: Arc<EventProcessor>,
+    on_connect: Option<Arc<dyn Fn(bool) + Send + Sync>>,
 }
 
 impl WebSocketServer {
-    pub fn new(state: SharedGameState, config: WebSocketServerConfig) -> Self {
-        let (event_tx, _) = broadcast::channel(256);
+    pub fn new(processor: Arc<EventProcessor>, config: WebSocketServerConfig) -> Self {
         Self {
             config,
-            state,
-            event_tx,
+            processor,
+            on_connect: None,
         }
     }
 
-    pub fn subscribe(&self) -> broadcast::Receiver<String> {
-        self.event_tx.subscribe()
+    pub fn with_connect_hook(
+        mut self,
+        hook: Arc<dyn Fn(bool) + Send + Sync>,
+    ) -> Self {
+        self.on_connect = Some(hook);
+        self
     }
 
-    pub async fn run(&self) -> EventsResult<()> {
+    pub async fn run(self) -> EventsResult<()> {
         let addr: SocketAddr = self
             .config
             .addr()
@@ -67,11 +67,6 @@ impl WebSocketServer {
 
         info!(addr = %self.config.addr(), "websocket server listening");
 
-        {
-            let mut state = self.state.write();
-            state.connection.websocket_connected = false;
-        }
-
         loop {
             let (stream, peer) = listener
                 .accept()
@@ -79,16 +74,15 @@ impl WebSocketServer {
                 .map_err(|e| EventsError::WebSocket(format!("accept failed: {e}")))?;
 
             info!(%peer, "websocket client connected");
-            {
-                let mut state = self.state.write();
-                state.connection.websocket_connected = true;
+            if let Some(hook) = &self.on_connect {
+                hook(true);
             }
 
-            let state = Arc::clone(&self.state);
-            let event_tx = self.event_tx.clone();
+            let processor = Arc::clone(&self.processor);
+            let hook = self.on_connect.clone();
 
             tokio::spawn(async move {
-                if let Err(e) = handle_connection(stream, state, event_tx).await {
+                if let Err(e) = handle_connection(stream, processor, hook).await {
                     error!(error = %e, "connection handler error");
                 }
             });
@@ -98,8 +92,8 @@ impl WebSocketServer {
 
 async fn handle_connection(
     stream: TcpStream,
-    state: SharedGameState,
-    event_tx: broadcast::Sender<String>,
+    processor: Arc<EventProcessor>,
+    hook: Option<Arc<dyn Fn(bool) + Send + Sync>>,
 ) -> EventsResult<()> {
     let ws_stream = accept_async(stream)
         .await
@@ -111,28 +105,23 @@ async fn handle_connection(
         match msg {
             Ok(Message::Text(text)) => {
                 let start = std::time::Instant::now();
-                let result = process_event(&state, &text);
+                let submit_result = processor
+                    .submit(text.clone(), EventSource::WebSocket)
+                    .await;
                 let elapsed = start.elapsed().as_millis() as u64;
 
-                {
-                    let mut gs = state.write();
-                    gs.connection.latency_ms = elapsed;
-                }
-
-                match result {
+                match submit_result {
                     Ok(()) => {
-                        let _ = event_tx.send(text.clone());
-                        let ack = serde_json::json!({"status": "ok", "latency_ms": elapsed});
-                        if write
-                            .send(Message::Text(ack.to_string()))
-                            .await
-                            .is_err()
-                        {
+                        let ack = serde_json::json!({
+                            "status": "accepted",
+                            "latency_ms": elapsed
+                        });
+                        if write.send(Message::Text(ack.to_string())).await.is_err() {
                             break;
                         }
                     }
                     Err(e) => {
-                        warn!(error = %e, "event processing failed");
+                        warn!(error = %e, "submit failed");
                         let err = serde_json::json!({"status": "error", "message": e.to_string()});
                         let _ = write.send(Message::Text(err.to_string())).await;
                     }
@@ -146,17 +135,64 @@ async fn handle_connection(
         }
     }
 
-    {
-        let mut gs = state.write();
-        gs.connection.websocket_connected = false;
+    if let Some(hook) = hook {
+        hook(false);
     }
 
     Ok(())
 }
 
-fn process_event(state: &SharedGameState, text: &str) -> EventsResult<()> {
-    let event: RawEvent = serde_json::from_str(text)?;
-    let mut gs = state.write();
-    Normalizer::apply_event(&mut gs, &event).map_err(EventsError::Core)?;
-    Ok(())
+/// Spawn result fan-out task — useful for Tauri state broadcast hooks.
+pub fn spawn_result_listener(
+    mut rx: mpsc::Receiver<ProcessResult>,
+    hook: impl Fn(ProcessResult) + Send + 'static,
+) {
+    tokio::spawn(async move {
+        while let Some(result) = rx.recv().await {
+            hook(result);
+        }
+    });
+}
+
+#[cfg(test)]
+mod ws_integration {
+    use super::*;
+    use crate::pipeline::EventProcessor;
+    use optcg_core::GameState;
+    use parking_lot::RwLock;
+    use tokio::time::{sleep, Duration};
+
+    #[tokio::test]
+    async fn websocket_accepts_and_processes_event() {
+        let state = Arc::new(RwLock::new(GameState::new()));
+        let (processor, mut results) = EventProcessor::new(Arc::clone(&state));
+        let processor = Arc::new(processor);
+
+        let server = WebSocketServer::new(Arc::clone(&processor), WebSocketServerConfig::default());
+        tokio::spawn(async move {
+            let _ = server.run().await;
+        });
+
+        sleep(Duration::from_millis(200)).await;
+
+        let uri = "ws://127.0.0.1:9002";
+        let (mut ws, _) = tokio_tungstenite::connect_async(uri)
+            .await
+            .expect("connect to ws server");
+
+        ws.send(Message::Text("PHASE_CHANGED|MAIN".into()))
+            .await
+            .unwrap();
+
+        let result = tokio::time::timeout(Duration::from_secs(2), results.recv())
+            .await
+            .expect("timeout waiting for result")
+            .expect("result channel closed");
+
+        assert!(result.error.is_none());
+        assert_eq!(result.last_event.event_name, "PHASE_CHANGED");
+
+        let gs = state.read();
+        assert_eq!(gs.phase, optcg_core::Phase::Main);
+    }
 }

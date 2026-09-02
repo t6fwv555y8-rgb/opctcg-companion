@@ -1,10 +1,10 @@
 use crate::engine::{LegalAction, RulesEngine};
 use crate::error::RulesResult;
-use optcg_core::{GameState, Normalizer, RawEvent};
+use crate::sim::simulate_action;
+use optcg_core::GameState;
 use optcg_database::CardRepository;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use std::collections::HashMap;
 
 /// MCTS configuration parameters.
@@ -74,11 +74,7 @@ impl MctsEngine {
         Self { config }
     }
 
-    pub fn search(
-        &self,
-        state: &GameState,
-        repo: &CardRepository,
-    ) -> RulesResult<MctsResult> {
+    pub fn search(&self, state: &GameState, repo: &CardRepository) -> RulesResult<MctsResult> {
         let root_actions = RulesEngine::legal_actions(state, repo)?;
         if root_actions.is_empty() {
             return Err(crate::error::RulesError::InvalidAction(
@@ -100,8 +96,9 @@ impl MctsEngine {
                 if !node_ptr.untried.is_empty() {
                     let action = node_ptr.untried.pop().unwrap();
                     let key = Self::action_key(&action);
-                    Self::simulate_action(&mut sim_state, &action);
-                    let child_actions = RulesEngine::legal_actions(&sim_state, repo).unwrap_or_default();
+                    simulate_action(&mut sim_state, &action);
+                    let child_actions =
+                        RulesEngine::legal_actions(&sim_state, repo).unwrap_or_default();
                     let child = MctsNode::new(Some(action.clone()), child_actions);
                     node_ptr.children.insert(key.clone(), child);
                     path.push(key.clone());
@@ -125,15 +122,20 @@ impl MctsEngine {
                     .map(|(k, _)| k.clone())
                     .unwrap();
 
-                if let Some(action) = node_ptr.children.get(&best_key).and_then(|n| n.action.clone()) {
-                    Self::simulate_action(&mut sim_state, &action);
+                if let Some(action) = node_ptr
+                    .children
+                    .get(&best_key)
+                    .and_then(|n| n.action.clone())
+                {
+                    simulate_action(&mut sim_state, &action);
                 }
                 path.push(best_key.clone());
                 node_ptr = node_ptr.children.get_mut(&best_key).unwrap();
                 depth += 1;
             }
 
-            let value = Self::rollout_value(&mut sim_state, repo, self.config.max_rollout_depth - depth);
+            let value =
+                Self::rollout_value(&mut sim_state, repo, self.config.max_rollout_depth - depth);
             Self::backpropagate(&mut root, &path, value);
         }
 
@@ -157,7 +159,13 @@ impl MctsEngine {
         let (best_action, win_rate, visits) = alternatives
             .first()
             .cloned()
-            .map(|(a, r)| (a, r, root.children.values().map(|c| c.visits).max().unwrap_or(0)))
+            .map(|(a, r)| {
+                (
+                    a,
+                    r,
+                    root.children.values().map(|c| c.visits).max().unwrap_or(0),
+                )
+            })
             .unwrap_or((root_actions[0].clone(), 0.5, 0));
 
         Ok(MctsResult {
@@ -193,64 +201,7 @@ impl MctsEngine {
         )
     }
 
-    fn simulate_action(state: &mut GameState, action: &LegalAction) {
-        let event = match action.action_type {
-            crate::engine::ActionType::AttachDon => RawEvent {
-                event_type: "DON_ATTACHED".into(),
-                payload: json!({
-                    "player": action.target_player.unwrap_or(state.active_player),
-                    "card_id": action.card_id,
-                    "amount": 1
-                }),
-            },
-            crate::engine::ActionType::PlayCharacter
-            | crate::engine::ActionType::PlayStage
-            | crate::engine::ActionType::PlayEvent => RawEvent {
-                event_type: "CARD_PLAYED".into(),
-                payload: json!({
-                    "player": action.target_player.unwrap_or(state.active_player),
-                    "card_id": action.card_id,
-                    "zone": "character"
-                }),
-            },
-            crate::engine::ActionType::AttackLeader
-            | crate::engine::ActionType::AttackCharacter => RawEvent {
-                event_type: "COMBAT_DECLARED".into(),
-                payload: json!({
-                    "attacker": action.card_id,
-                    "target": action.target_id,
-                    "target_player": action.target_player
-                }),
-            },
-            crate::engine::ActionType::ActivateBlocker => RawEvent {
-                event_type: "BLOCKER_OFFERED".into(),
-                payload: json!({
-                    "player": action.target_player,
-                    "blocker_id": action.card_id
-                }),
-            },
-            crate::engine::ActionType::EndTurn => RawEvent {
-                event_type: "TURN_END".into(),
-                payload: json!({
-                    "next_player": 1 - state.active_player
-                }),
-            },
-            crate::engine::ActionType::EndPhase => RawEvent {
-                event_type: "PHASE_CHANGED".into(),
-                payload: json!({
-                    "phase": "End",
-                    "active_player": state.active_player
-                }),
-            },
-        };
-        let _ = Normalizer::apply_event(state, &event);
-    }
-
-    fn rollout_value(
-        state: &mut GameState,
-        repo: &CardRepository,
-        remaining_depth: u32,
-    ) -> f64 {
+    fn rollout_value(state: &mut GameState, repo: &CardRepository, remaining_depth: u32) -> f64 {
         let mut rng = rand::thread_rng();
         let mut depth = 0;
         while depth < remaining_depth {
@@ -259,7 +210,7 @@ impl MctsEngine {
                 break;
             }
             let idx = rng.gen_range(0..actions.len());
-            Self::simulate_action(state, &actions[idx]);
+            simulate_action(state, &actions[idx]);
             depth += 1;
         }
 

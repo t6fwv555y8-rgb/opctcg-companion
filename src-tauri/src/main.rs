@@ -1,11 +1,18 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod dto;
+mod runtime;
 mod state;
 
+use commands::emit_state_update;
 use optcg_database::{AssetParser, Database};
-use optcg_events::{FileMonitor, FileMonitorConfig, WebSocketServer, WebSocketServerConfig};
+use optcg_events::{
+    spawn_result_listener, EventProcessor, EventSource, FileMonitor, FileMonitorConfig,
+    WebSocketServer, WebSocketServerConfig,
+};
 use parking_lot::RwLock;
+use runtime::RuntimeHandles;
 use state::AppState;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -27,56 +34,95 @@ fn main() {
     let _ = AssetParser::seed_defaults(&database);
 
     let game_state = Arc::new(RwLock::new(optcg_core::GameState::new()));
+    let (processor, result_rx) = EventProcessor::new(Arc::clone(&game_state));
+    let processor = Arc::new(processor);
 
-    let ws_state = Arc::clone(&game_state);
-    std::thread::spawn(move || {
-        let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
-        rt.block_on(async {
-            if let Err(e) = WebSocketServer::new(ws_state, WebSocketServerConfig::default())
-                .run()
-                .await
-            {
-                tracing::error!(error = %e, "websocket server failed");
-            }
-        });
-    });
-
-    let app_state = AppState::new(database, game_state);
+    let app_state = AppState::new(database, Arc::clone(&game_state));
 
     tauri::Builder::default()
         .manage(app_state)
+        .manage(RuntimeHandles {
+            processor: Arc::clone(&processor),
+        })
         .invoke_handler(tauri::generate_handler![
             commands::get_game_state,
+            commands::get_connection_status,
+            commands::get_last_event,
+            commands::get_event_sequence,
             commands::get_recommendations,
             commands::get_combat_analysis,
             commands::get_legal_actions,
-            commands::get_connection_status,
+            commands::get_state_snapshot,
+            commands::toggle_overlay,
+            commands::set_overlay_opacity,
             commands::set_click_through,
             commands::inject_event,
         ])
-        .setup(|app| {
+        .setup(move |app| {
             let handle = app.handle().clone();
             let app_state: State<AppState> = handle.state();
             let gs = Arc::clone(&app_state.inner().game_state);
 
+            // WebSocket server thread
+            let ws_processor = Arc::clone(&processor);
+            let ws_gs = Arc::clone(&gs);
+            std::thread::spawn(move || {
+                let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+                rt.block_on(async {
+                    {
+                        let mut state = ws_gs.write();
+                        state.connection.status = optcg_core::ConnectionStatus::Connecting;
+                    }
+                    let hook: Arc<dyn Fn(bool) + Send + Sync> = Arc::new(move |connected| {
+                        let mut state = ws_gs.write();
+                        state.connection.websocket_connected = connected;
+                        state.connection.status = if connected {
+                            optcg_core::ConnectionStatus::Connected
+                        } else {
+                            optcg_core::ConnectionStatus::Disconnected
+                        };
+                    });
+                    let server =
+                        WebSocketServer::new(ws_processor, WebSocketServerConfig::default())
+                            .with_connect_hook(hook);
+                    if let Err(e) = server.run().await {
+                        tracing::error!(error = %e, "websocket server failed");
+                    }
+                });
+            });
+
+            // File monitor → pipeline
+            let fm_processor = Arc::clone(&processor);
             let watch_path = dirs_data_path().join("logs");
             let monitor = FileMonitor::new(FileMonitorConfig {
                 watch_path,
                 debounce_ms: 100,
             });
-
             std::thread::spawn(move || {
                 let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
                 rt.block_on(async {
                     let (tx, mut rx) = tokio::sync::mpsc::channel(128);
                     if monitor.start(tx).await.is_ok() {
                         while let Some(line) = rx.recv().await {
-                            let mut state = gs.write();
-                            state.connection.file_monitor_active = true;
-                            let _ = optcg_core::Normalizer::apply_log_line(&mut state, &line);
+                            let _ = fm_processor.submit(line, EventSource::FileMonitor).await;
                         }
                     }
                 });
+            });
+
+            // Pipeline result → Tauri event broadcast
+            let broadcast_handle = handle.clone();
+            spawn_result_listener(result_rx, move |result| {
+                if let Some(state) = broadcast_handle.try_state::<AppState>() {
+                    emit_state_update(&broadcast_handle, state.inner());
+                }
+                if result.error.is_none() {
+                    tracing::debug!(
+                        seq = result.last_event.sequence,
+                        latency_ms = result.latency_ms,
+                        "state broadcast"
+                    );
+                }
             });
 
             if let Some(window) = app.get_webview_window("main") {
@@ -94,5 +140,7 @@ fn main() {
 }
 
 fn dirs_data_path() -> PathBuf {
-    dirs::data_local_dir().unwrap_or_else(|| PathBuf::from(".")).join("optcg-companion")
+    dirs::data_local_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("optcg-companion")
 }

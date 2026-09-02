@@ -1,65 +1,38 @@
-import type { RecommendationsPayload } from "../types/companion";
+import type { StrategyRecommendation } from "../types/game";
 
 interface Props {
-  recommendations: RecommendationsPayload | null;
+  strategy: StrategyRecommendation | null;
 }
 
-export function StrategyPanel({ recommendations }: Props) {
-  const topBeam = recommendations?.beam?.[0];
-  const mcts = recommendations?.mcts;
-
+export function StrategyPanel({ strategy }: Props) {
   return (
     <div className="hud-panel p-3">
-      <div className="hud-title mb-2">Optimal Strategy</div>
-
-      {topBeam ? (
-        <div className="mb-3">
-          <div className="text-xs text-slate-400">Beam Search Top Pick</div>
-          <div className="mt-1 font-mono text-sm text-white">
-            {topBeam.action.description}
+      <div className="hud-title mb-2">Strategy</div>
+      {strategy ? (
+        <>
+          <div className="font-mono text-sm text-hud-success">
+            {strategy.action.description}
           </div>
-          <div className="mt-1 flex items-center gap-2">
-            <span className="text-[10px] text-slate-400">Score</span>
-            <span className="stat-value text-hud-accent">
-              {topBeam.score.toFixed(1)}
+          <div className="mt-1 flex gap-3 text-xs">
+            <span>
+              Score{" "}
+              <span className="stat-value text-hud-accent">
+                {strategy.score.toFixed(1)}
+              </span>
+            </span>
+            <span>
+              Conf{" "}
+              <span className="stat-value">
+                {(strategy.confidence * 100).toFixed(0)}%
+              </span>
             </span>
           </div>
-          {topBeam.sequence.length > 1 && (
-            <div className="mt-2 space-y-0.5">
-              <div className="text-[10px] uppercase text-slate-500">
-                Sequence
-              </div>
-              {topBeam.sequence.slice(0, 3).map((step, i) => (
-                <div key={i} className="text-[10px] text-slate-400">
-                  {i + 1}. {step}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+          <p className="mt-2 text-[10px] leading-relaxed text-slate-400">
+            {strategy.reasoning}
+          </p>
+        </>
       ) : (
-        <p className="mb-3 text-xs text-slate-400">Awaiting game state...</p>
-      )}
-
-      {mcts && (
-        <div className="border-t border-slate-600/50 pt-2">
-          <div className="text-xs text-slate-400">MCTS Best Line</div>
-          <div className="mt-1 font-mono text-sm text-hud-success">
-            {mcts.best_action.description}
-          </div>
-          <div className="mt-1 flex items-center gap-3">
-            <div>
-              <span className="text-[10px] text-slate-400">Win Rate </span>
-              <span className="stat-value">
-                {(mcts.win_rate * 100).toFixed(1)}%
-              </span>
-            </div>
-            <div>
-              <span className="text-[10px] text-slate-400">Visits </span>
-              <span className="stat-value">{mcts.visits}</span>
-            </div>
-          </div>
-        </div>
+        <p className="text-xs text-slate-400">No recommendation yet</p>
       )}
     </div>
   );

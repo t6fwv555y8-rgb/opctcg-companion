@@ -1,3 +1,4 @@
+use crate::events::LastEventInfo;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -96,6 +97,14 @@ impl Keywords {
     }
 }
 
+/// Static card attributes from database (never mixed with runtime state).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub struct CardAttributes {
+    pub color: String,
+    pub card_type: CardType,
+}
+
 /// Static card definition reference (resolved via database).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CardDefinition {
@@ -106,8 +115,40 @@ pub struct CardDefinition {
     pub power: u32,
     pub counter: i32,
     pub color: String,
+    pub attributes: CardAttributes,
     pub keywords: Keywords,
-    pub text: String,
+    #[serde(alias = "text")]
+    pub rules_text: String,
+}
+
+impl CardDefinition {
+    pub fn from_parts(
+        card_id: String,
+        name: String,
+        card_type: CardType,
+        cost: u32,
+        power: u32,
+        counter: i32,
+        color: String,
+        keywords: Keywords,
+        rules_text: String,
+    ) -> Self {
+        Self {
+            attributes: CardAttributes {
+                color: color.clone(),
+                card_type,
+            },
+            card_id,
+            name,
+            card_type,
+            cost,
+            power,
+            counter,
+            color,
+            keywords,
+            rules_text,
+        }
+    }
 }
 
 /// Runtime card instance on the battlefield or in zones.
@@ -122,6 +163,10 @@ pub struct CardInstance {
     pub attached_don: u32,
     pub power_modifier: i32,
     pub tapped: bool,
+    pub rested: bool,
+    pub known: bool,
+    pub revealed: bool,
+    pub position: u8,
 }
 
 impl CardInstance {
@@ -136,7 +181,26 @@ impl CardInstance {
             attached_don: 0,
             power_modifier: 0,
             tapped: false,
+            rested: false,
+            known: true,
+            revealed: zone != Zone::Hand,
+            position: 0,
         }
+    }
+
+    pub fn set_rested(&mut self, rested: bool) {
+        self.rested = rested;
+        self.tapped = rested;
+        self.orientation = if rested {
+            CardOrientation::Rested
+        } else {
+            CardOrientation::Active
+        };
+        self.state = if rested {
+            CardState::Rested
+        } else {
+            CardState::Ready
+        };
     }
 
     pub fn effective_power(&self, base_power: u32) -> i32 {
@@ -144,41 +208,98 @@ impl CardInstance {
     }
 }
 
+/// Leader runtime snapshot (distinct from static CardDefinition).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LeaderState {
+    pub card_id: String,
+    pub power: u32,
+    pub rested: bool,
+    pub attached_don: u32,
+}
+
+impl LeaderState {
+    pub fn new(card_id: impl Into<String>) -> Self {
+        Self {
+            card_id: card_id.into(),
+            power: 5000,
+            rested: false,
+            attached_don: 0,
+        }
+    }
+
+    pub fn effective_power(&self) -> u32 {
+        self.power
+            .saturating_add(self.attached_don.saturating_mul(1000))
+    }
+}
+
 /// Per-player runtime state.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlayerState {
     pub player_index: u8,
+    pub leader: LeaderState,
     pub life: u32,
     pub don_active: u32,
     pub don_rested: u32,
     pub hand_count: u32,
     pub deck_count: u32,
-    pub leader_id: String,
-    pub leader_power: u32,
-    pub leader_rested: bool,
+    pub trash_count: u32,
+    /// Board characters (alias: `board()` accessor).
     pub characters: Vec<CardInstance>,
     pub stage: Option<CardInstance>,
     pub hand: Vec<CardInstance>,
     pub trash: Vec<CardInstance>,
+    // Legacy flat leader fields — kept for serialization compat
+    #[serde(default)]
+    pub leader_id: String,
+    #[serde(default = "default_leader_power")]
+    pub leader_power: u32,
+    #[serde(default)]
+    pub leader_rested: bool,
+}
+
+fn default_leader_power() -> u32 {
+    5000
 }
 
 impl PlayerState {
     pub fn new(index: u8, leader_id: impl Into<String>) -> Self {
+        let leader_id = leader_id.into();
         Self {
             player_index: index,
+            leader: LeaderState::new(leader_id.clone()),
             life: 5,
             don_active: 0,
             don_rested: 0,
             hand_count: 5,
             deck_count: 45,
-            leader_id: leader_id.into(),
-            leader_power: 5000,
-            leader_rested: false,
+            trash_count: 0,
             characters: Vec::new(),
             stage: None,
             hand: Vec::new(),
             trash: Vec::new(),
+            leader_id,
+            leader_power: 5000,
+            leader_rested: false,
         }
+    }
+
+    pub fn sync_leader_fields(&mut self) {
+        self.leader_id = self.leader.card_id.clone();
+        self.leader_power = self.leader.effective_power();
+        self.leader_rested = self.leader.rested;
+    }
+
+    pub fn board(&self) -> &[CardInstance] {
+        &self.characters
+    }
+
+    pub fn active_don(&self) -> u32 {
+        self.don_active
+    }
+
+    pub fn rested_don(&self) -> u32 {
+        self.don_rested
     }
 
     pub fn total_don(&self) -> u32 {
@@ -186,17 +307,24 @@ impl PlayerState {
     }
 
     pub fn find_character(&mut self, card_id: &str) -> Option<&mut CardInstance> {
+        self.characters.iter_mut().find(|c| c.card_id == card_id)
+    }
+
+    pub fn find_character_by_instance(&mut self, instance_id: &Uuid) -> Option<&mut CardInstance> {
         self.characters
             .iter_mut()
-            .find(|c| c.card_id == card_id)
+            .find(|c| c.instance_id == *instance_id)
     }
 
     pub fn find_blocker(&self) -> Option<&CardInstance> {
         self.characters.iter().find(|c| {
-            c.state == CardState::Ready
-                && c.zone == Zone::Character
-                && !c.tapped
+            c.state == CardState::Ready && c.zone == Zone::Character && !c.tapped && !c.rested
         })
+    }
+
+    pub fn push_trash(&mut self, card: CardInstance) {
+        self.trash.push(card);
+        self.trash_count = self.trash.len() as u32;
     }
 }
 
@@ -225,24 +353,42 @@ impl CombatState {
 /// Connectivity and ingestion metadata.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct ConnectionState {
+    pub status: ConnectionStatus,
     pub websocket_connected: bool,
     pub file_monitor_active: bool,
     pub last_event_at: Option<DateTime<Utc>>,
     pub events_processed: u64,
     pub latency_ms: u64,
+    pub last_error: Option<String>,
 }
 
-/// Top-level normalized game state.
+/// Backend connectivity model for HUD display.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectionStatus {
+    #[default]
+    Disconnected,
+    Connecting,
+    Connected,
+    Error,
+}
+
+/// Top-level canonical game state — single source of truth.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GameState {
-    pub match_id: Uuid,
-    pub active_player: u8,
+    #[serde(alias = "match_id")]
+    pub game_id: Uuid,
     pub turn_number: u32,
+    pub active_player: u8,
     pub phase: Phase,
     pub players: [PlayerState; 2],
     pub combat: CombatState,
     pub connection: ConnectionState,
+    pub event_sequence: u64,
+    pub last_event: Option<LastEventInfo>,
     pub event_log: Vec<String>,
+    pub timestamp: DateTime<Utc>,
+    pub last_processed_fingerprint: Option<String>,
 }
 
 impl Default for GameState {
@@ -254,7 +400,7 @@ impl Default for GameState {
 impl GameState {
     pub fn new() -> Self {
         Self {
-            match_id: Uuid::new_v4(),
+            game_id: Uuid::new_v4(),
             active_player: 0,
             turn_number: 1,
             phase: Phase::Draw,
@@ -264,8 +410,28 @@ impl GameState {
             ],
             combat: CombatState::default(),
             connection: ConnectionState::default(),
+            event_sequence: 0,
+            last_event: None,
             event_log: Vec::new(),
+            timestamp: Utc::now(),
+            last_processed_fingerprint: None,
         }
+    }
+
+    pub fn player_one(&self) -> &PlayerState {
+        &self.players[0]
+    }
+
+    pub fn player_two(&self) -> &PlayerState {
+        &self.players[1]
+    }
+
+    pub fn player_one_mut(&mut self) -> &mut PlayerState {
+        &mut self.players[0]
+    }
+
+    pub fn player_two_mut(&mut self) -> &mut PlayerState {
+        &mut self.players[1]
     }
 
     pub fn active_player_mut(&mut self) -> &mut PlayerState {
