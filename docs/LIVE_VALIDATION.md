@@ -34,10 +34,13 @@ cd ..
 
 ### OneSimulator on Mac
 
+Full Mac setup (clone, Rust, HUD vs browser): see **[MAC_RUN.md](MAC_RUN.md)**.
+
 1. Start the companion (first run may take several minutes to compile):
    ```bash
    cd src-ui && npm run tauri:dev
    ```
+   You need the **native HUD window**, not only `localhost:1420` in a browser.
 2. Load the browser extension:
    - Open Chrome/Edge → `chrome://extensions` (or Edge equivalent)
    - Enable **Developer mode**

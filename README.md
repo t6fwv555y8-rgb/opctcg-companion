@@ -55,17 +55,28 @@ optcg-companion/
 - Python 3.10+ (for mock stream / vision scripts)
 - Linux: `libwebkit2gtk-4.1-dev`, `libappindicator3-dev`, `librsvg2-dev`, `patchelf`
 
-## Quick Start
+## Quick Start (MacBook)
+
+GitHub is only the source host — opening the website is not the app.
+
+See **[docs/MAC_RUN.md](docs/MAC_RUN.md)** for the full Mac walkthrough.
 
 ```bash
-# Install dependencies
 npm run install:all
+cd browser-companion && npm install && npm run build && cd ..
 
-# Launch Tauri HUD + Python mock WebSocket streamer
-npm run dev
+# Real native HUD (required) — NOT npm run dev:ui
+cd src-ui && npm run tauri:dev
 ```
 
-The HUD polls game state every **100ms** via Tauri commands. The WebSocket server listens on `ws://127.0.0.1:9002` for simulator event injection.
+You should get a desktop window titled **OPTCG Companion HUD**.  
+A browser tab on `localhost:1420` alone means the frontend-only Vite server is running.
+
+Optional mock stream (second terminal):
+
+```bash
+python3 scripts/mock_stream.py
+```
 
 ## Individual Commands
 
