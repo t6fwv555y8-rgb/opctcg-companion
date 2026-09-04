@@ -96,6 +96,13 @@ fn archetype_hint(d: &DeckProfile) -> &'static str {
     );
     let color = color_key(d);
 
+    // Exact-list packages
+    if d.list_entries.iter().any(|e| e.card_id == "OP17-079")
+        || d.leader_id.eq_ignore_ascii_case("OP17-079")
+    {
+        return "elbaph";
+    }
+
     if name.contains("aggro") || name.contains("rush") {
         return "aggro";
     }
@@ -124,6 +131,10 @@ fn your_game_plan(you: &DeckProfile) -> String {
     let mut parts = vec![format!("{label} game plan ({arch}):")];
 
     match arch {
+        "elbaph" => parts.push(
+            "Black Elbaph Luffy plan: establish a 12+ cost Character (Saul +12 / Loki +12), then turn on the package — Leader Blocker on 12+ bodies, board buffs (+3000), Usopp/Saul Elbaph searches, and Rush Luffy (OP17-093) for the kill."
+                .into(),
+        ),
         "aggro" => parts.push(
             "Curve out early characters, attach DON to push leader/character swings, and race life before the opponent stabilizes."
                 .into(),
@@ -267,6 +278,57 @@ fn list_specific_notes(you: &DeckProfile) -> Vec<String> {
     let mut notes = Vec::new();
     notes.push(list_composition_summary(you));
 
+    // Black Elbaph Luffy (OP17-079) package — exact-list coaching
+    let is_elbaph = you.list_entries.iter().any(|e| e.card_id == "OP17-079")
+        || you.leader_id.eq_ignore_ascii_case("OP17-079");
+    if is_elbaph {
+        notes.push(
+            "Win condition: get ANY Character to effective cost 12+ (Saul +12 / Loki +12), which turns on Leader Blocker + Straw Hat pumps/Rush."
+                .into(),
+        );
+        if let Some(saul) = you.list_entries.iter().find(|e| e.card_id == "OP17-089") {
+            notes.push(format!(
+                "{}× Jaguar.D.Saul — primary 12+ enabler (+12 cost) and Elbaph dig; prioritize landing him by turn 4–5.",
+                saul.quantity
+            ));
+        }
+        if let Some(loki) = you.list_entries.iter().find(|e| e.card_id == "OP17-119") {
+            notes.push(format!(
+                "{}× Loki — secondary enabler (+12 cost), K.O. ≤4 total cost, 11k on their turn.",
+                loki.quantity
+            ));
+        }
+        if let Some(luffy) = you.list_entries.iter().find(|e| e.card_id == "OP17-093") {
+            notes.push(format!(
+                "{}× Luffy (8c) — Rush if 12+ is out; On Play recycles ≤2 from trash. Drop him the turn Saul/Loki sticks.",
+                luffy.quantity
+            ));
+        }
+        if let Some(usopp) = you.list_entries.iter().find(|e| e.card_id == "OP17-080") {
+            notes.push(format!(
+                "{}× Usopp — Elbaph search + Counter 1000; becomes 5k with 12+ online.",
+                usopp.quantity
+            ));
+        }
+        if let Some(kong) = you.list_entries.iter().find(|e| e.card_id == "OP17-098") {
+            notes.push(format!(
+                "{}× Gum-Gum Kong Gun — Main clear (rest 6 DON, need 12+) or Leader Counter +3000.",
+                kong.quantity
+            ));
+        }
+        if let Some(patch) = you.list_entries.iter().find(|e| e.card_id == "OP05-094") {
+            notes.push(format!(
+                "{}× Haute Couture Patch★Work — −3 cost / freeze; shrink blockers before a pumped swing.",
+                patch.quantity
+            ));
+        }
+        notes.push(
+            "Curve: flood 1–2 drops early, dig with Usopp/Saul, slam 12+, then convert with Rush Luffy / Kong Gun."
+                .into(),
+        );
+        return notes;
+    }
+
     for e in you
         .list_entries
         .iter()
@@ -338,6 +400,11 @@ fn matchup_plan(you: &DeckProfile, opp: &DeckProfile) -> String {
     let opp_label = display_name(opp);
 
     let core = match (you_a, opp_a) {
+        ("elbaph", _) => {
+            format!(
+                "Vs {opp_label}: race to a 12+ cost piece (4× Saul or 4× Loki). Once it's online, your low-cost Straw Hats pump, Leader gives Blocker to 12+ bodies, and 4× Luffy (OP17-093) can Rush for lethal. Use Patch★Work / Kong Gun to clear blockers before the swing."
+            )
+        }
         ("aggro", "control") => {
             format!(
                 "Vs {opp_label} (control): race hard. Force them to spend counters early, attack leader every turn you can, and don't slow-roll development."
