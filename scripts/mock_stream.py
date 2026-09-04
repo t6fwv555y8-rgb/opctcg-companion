@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Event-driven local WebSocket simulator for OPTCG Companion development."""
+"""Event-driven local WebSocket simulator for OPTCG Companion development.
+
+This script is a CLIENT. Start the Tauri HUD first (`cd src-ui && npm run tauri:dev`)
+so something is listening on ws://127.0.0.1:9002, then run this script.
+"""
 
 from __future__ import annotations
 
@@ -10,11 +14,14 @@ import random
 import signal
 import sys
 from datetime import datetime, timezone
+from typing import Optional
 
 try:
     import websockets
 except ImportError:
-    print("Install websockets: pip install websockets", file=sys.stderr)
+    print("Missing Python package: websockets", file=sys.stderr)
+    print("Install with:", file=sys.stderr)
+    print("  python3 -m pip install --user websockets", file=sys.stderr)
     sys.exit(1)
 
 HOST = "127.0.0.1"
@@ -71,7 +78,7 @@ class MockStream:
         self,
         interval: float = 1.0,
         deterministic: bool = True,
-        uri: str | None = None,
+        uri: Optional[str] = None,
     ) -> None:
         self.interval = interval
         self.deterministic = deterministic
@@ -87,7 +94,10 @@ class MockStream:
             raw = DETERMINISTIC_SEQUENCE[self._idx % len(DETERMINISTIC_SEQUENCE)]
         else:
             template = random.choice(RANDOM_EVENTS)
-            raw = template.format(n=random.randint(1, 2), power=random.choice([4000, 5000, 6000, 7000]))
+            raw = template.format(
+                n=random.randint(1, 2),
+                power=random.choice([4000, 5000, 6000, 7000]),
+            )
         self._idx += 1
         return wrap_event(raw)
 
@@ -95,10 +105,13 @@ class MockStream:
         print(f"[mock_stream] Target: {self.uri}")
         print(f"[mock_stream] Mode: {'deterministic' if self.deterministic else 'random'}")
         print(f"[mock_stream] Interval: {self.interval}s")
+        print("[mock_stream] Tip: start the HUD first (cd src-ui && npm run tauri:dev)")
 
         while not self._stop.is_set():
             try:
-                async with websockets.connect(self.uri, ping_interval=20, ping_timeout=20) as ws:
+                async with websockets.connect(
+                    self.uri, ping_interval=20, ping_timeout=20
+                ) as ws:
                     print(f"[mock_stream] Connected to {self.uri}")
                     while not self._stop.is_set():
                         payload = self.next_event()
@@ -111,7 +124,12 @@ class MockStream:
                             pass
                         await asyncio.sleep(self.interval)
             except (ConnectionRefusedError, OSError, ConnectionError) as exc:
-                print(f"[mock_stream] Waiting for server on {self.uri}: {exc}")
+                print(
+                    f"[mock_stream] Waiting for HUD WebSocket on {self.uri}: {exc}"
+                )
+                print(
+                    "[mock_stream] Start the companion first, then leave this running."
+                )
                 await asyncio.sleep(2.0)
             except websockets.exceptions.ConnectionClosed:
                 print("[mock_stream] Connection closed, reconnecting...")
@@ -127,14 +145,19 @@ async def main_async(args: argparse.Namespace) -> None:
 
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, stream.stop)
+        try:
+            loop.add_signal_handler(sig, stream.stop)
+        except NotImplementedError:
+            pass
 
     await stream.run()
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="OPTCG mock event stream")
-    parser.add_argument("--interval", type=float, default=1.0, help="Seconds between events")
+    parser.add_argument(
+        "--interval", type=float, default=1.0, help="Seconds between events"
+    )
     parser.add_argument("--random", action="store_true", help="Randomized event mode")
     parser.add_argument("--uri", type=str, default=None, help="WebSocket URI")
     args = parser.parse_args()
