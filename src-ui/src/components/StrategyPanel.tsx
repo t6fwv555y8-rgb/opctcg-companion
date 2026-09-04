@@ -1,35 +1,120 @@
-import type { GameStateDto, StrategyRecommendation } from "../types/game";
+import type {
+  DeckStrategyBrief,
+  GameStateDto,
+  StrategyRecommendation,
+} from "../types/game";
 
 interface Props {
   strategy: StrategyRecommendation | null;
   options?: StrategyRecommendation[];
   phaseCoach?: string | null;
+  deckStrategy?: DeckStrategyBrief | null;
   gameState?: GameStateDto | null;
   paused?: boolean;
+  refreshing?: boolean;
+  onRefresh?: () => void;
 }
 
 export function StrategyPanel({
   strategy,
   options = [],
   phaseCoach,
+  deckStrategy = null,
   gameState,
   paused = false,
+  refreshing = false,
+  onRefresh,
 }: Props) {
   return (
     <div className="hud-panel space-y-2 p-3">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2">
         <div className="hud-title">Coach · Next Steps</div>
-        {gameState && (
-          <span className="rounded bg-hud-accent/20 px-2 py-0.5 text-[10px] font-semibold text-hud-accent">
-            {gameState.phase}
-          </span>
-        )}
+        <div className="flex items-center gap-1">
+          {gameState && (
+            <span className="rounded bg-hud-accent/20 px-2 py-0.5 text-[10px] font-semibold text-hud-accent">
+              {gameState.phase}
+            </span>
+          )}
+          {onRefresh && (
+            <button
+              type="button"
+              onClick={onRefresh}
+              disabled={refreshing}
+              className="rounded border border-hud-accent/40 bg-hud-accent/10 px-2 py-0.5 text-[10px] font-semibold text-hud-accent hover:bg-hud-accent/20 disabled:opacity-50"
+              title="Rebuild detailed strategy for these decks"
+            >
+              {refreshing ? "Refreshing…" : "Refresh"}
+            </button>
+          )}
+        </div>
       </div>
 
       {phaseCoach && (
         <p className="rounded border border-hud-accent/20 bg-hud-accent/10 px-2 py-1 text-[11px] leading-snug text-hud-accent">
           {phaseCoach}
         </p>
+      )}
+
+      {deckStrategy && (
+        <div className="space-y-1.5 rounded border border-slate-700/60 bg-slate-900/40 px-2 py-1.5">
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-[9px] uppercase tracking-wide text-slate-500">
+              Deck strategy
+            </div>
+            <div className="truncate text-[9px] text-slate-500">
+              {deckStrategy.matchup}
+            </div>
+          </div>
+          <p className="text-[10px] leading-relaxed text-slate-200">
+            {deckStrategy.your_plan}
+          </p>
+          <p className="text-[10px] leading-relaxed text-slate-300">
+            {deckStrategy.vs_opponent}
+          </p>
+          {deckStrategy.this_turn.length > 0 && (
+            <div>
+              <div className="mb-0.5 text-[9px] uppercase tracking-wide text-hud-accent/80">
+                This turn
+              </div>
+              <ul className="space-y-0.5">
+                {deckStrategy.this_turn.map((step, i) => (
+                  <li key={i} className="text-[10px] leading-snug text-slate-300">
+                    <span className="mr-1 text-slate-500">{i + 1}.</span>
+                    {step}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {deckStrategy.priorities.length > 0 && (
+            <div>
+              <div className="mb-0.5 text-[9px] uppercase tracking-wide text-slate-500">
+                Priorities
+              </div>
+              <ul className="space-y-0.5">
+                {deckStrategy.priorities.slice(0, 4).map((p, i) => (
+                  <li key={i} className="text-[10px] leading-snug text-slate-400">
+                    · {p}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {deckStrategy.threats.length > 0 && (
+            <div>
+              <div className="mb-0.5 text-[9px] uppercase tracking-wide text-amber-400/80">
+                Threats
+              </div>
+              <ul className="max-h-16 space-y-0.5 overflow-y-auto">
+                {deckStrategy.threats.slice(0, 5).map((t, i) => (
+                  <li key={i} className="text-[10px] leading-snug text-amber-100/80">
+                    · {t}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
       )}
 
       {paused && (

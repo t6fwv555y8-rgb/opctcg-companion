@@ -4,7 +4,10 @@ use crate::dto::{
     StateUpdatePayload,
 };
 use optcg_database::Database;
-use optcg_rules::{BeamSearch, BeamSearchConfig, CombatMath, MctsConfig, MctsEngine, RulesEngine};
+use optcg_rules::{
+    BeamSearch, BeamSearchConfig, CombatMath, DeckProfile, DeckStrategyBrief, DeckStrategyCoach,
+    MctsConfig, MctsEngine, RulesEngine,
+};
 use parking_lot::RwLock;
 use std::sync::Arc;
 
@@ -14,6 +17,8 @@ pub struct AppState {
     pub beam: BeamSearch,
     pub mcts: MctsEngine,
     pub overlay: RwLock<OverlaySettings>,
+    /// Cached deck strategy brief; refreshed on demand or when matchup changes.
+    pub deck_strategy: RwLock<Option<DeckStrategyBrief>>,
 }
 
 impl AppState {
@@ -33,11 +38,62 @@ impl AppState {
                 click_through: false,
                 opacity: 0.92,
             }),
+            deck_strategy: RwLock::new(None),
         }
     }
 
     pub fn repo(&self) -> optcg_database::CardRepository<'_> {
         optcg_database::CardRepository::new(&self.database)
+    }
+
+    fn profile_from_deck(deck: &DeckInfoDto) -> DeckProfile {
+        DeckProfile {
+            name: deck.name.clone(),
+            leader_id: deck.leader_id.clone(),
+            leader_name: deck.leader_name.clone(),
+            leader_color: deck.leader_color.clone(),
+            known_card_ids: deck.known_cards.iter().map(|c| c.card_id.clone()).collect(),
+            known_card_names: deck.known_cards.iter().map(|c| c.name.clone()).collect(),
+        }
+    }
+
+    /// Rebuild detailed deck-vs-deck strategy for the current matchup.
+    pub fn refresh_deck_strategy(&self) -> DeckStrategyBrief {
+        let gs = self.game_state.read();
+        let your_deck = self.deck_info_for(gs.player_one());
+        let opponent_deck = self.deck_info_for(gs.player_two());
+        let brief = DeckStrategyCoach::brief(
+            &gs,
+            &Self::profile_from_deck(&your_deck),
+            &Self::profile_from_deck(&opponent_deck),
+        );
+        *self.deck_strategy.write() = Some(brief.clone());
+        brief
+    }
+
+    fn ensure_deck_strategy(
+        &self,
+        your_deck: &DeckInfoDto,
+        opponent_deck: &DeckInfoDto,
+        gs: &optcg_core::GameState,
+    ) -> DeckStrategyBrief {
+        let matchup = format!("{} vs {}", your_deck.name, opponent_deck.name);
+        let mut cache = self.deck_strategy.write();
+        let needs_refresh = match cache.as_ref() {
+            None => true,
+            Some(existing) => existing.matchup != matchup,
+        };
+        if needs_refresh {
+            let brief = DeckStrategyCoach::brief(
+                gs,
+                &Self::profile_from_deck(your_deck),
+                &Self::profile_from_deck(opponent_deck),
+            );
+            *cache = Some(brief.clone());
+            brief
+        } else {
+            cache.as_ref().unwrap().clone()
+        }
     }
 
     fn deck_info_for(&self, player: &optcg_core::PlayerState) -> DeckInfoDto {
@@ -103,6 +159,7 @@ impl AppState {
         let combat_analysis = CombatMath::analyze_current_combat(&gs, &repo);
         let your_deck = self.deck_info_for(gs.player_one());
         let opponent_deck = self.deck_info_for(gs.player_two());
+        let deck_strategy = self.ensure_deck_strategy(&your_deck, &opponent_deck, &gs);
         let mut phase_coach = RulesEngine::phase_coach(&gs);
         // Make coaching deck-specific when we know the matchup.
         if your_deck.leader_id != "" || opponent_deck.leader_id != "" {
@@ -178,12 +235,13 @@ impl AppState {
                         confidence: if eligibility.eligible { 0.75 } else { 0.45 },
                         reasoning: if top.sequence.len() > 1 {
                             format!(
-                                "Suggested sequence for this phase: {}. {}",
+                                "Suggested sequence for this phase: {}. {} | {}",
                                 top.sequence.join(" → "),
-                                phase_coach
+                                phase_coach,
+                                deck_strategy.vs_opponent
                             )
                         } else {
-                            phase_coach.clone()
+                            format!("{} | {}", phase_coach, deck_strategy.your_plan)
                         },
                     })
                 } else {
@@ -215,6 +273,7 @@ impl AppState {
             strategy,
             options,
             phase_coach,
+            deck_strategy: Some(deck_strategy),
             your_deck,
             opponent_deck,
             latency_ms,

@@ -81,6 +81,23 @@ pub fn get_state_snapshot(
         )))
 }
 
+/// Force-refresh detailed deck-vs-deck strategy for the current matchup.
+#[command]
+pub fn refresh_deck_strategy(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    runtime: State<'_, RuntimeHandles>,
+) -> StateUpdatePayload {
+    let _ = state.inner().refresh_deck_strategy();
+    let observation = Some(build_observation_status(
+        &runtime.manager,
+        &runtime.pipeline,
+    ));
+    let payload = state.inner().build_update_payload(observation);
+    let _ = app.emit("game-state-updated", payload.clone());
+    payload
+}
+
 #[command]
 pub fn get_observation_status(runtime: State<'_, RuntimeHandles>) -> ObservationStatusDto {
     build_observation_status(&runtime.manager, &runtime.pipeline)

@@ -81,11 +81,14 @@ export default function App() {
                 strategy={bridge.snapshot?.strategy ?? null}
                 options={bridge.snapshot?.options ?? []}
                 phaseCoach={bridge.snapshot?.phase_coach ?? null}
+                deckStrategy={bridge.snapshot?.deck_strategy ?? null}
                 gameState={gs}
                 paused={
                   bridge.observation?.analysis?.mode === "paused" ||
                   bridge.observation?.hud_state === "lost"
                 }
+                refreshing={bridge.refreshingStrategy}
+                onRefresh={bridge.refreshDeckStrategy}
               />
               <GameStatePanel gameState={gs} />
               <SourceSelector

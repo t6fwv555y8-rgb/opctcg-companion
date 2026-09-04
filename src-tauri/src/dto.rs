@@ -1,6 +1,6 @@
 use optcg_core::{CombatState, ConnectionStatus, GameState, LastEventInfo, Phase, PlayerState};
 use optcg_observation::{AdapterInfo, AdapterStatus, LatencySnapshot};
-use optcg_rules::{CombatAnalysis, StrategyRecommendation};
+use optcg_rules::{CombatAnalysis, DeckStrategyBrief, StrategyRecommendation};
 use serde::{Deserialize, Serialize};
 
 /// Serializable game state snapshot for the frontend (authoritative DTO).
@@ -161,6 +161,8 @@ pub struct StateUpdatePayload {
     pub options: Vec<StrategyRecommendation>,
     /// Phase coaching line ("what to do now").
     pub phase_coach: String,
+    /// Detailed deck-vs-deck strategy brief (refreshable).
+    pub deck_strategy: Option<DeckStrategyBrief>,
     /// Deck identity for you (player 1 / self).
     pub your_deck: DeckInfoDto,
     /// Deck identity for opponent (player 2).

@@ -65,6 +65,7 @@ fn main() {
             commands::get_combat_analysis,
             commands::get_legal_actions,
             commands::get_state_snapshot,
+            commands::refresh_deck_strategy,
             commands::get_observation_status,
             commands::set_observation_source,
             commands::toggle_overlay,

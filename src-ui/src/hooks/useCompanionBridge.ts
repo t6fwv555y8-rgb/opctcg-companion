@@ -18,6 +18,7 @@ export function useCompanionBridge(): CompanionBridge {
   );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [refreshingStrategy, setRefreshingStrategy] = useState(false);
   const [overlay, setOverlay] = useState<OverlaySettings>({
     click_through: false,
     opacity: 0.92,
@@ -102,14 +103,32 @@ export function useCompanionBridge(): CompanionBridge {
     [refreshSnapshot],
   );
 
+  const refreshDeckStrategy = useCallback(async () => {
+    setRefreshingStrategy(true);
+    try {
+      const payload = await invoke<StateUpdatePayload>("refresh_deck_strategy");
+      if (!mounted.current) return;
+      setSnapshot(payload);
+      setObservation(payload.observation ?? null);
+      setError(null);
+    } catch (e) {
+      if (!mounted.current) return;
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (mounted.current) setRefreshingStrategy(false);
+    }
+  }, []);
+
   return {
     snapshot,
     observation,
     loading,
     error,
     overlay,
+    refreshingStrategy,
     toggleOverlay,
     setOpacity,
     setObservationSource,
+    refreshDeckStrategy,
   };
 }

@@ -192,6 +192,16 @@ export interface StrategyRecommendation {
   reasoning: string;
 }
 
+export interface DeckStrategyBrief {
+  matchup: string;
+  your_plan: string;
+  vs_opponent: string;
+  this_turn: string[];
+  threats: string[];
+  priorities: string[];
+  refreshed_at: string;
+}
+
 export interface StateUpdatePayload {
   game_state: GameStateDto;
   connection: ConnectionStatusDto;
@@ -199,6 +209,7 @@ export interface StateUpdatePayload {
   strategy: StrategyRecommendation | null;
   options?: StrategyRecommendation[];
   phase_coach?: string;
+  deck_strategy?: DeckStrategyBrief | null;
   your_deck?: DeckInfoDto;
   opponent_deck?: DeckInfoDto;
   latency_ms: number;
@@ -216,7 +227,9 @@ export interface CompanionBridge {
   loading: boolean;
   error: string | null;
   overlay: OverlaySettings;
+  refreshingStrategy: boolean;
   toggleOverlay: (enabled?: boolean) => Promise<void>;
   setOpacity: (opacity: number) => Promise<void>;
   setObservationSource: (selection: SourceSelectionKind) => Promise<void>;
+  refreshDeckStrategy: () => Promise<void>;
 }
