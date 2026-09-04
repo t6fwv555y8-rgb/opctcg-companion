@@ -8,3 +8,5 @@ src-tauri/gen
 vision_events.jsonl
 .env
 .env.local
+__pycache__/
+*.pyc
