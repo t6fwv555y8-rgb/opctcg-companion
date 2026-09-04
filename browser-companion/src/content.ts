@@ -15,16 +15,16 @@ let status: BridgeStatus = {
 };
 
 function updateBadge(): void {
-  // Extension badge — visible status without injecting into game UI
-  if (typeof chrome !== "undefined" && chrome.action?.setBadgeText) {
-    const text = status.connected ? (status.game_detected ? "ON" : "…") : "!";
-    chrome.action.setBadgeText({ text });
-    chrome.action.setBadgeBackgroundColor({
+  // Content scripts cannot reliably set action badges in MV3 — ask background.
+  try {
+    chrome.runtime?.sendMessage?.({
+      type: "badge",
+      text: status.connected ? (status.game_detected ? "ON" : "…") : "!",
       color: status.connected ? "#22c55e" : "#ef4444",
-    });
-    chrome.action.setTitle({
       title: `OPTCG Companion — ${status.message}`,
     });
+  } catch {
+    // ignore when extension context is invalidated
   }
 }
 

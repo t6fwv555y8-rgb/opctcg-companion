@@ -10,13 +10,16 @@
     "https://onesimulator.slidingcodes.com/*"
   ],
   "background": {
-    "service_worker": "dist/background.js",
+    "service_worker": "dist/background.bundle.js",
     "type": "module"
   },
   "content_scripts": [
     {
-      "matches": ["http://*/*", "https://*/*"],
-      "js": ["dist/content.js"],
+      "matches": [
+        "https://onesimulator.slidingcodes.com/*",
+        "http://onesimulator.slidingcodes.com/*"
+      ],
+      "js": ["dist/content.bundle.js"],
       "run_at": "document_idle"
     }
   ],
