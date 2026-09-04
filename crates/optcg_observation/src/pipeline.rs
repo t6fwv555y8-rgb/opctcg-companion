@@ -1,3 +1,4 @@
+use crate::adapter::AdapterStatus;
 use crate::confidence::ConfidenceConfig;
 use crate::error::ObsResult;
 use crate::latency::{LatencySnapshot, LatencyTracker};
@@ -423,5 +424,3 @@ mod tests {
         pipeline.stop().await.unwrap();
     }
 }
-
-use crate::adapter::AdapterStatus;
