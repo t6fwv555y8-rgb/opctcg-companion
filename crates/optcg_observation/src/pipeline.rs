@@ -255,11 +255,19 @@ impl ObservationPipeline {
                         gs.timestamp = Utc::now();
                     }
 
+                    let (observation_sequence, event_sequence) = {
+                        let session_guard = session.lock();
+                        (
+                            session_guard.observation_sequence,
+                            session_guard.event_sequence,
+                        )
+                    };
+
                     PipelineResult {
                         applied: outcome.applied,
                         source: envelope.source,
-                        observation_sequence: session.lock().observation_sequence,
-                        event_sequence: session.lock().event_sequence,
+                        observation_sequence,
+                        event_sequence,
                         latency: latency.snapshot(),
                         corrected: outcome.corrected,
                         error: outcome.rejection_reason,
@@ -269,11 +277,18 @@ impl ObservationPipeline {
                 Err(e) => {
                     warn!(error = %e, "reconcile error");
                     game_state.write().connection.last_error = Some(e.to_string());
+                    let (observation_sequence, event_sequence) = {
+                        let session_guard = session.lock();
+                        (
+                            session_guard.observation_sequence,
+                            session_guard.event_sequence,
+                        )
+                    };
                     PipelineResult {
                         applied: false,
                         source: envelope.source,
-                        observation_sequence: session.lock().observation_sequence,
-                        event_sequence: session.lock().event_sequence,
+                        observation_sequence,
+                        event_sequence,
                         latency: latency.snapshot(),
                         corrected: false,
                         error: Some(e.to_string()),
@@ -311,6 +326,101 @@ impl ObservationPipeline {
             _ => ConnectionStatus::Disconnected,
         };
         gs.connection.file_monitor_active = source == ObservationSource::DesktopSimulator;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::manager::SourceSelection;
+    use futures_util::SinkExt;
+    use optcg_core::GameState;
+    use tokio_tungstenite::tungstenite::Message;
+
+    /// Regression test for the `run_worker` self-deadlock: two `session.lock()`
+    /// calls inside the same `PipelineResult { .. }` statement kept the first
+    /// guard alive (Rust extends temporaries to the end of the statement) while
+    /// the second call tried to lock the same non-reentrant `parking_lot::Mutex`,
+    /// permanently blocking the worker thread after the first observed event.
+    /// That starved every later event of processing, which is what surfaced as
+    /// clients (and reconnects) never getting acknowledged again.
+    ///
+    /// The bounding timeout is done from a plain OS thread with
+    /// `std::sync::mpsc::Receiver::recv_timeout`, not `tokio::time::timeout`:
+    /// live thread sampling of the deadlock showed that whichever worker
+    /// thread happens to be holding tokio's shared I/O/timer driver at the
+    /// moment it self-deadlocks stops that driver ticking for the whole
+    /// runtime, so an in-runtime timeout can itself hang instead of firing.
+    #[test]
+    fn pipeline_keeps_processing_after_reconnect() {
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .expect("build test runtime");
+            rt.block_on(reconnect_scenario());
+            let _ = done_tx.send(());
+        });
+
+        done_rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect(
+                "pipeline deadlocked: an observed event was never processed after \
+                 connect/reconnect (see the session.lock() double-lock in \
+                 ObservationPipeline::run_worker)",
+            );
+    }
+
+    async fn reconnect_scenario() {
+        let game_state = Arc::new(RwLock::new(GameState::new()));
+        let config = ObservationPipelineConfig {
+            mock_port: 19010,
+            ..Default::default()
+        };
+        let pipeline = ObservationPipeline::new(Arc::clone(&game_state), config);
+
+        let (result_tx, mut result_rx) = mpsc::channel(32);
+        pipeline
+            .start(SourceSelection::Mock, result_tx)
+            .await
+            .expect("pipeline start");
+
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        {
+            let (mut ws, _) = tokio_tungstenite::connect_async("ws://127.0.0.1:19010")
+                .await
+                .expect("first connect");
+
+            ws.send(Message::Text("PHASE_CHANGED|MAIN".into()))
+                .await
+                .unwrap();
+            result_rx.recv().await.expect("result channel closed");
+
+            // A second event on the same connection re-enters run_worker's
+            // PipelineResult construction; before the fix this never returned.
+            ws.send(Message::Text("PHASE_CHANGED|DON".into()))
+                .await
+                .unwrap();
+            result_rx.recv().await.expect("result channel closed");
+
+            ws.close(None).await.ok();
+        }
+
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let (mut ws2, _) = tokio_tungstenite::connect_async("ws://127.0.0.1:19010")
+            .await
+            .expect("reconnect failed");
+
+        ws2.send(Message::Text("PHASE_CHANGED|DRAW".into()))
+            .await
+            .unwrap();
+        result_rx.recv().await.expect("result channel closed");
+
+        pipeline.stop().await.unwrap();
     }
 }
 

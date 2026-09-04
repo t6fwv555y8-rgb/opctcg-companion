@@ -123,7 +123,12 @@ class MockStream:
                         except asyncio.TimeoutError:
                             pass
                         await asyncio.sleep(self.interval)
-            except (ConnectionRefusedError, OSError, ConnectionError) as exc:
+            except (
+                ConnectionRefusedError,
+                OSError,
+                ConnectionError,
+                websockets.exceptions.InvalidHandshake,
+            ) as exc:
                 print(
                     f"[mock_stream] Waiting for HUD WebSocket on {self.uri}: {exc}"
                 )
