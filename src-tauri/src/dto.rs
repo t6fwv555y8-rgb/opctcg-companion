@@ -30,6 +30,16 @@ pub struct PlayerStateDto {
     pub deck_count: u32,
     pub trash_count: u32,
     pub board_count: u32,
+    pub board: Vec<BoardCardDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BoardCardDto {
+    pub card_id: String,
+    pub rested: bool,
+    pub attached_don: u32,
+    pub power: u32,
+    pub position: u8,
 }
 
 impl From<&PlayerState> for PlayerStateDto {
@@ -45,6 +55,19 @@ impl From<&PlayerState> for PlayerStateDto {
             deck_count: p.deck_count,
             trash_count: p.trash_count,
             board_count: p.characters.len() as u32,
+            board: p
+                .characters
+                .iter()
+                .map(|c| BoardCardDto {
+                    card_id: c.card_id.clone(),
+                    rested: c.rested,
+                    attached_don: c.attached_don,
+                    power: c
+                        .effective_power(5000)
+                        .max(0) as u32,
+                    position: c.position,
+                })
+                .collect(),
         }
     }
 }
@@ -110,6 +133,10 @@ pub struct StateUpdatePayload {
     pub connection: ConnectionStatusDto,
     pub combat_analysis: Option<CombatAnalysis>,
     pub strategy: Option<StrategyRecommendation>,
+    /// Ranked options for the current step (best first).
+    pub options: Vec<StrategyRecommendation>,
+    /// Phase coaching line ("what to do now").
+    pub phase_coach: String,
     pub latency_ms: u64,
     pub observation: Option<ObservationStatusDto>,
 }

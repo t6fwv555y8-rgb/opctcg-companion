@@ -66,6 +66,15 @@ export interface PlayerStateDto {
   deck_count: number;
   trash_count: number;
   board_count: number;
+  board?: BoardCardDto[];
+}
+
+export interface BoardCardDto {
+  card_id: string;
+  rested: boolean;
+  attached_don: number;
+  power: number;
+  position: number;
 }
 
 export interface CombatState {
@@ -171,6 +180,8 @@ export interface StateUpdatePayload {
   connection: ConnectionStatusDto;
   combat_analysis: CombatAnalysis | null;
   strategy: StrategyRecommendation | null;
+  options?: StrategyRecommendation[];
+  phase_coach?: string;
   latency_ms: number;
   observation: ObservationStatusDto | null;
 }

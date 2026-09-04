@@ -66,13 +66,22 @@ export default function App() {
             combat={combat}
             analysis={bridge.snapshot?.combat_analysis ?? null}
           />
-          <StrategyPanel strategy={bridge.snapshot?.strategy ?? null} />
+          <StrategyPanel
+            strategy={bridge.snapshot?.strategy ?? null}
+            options={bridge.snapshot?.options ?? []}
+            phaseCoach={bridge.snapshot?.phase_coach ?? null}
+            gameState={gs}
+            paused={
+              bridge.observation?.analysis?.mode === "paused" ||
+              bridge.observation?.hud_state === "lost"
+            }
+          />
           <GameStatePanel gameState={gs} />
           <SourceSelector
             observation={bridge.observation}
             onSelect={bridge.setObservationSource}
           />
-          <CalibrationPanel />
+          {DEBUG && <CalibrationPanel />}
           <DebugPanel enabled={DEBUG} />
           <ConnectionStatus connection={bridge.snapshot?.connection ?? null} />
         </>

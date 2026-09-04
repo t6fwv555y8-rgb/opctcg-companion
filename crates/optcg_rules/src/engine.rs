@@ -76,29 +76,65 @@ impl RulesEngine {
         state: &GameState,
         repo: &CardRepository,
     ) -> RulesResult<Option<StrategyRecommendation>> {
+        let ranked = Self::rank_actions(state, repo)?;
+        Ok(ranked.into_iter().next())
+    }
+
+    /// Rank every legal option for the current step (best first).
+    pub fn rank_actions(
+        state: &GameState,
+        repo: &CardRepository,
+    ) -> RulesResult<Vec<StrategyRecommendation>> {
         let actions = Self::generate_actions(state, repo)?;
-        if actions.is_empty() {
-            return Ok(None);
-        }
+        let mut ranked: Vec<StrategyRecommendation> = actions
+            .into_iter()
+            .map(|action| Self::score_action(state, repo, &action))
+            .collect();
+        ranked.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        Ok(ranked)
+    }
 
-        let mut best: Option<StrategyRecommendation> = None;
-        for action in actions {
-            let rec = Self::score_action(state, repo, &action);
-            if best.as_ref().map(|b| rec.score > b.score).unwrap_or(true) {
-                best = Some(rec);
+    /// Short phase coaching line for the HUD ("what should I be doing now?").
+    pub fn phase_coach(state: &GameState) -> String {
+        let you = &state.players[state.active_player as usize];
+        let opp = &state.players[(1 - state.active_player) as usize];
+        match state.phase {
+            Phase::Draw => "Draw phase — draw, then prepare DON attachment.".into(),
+            Phase::Don => {
+                if you.don_active > 0 {
+                    format!(
+                        "DON phase — attach {} active DON to leader/characters before Main.",
+                        you.don_active
+                    )
+                } else {
+                    "DON phase — no active DON left; advance to Main.".into()
+                }
             }
+            Phase::Main => {
+                if state.combat.active {
+                    "Combat in Main — resolve attack/block, then continue developing.".into()
+                } else if you.characters.is_empty() {
+                    "Main phase — develop board (play characters) before attacking.".into()
+                } else if opp.life <= 2 {
+                    "Main phase — opponent is low life; look for lethal attack lines.".into()
+                } else {
+                    "Main phase — play affordable characters, then attack with active units."
+                        .into()
+                }
+            }
+            Phase::Combat => {
+                if state.combat.blocker_offered {
+                    "Combat — decide blocker vs take life / counter.".into()
+                } else {
+                    "Combat — compare powers; counter if needed to survive.".into()
+                }
+            }
+            Phase::End => "End phase — clean up, then end turn.".into(),
         }
-
-        if let Some(ref top) = best {
-            info!(
-                target: "optcg::strategy",
-                action = %top.action.description,
-                score = top.score,
-                "strategy recommendation"
-            );
-        }
-
-        Ok(best)
     }
 
     fn score_action(
@@ -309,7 +345,7 @@ impl RulesEngine {
     }
 }
 
-use tracing::info;
+use tracing::info; // retained for future strategy logging
 
 #[cfg(test)]
 mod tests {
