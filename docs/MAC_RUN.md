@@ -44,12 +44,26 @@ First run compiles Rust and can take **5–15 minutes**. Wait until you see a de
 
 ## 4. Smoke-test with mock data
 
-In a **second** Terminal tab:
+**Order matters:** the HUD must already be running. The mock script connects *to* the HUD; it is not a server.
+
+Terminal 1 (keep running):
+
+```bash
+cd ~/Desktop/opctcg-companion/src-ui
+npm run tauri:dev
+```
+
+Terminal 2:
 
 ```bash
 cd ~/Desktop/opctcg-companion
+python3 -m pip install --user websockets
 python3 scripts/mock_stream.py
 ```
+
+If you see `Install websockets` / `Missing Python package`, run the `pip install` line above.
+
+If you see `Waiting for HUD WebSocket` / `Connection refused`, the Tauri app is not up yet — wait until the HUD window is open, then retry.
 
 In the HUD, select source **Mock** (or Auto). State should update.
 
