@@ -44,11 +44,11 @@ fn main() {
     let game_state = Arc::new(RwLock::new(optcg_core::GameState::new()));
     let pipeline = Arc::new(ObservationPipeline::new(
         Arc::clone(&game_state),
-        default_pipeline_config(data_dir),
+        default_pipeline_config(data_dir.clone()),
     ));
     let manager = pipeline.manager();
 
-    let app_state = AppState::new(database, Arc::clone(&game_state));
+    let app_state = AppState::new(database, Arc::clone(&game_state), data_dir);
 
     tauri::Builder::default()
         .manage(app_state)
@@ -66,6 +66,8 @@ fn main() {
             commands::get_legal_actions,
             commands::get_state_snapshot,
             commands::refresh_deck_strategy,
+            commands::set_pasted_deck,
+            commands::clear_pasted_deck,
             commands::get_observation_status,
             commands::set_observation_source,
             commands::toggle_overlay,

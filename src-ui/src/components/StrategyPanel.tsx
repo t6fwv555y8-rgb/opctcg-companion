@@ -114,6 +114,20 @@ export function StrategyPanel({
               </ul>
             </div>
           )}
+          {deckStrategy.list_notes && deckStrategy.list_notes.length > 0 && (
+            <div>
+              <div className="mb-0.5 text-[9px] uppercase tracking-wide text-hud-accent/80">
+                From your list
+              </div>
+              <ul className="max-h-24 space-y-0.5 overflow-y-auto">
+                {deckStrategy.list_notes.slice(0, 8).map((n, i) => (
+                  <li key={i} className="text-[10px] leading-snug text-slate-300">
+                    · {n}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       )}
 

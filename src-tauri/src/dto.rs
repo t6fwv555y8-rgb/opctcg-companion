@@ -1,6 +1,6 @@
 use optcg_core::{CombatState, ConnectionStatus, GameState, LastEventInfo, Phase, PlayerState};
 use optcg_observation::{AdapterInfo, AdapterStatus, LatencySnapshot};
-use optcg_rules::{CombatAnalysis, DeckStrategyBrief, StrategyRecommendation};
+use optcg_rules::{CombatAnalysis, DeckListEntry, DeckStrategyBrief, PastedDeckList, StrategyRecommendation};
 use serde::{Deserialize, Serialize};
 
 /// Serializable game state snapshot for the frontend (authoritative DTO).
@@ -34,6 +34,39 @@ pub struct DeckInfoDto {
     pub leader_name: String,
     pub leader_color: String,
     pub known_cards: Vec<KnownCardDto>,
+    /// True when the user pasted an exact deck list for this side.
+    #[serde(default)]
+    pub from_paste: bool,
+    /// Exact list entries when pasted (you side only today).
+    #[serde(default)]
+    pub list_entries: Vec<DeckListEntry>,
+    #[serde(default)]
+    pub list_total_cards: u32,
+    #[serde(default)]
+    pub list_warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PastedDeckDto {
+    pub raw: String,
+    pub name: Option<String>,
+    pub leader_id: Option<String>,
+    pub entries: Vec<DeckListEntry>,
+    pub warnings: Vec<String>,
+    pub total_cards: u32,
+}
+
+impl From<&PastedDeckList> for PastedDeckDto {
+    fn from(p: &PastedDeckList) -> Self {
+        Self {
+            raw: p.raw.clone(),
+            name: p.name.clone(),
+            leader_id: p.leader_id.clone(),
+            entries: p.entries.clone(),
+            warnings: p.warnings.clone(),
+            total_cards: p.total_cards,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -167,6 +200,9 @@ pub struct StateUpdatePayload {
     pub your_deck: DeckInfoDto,
     /// Deck identity for opponent (player 2).
     pub opponent_deck: DeckInfoDto,
+    /// User-pasted exact deck list (if any).
+    #[serde(default)]
+    pub pasted_deck: Option<PastedDeckDto>,
     pub latency_ms: u64,
     pub observation: Option<ObservationStatusDto>,
 }

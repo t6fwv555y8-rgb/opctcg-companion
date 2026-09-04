@@ -1,5 +1,6 @@
 pub mod beam_search;
 pub mod combat_math;
+pub mod deck_list;
 pub mod deck_strategy;
 pub mod engine;
 pub mod error;
@@ -8,6 +9,7 @@ pub mod sim;
 
 pub use beam_search::{BeamSearch, BeamSearchConfig, ScoredAction};
 pub use combat_math::{CombatAnalysis, CombatCalculation, CombatMath, SurvivalStatus};
+pub use deck_list::{DeckListEntry, PastedDeckList};
 pub use deck_strategy::{DeckProfile, DeckStrategyBrief, DeckStrategyCoach};
 pub use engine::{Action, ActionType, LegalAction, RulesEngine, StrategyRecommendation};
 pub use error::RulesError;

@@ -119,6 +119,40 @@ export function useCompanionBridge(): CompanionBridge {
     }
   }, []);
 
+  const setPastedDeck = useCallback(async (raw: string) => {
+    setRefreshingStrategy(true);
+    try {
+      const payload = await invoke<StateUpdatePayload>("set_pasted_deck", {
+        raw,
+      });
+      if (!mounted.current) return;
+      setSnapshot(payload);
+      setObservation(payload.observation ?? null);
+      setError(null);
+    } catch (e) {
+      if (!mounted.current) return;
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (mounted.current) setRefreshingStrategy(false);
+    }
+  }, []);
+
+  const clearPastedDeck = useCallback(async () => {
+    setRefreshingStrategy(true);
+    try {
+      const payload = await invoke<StateUpdatePayload>("clear_pasted_deck");
+      if (!mounted.current) return;
+      setSnapshot(payload);
+      setObservation(payload.observation ?? null);
+      setError(null);
+    } catch (e) {
+      if (!mounted.current) return;
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (mounted.current) setRefreshingStrategy(false);
+    }
+  }, []);
+
   return {
     snapshot,
     observation,
@@ -130,5 +164,7 @@ export function useCompanionBridge(): CompanionBridge {
     setOpacity,
     setObservationSource,
     refreshDeckStrategy,
+    setPastedDeck,
+    clearPastedDeck,
   };
 }

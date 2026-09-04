@@ -98,6 +98,41 @@ pub fn refresh_deck_strategy(
     payload
 }
 
+/// Paste an exact deck list (card IDs + quantities) for deeper strategy.
+#[command]
+pub fn set_pasted_deck(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    runtime: State<'_, RuntimeHandles>,
+    raw: String,
+) -> Result<StateUpdatePayload, String> {
+    let _ = state.inner().set_pasted_deck(&raw)?;
+    let observation = Some(build_observation_status(
+        &runtime.manager,
+        &runtime.pipeline,
+    ));
+    let payload = state.inner().build_update_payload(observation);
+    let _ = app.emit("game-state-updated", payload.clone());
+    Ok(payload)
+}
+
+/// Clear the pasted deck list.
+#[command]
+pub fn clear_pasted_deck(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    runtime: State<'_, RuntimeHandles>,
+) -> StateUpdatePayload {
+    state.inner().clear_pasted_deck();
+    let observation = Some(build_observation_status(
+        &runtime.manager,
+        &runtime.pipeline,
+    ));
+    let payload = state.inner().build_update_payload(observation);
+    let _ = app.emit("game-state-updated", payload.clone());
+    payload
+}
+
 #[command]
 pub fn get_observation_status(runtime: State<'_, RuntimeHandles>) -> ObservationStatusDto {
     build_observation_status(&runtime.manager, &runtime.pipeline)

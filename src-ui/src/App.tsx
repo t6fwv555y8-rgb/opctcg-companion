@@ -68,6 +68,10 @@ export default function App() {
               <DeckPanel
                 yourDeck={bridge.snapshot?.your_deck ?? null}
                 opponentDeck={bridge.snapshot?.opponent_deck ?? null}
+                pastedDeck={bridge.snapshot?.pasted_deck ?? null}
+                applying={bridge.refreshingStrategy}
+                onApplyPaste={bridge.setPastedDeck}
+                onClearPaste={bridge.clearPastedDeck}
               />
               <BlockerWarning
                 combat={combat}

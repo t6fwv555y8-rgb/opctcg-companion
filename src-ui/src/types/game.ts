@@ -71,19 +71,44 @@ export interface PlayerStateDto {
   known_cards?: string[];
 }
 
-export interface KnownCardDto {
-  card_id: string;
-  name: string;
-  card_type: string;
-  color: string;
-}
-
 export interface DeckInfoDto {
   name: string;
   leader_id: string;
   leader_name: string;
   leader_color: string;
   known_cards: KnownCardDto[];
+  from_paste?: boolean;
+  list_entries?: DeckListEntryDto[];
+  list_total_cards?: number;
+  list_warnings?: string[];
+}
+
+export interface DeckListEntryDto {
+  card_id: string;
+  name: string;
+  quantity: number;
+  cost: number;
+  card_type: string;
+  color: string;
+  rush: boolean;
+  blocker: boolean;
+  counter: number;
+}
+
+export interface PastedDeckDto {
+  raw: string;
+  name: string | null;
+  leader_id: string | null;
+  entries: DeckListEntryDto[];
+  warnings: string[];
+  total_cards: number;
+}
+
+export interface KnownCardDto {
+  card_id: string;
+  name: string;
+  card_type: string;
+  color: string;
 }
 
 export interface BoardCardDto {
@@ -199,6 +224,7 @@ export interface DeckStrategyBrief {
   this_turn: string[];
   threats: string[];
   priorities: string[];
+  list_notes?: string[];
   refreshed_at: string;
 }
 
@@ -212,6 +238,7 @@ export interface StateUpdatePayload {
   deck_strategy?: DeckStrategyBrief | null;
   your_deck?: DeckInfoDto;
   opponent_deck?: DeckInfoDto;
+  pasted_deck?: PastedDeckDto | null;
   latency_ms: number;
   observation: ObservationStatusDto | null;
 }
@@ -232,4 +259,6 @@ export interface CompanionBridge {
   setOpacity: (opacity: number) => Promise<void>;
   setObservationSource: (selection: SourceSelectionKind) => Promise<void>;
   refreshDeckStrategy: () => Promise<void>;
+  setPastedDeck: (raw: string) => Promise<void>;
+  clearPastedDeck: () => Promise<void>;
 }
