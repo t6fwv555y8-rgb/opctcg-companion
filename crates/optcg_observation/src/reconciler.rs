@@ -1,8 +1,8 @@
 use crate::confidence::ConfidenceConfig;
-use crate::error::{ObsResult, ObservationError};
+use crate::error::ObsResult;
 use crate::session::{GameSession, SyncState};
-use crate::types::{ObservationEvent, ObservationSource};
-use optcg_core::{GameEvent, Normalizer, Phase, PlayerId};
+use crate::types::ObservationEvent;
+use optcg_core::{GameEvent, Normalizer, PlayerId};
 use tracing::{debug, info, warn};
 
 /// Outcome of reconciling one observation into engine events.
@@ -59,12 +59,69 @@ impl ObservationReconciler {
 
         session.observation_sequence += 1;
 
+        // Deck metadata is applied directly (not a GameEvent).
+        if let ObservationEvent::StructuredRaw { raw, .. } = obs {
+            if let Some((player_idx, name)) = parse_deck_name_raw(raw) {
+                if let Some(p) = session.state.player_mut(player_idx) {
+                    p.deck_name = name;
+                }
+                return Ok(ReconcileOutcome {
+                    applied: true,
+                    game_events: vec![],
+                    corrected: false,
+                    rejection_reason: None,
+                    confidence,
+                });
+            }
+            if let Some((player_idx, card_id)) = parse_note_card_raw(raw) {
+                if let Some(p) = session.state.player_mut(player_idx) {
+                    p.note_card(&card_id);
+                }
+                return Ok(ReconcileOutcome {
+                    applied: true,
+                    game_events: vec![],
+                    corrected: false,
+                    rejection_reason: None,
+                    confidence,
+                });
+            }
+        }
+
         if let ObservationEvent::TurnObserved { player, .. } = obs {
             session.state.active_player = player.index();
         }
 
+        // Absolute hand-count updates from browser snapshots.
+        if let ObservationEvent::HandCountObserved { player, count, .. } = obs {
+            let idx = player.index() as usize;
+            self.last_hand_count[idx] = Some(*count);
+            if let Some(p) = session.state.player_mut(player.index()) {
+                p.hand_count = *count as u32;
+            }
+            return Ok(ReconcileOutcome {
+                applied: true,
+                game_events: vec![],
+                corrected: false,
+                rejection_reason: None,
+                confidence,
+            });
+        }
+
         let events = self.observation_to_game_events(session, obs)?;
         if events.is_empty() {
+            // First absolute life observation (no delta yet) — still apply count.
+            if let ObservationEvent::LifeObserved { player, count, .. } = obs {
+                if let Some(p) = session.state.player_mut(player.index()) {
+                    p.life = u32::from(*count);
+                }
+                return Ok(ReconcileOutcome {
+                    applied: true,
+                    game_events: vec![],
+                    corrected: false,
+                    rejection_reason: None,
+                    confidence,
+                });
+            }
             return Ok(ReconcileOutcome {
                 applied: false,
                 game_events: vec![],
@@ -269,6 +326,7 @@ impl ObservationReconciler {
 mod tests {
     use super::*;
     use crate::types::ObservationSource;
+    use optcg_core::Phase;
 
     #[test]
     fn structured_raw_reconciles_to_phase() {
@@ -323,4 +381,71 @@ mod tests {
         assert!(outcome.applied);
         assert_eq!(session.state.player_one().life, 4);
     }
+
+    #[test]
+    fn deck_name_structured_raw_applied() {
+        let mut reconciler = ObservationReconciler::default();
+        let mut session = GameSession::new(ObservationSource::BrowserSimulator);
+        let obs = ObservationEvent::StructuredRaw {
+            raw: "DECK_NAME|PLAYER_1|Red Luffy Aggro".into(),
+            source: ObservationSource::BrowserSimulator,
+            confidence: 0.95,
+        };
+        let outcome = reconciler.reconcile(&mut session, &obs).unwrap();
+        assert!(outcome.applied);
+        assert_eq!(session.state.player_one().deck_name, "Red Luffy Aggro");
+    }
+
+    #[test]
+    fn note_card_structured_raw_applied() {
+        let mut reconciler = ObservationReconciler::default();
+        let mut session = GameSession::new(ObservationSource::BrowserSimulator);
+        let obs = ObservationEvent::StructuredRaw {
+            raw: "NOTE_CARD|PLAYER_2|ST01-002".into(),
+            source: ObservationSource::BrowserSimulator,
+            confidence: 0.9,
+        };
+        let outcome = reconciler.reconcile(&mut session, &obs).unwrap();
+        assert!(outcome.applied);
+        assert!(session
+            .state
+            .player_two()
+            .known_cards
+            .iter()
+            .any(|c| c == "ST01-002"));
+    }
+}
+
+fn parse_deck_name_raw(raw: &str) -> Option<(u8, String)> {
+    let parts: Vec<&str> = raw.splitn(3, '|').collect();
+    if parts.len() != 3 || parts[0] != "DECK_NAME" {
+        return None;
+    }
+    let idx = match parts[1] {
+        "PLAYER_1" | "P1" | "0" => 0u8,
+        "PLAYER_2" | "P2" | "1" => 1u8,
+        _ => return None,
+    };
+    let name = parts[2].trim();
+    if name.is_empty() {
+        return None;
+    }
+    Some((idx, name.to_string()))
+}
+
+fn parse_note_card_raw(raw: &str) -> Option<(u8, String)> {
+    let parts: Vec<&str> = raw.splitn(3, '|').collect();
+    if parts.len() != 3 || parts[0] != "NOTE_CARD" {
+        return None;
+    }
+    let idx = match parts[1] {
+        "PLAYER_1" | "P1" | "0" => 0u8,
+        "PLAYER_2" | "P2" | "1" => 1u8,
+        _ => return None,
+    };
+    let card_id = parts[2].trim();
+    if card_id.is_empty() {
+        return None;
+    }
+    Some((idx, card_id.to_string()))
 }

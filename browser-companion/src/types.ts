@@ -13,6 +13,9 @@ export interface BrowserPlayerSnapshot {
   hand_count?: number | null;
   active_don?: number | null;
   rested_don?: number | null;
+  leader_id?: string | null;
+  deck_name?: string | null;
+  known_cards?: string[];
   board?: ObservedCard[];
 }
 

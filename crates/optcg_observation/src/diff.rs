@@ -119,6 +119,21 @@ fn diff_player(
         }
     }
 
+    if let Some(deck_name) = &side.deck_name {
+        let prev_name = prev.and_then(|p| p.deck_name.as_ref());
+        if prev_name != Some(deck_name) && !deck_name.is_empty() {
+            let label = match player {
+                PlayerId::Player1 => "PLAYER_1",
+                PlayerId::Player2 => "PLAYER_2",
+            };
+            events.push(ObservationEvent::StructuredRaw {
+                raw: format!("DECK_NAME|{label}|{deck_name}"),
+                source: ObservationSource::BrowserSimulator,
+                confidence,
+            });
+        }
+    }
+
     if let Some(hand) = side.hand_count {
         if prev.and_then(|p| p.hand_count) != Some(hand) {
             events.push(ObservationEvent::HandCountObserved {
@@ -150,12 +165,48 @@ fn diff_player(
             .any(|c| c.instance_key.as_deref().or(c.card_id.as_deref()) == key);
         if !existed {
             if let Some(id) = &card.card_id {
+                let zone = zone_from_instance_key(card.instance_key.as_deref());
                 events.push(ObservationEvent::CardObserved {
                     card_id: Some(id.clone()),
                     owner: player,
-                    zone: Zone::Character,
+                    zone,
                     position: None,
                     confidence,
+                });
+            }
+        }
+    }
+
+    if let Some(leader_id) = &side.leader_id {
+        let prev_leader = prev.and_then(|p| p.leader_id.as_ref());
+        if prev_leader != Some(leader_id) {
+            events.push(ObservationEvent::CardObserved {
+                card_id: Some(leader_id.clone()),
+                owner: player,
+                zone: Zone::Leader,
+                position: None,
+                confidence,
+            });
+        }
+    }
+
+    // Accumulate newly seen known cards (self hand / trash) without polluting board zones.
+    let prev_known = prev.map(|p| p.known_cards.clone()).unwrap_or_default();
+    let label = match player {
+        PlayerId::Player1 => "PLAYER_1",
+        PlayerId::Player2 => "PLAYER_2",
+    };
+    for id in &side.known_cards {
+        if !prev_known.iter().any(|k| k == id) {
+            let on_board = side
+                .board
+                .iter()
+                .any(|c| c.card_id.as_deref() == Some(id.as_str()));
+            if !on_board && side.leader_id.as_deref() != Some(id.as_str()) {
+                events.push(ObservationEvent::StructuredRaw {
+                    raw: format!("NOTE_CARD|{label}|{id}"),
+                    source: ObservationSource::BrowserSimulator,
+                    confidence: confidence * 0.9,
                 });
             }
         }
@@ -184,6 +235,22 @@ fn diff_player(
     }
 
     events
+}
+
+fn zone_from_instance_key(key: Option<&str>) -> Zone {
+    let Some(key) = key else {
+        return Zone::Character;
+    };
+    // Format: player:zone:slot:cardId:iid
+    let zone = key.split(':').nth(1).unwrap_or("character");
+    match zone {
+        "leader" => Zone::Leader,
+        "stage" => Zone::Stage,
+        "hand" => Zone::Hand,
+        "trash" => Zone::Trash,
+        "life" => Zone::Life,
+        _ => Zone::Character,
+    }
 }
 
 #[cfg(test)]

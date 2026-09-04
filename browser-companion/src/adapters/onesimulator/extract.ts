@@ -152,6 +152,99 @@ function extractBoardCards(playerId: string, doc: Document): ObservedCard[] {
   return cards;
 }
 
+function extractLeaderId(playerId: string, doc: Document): string | null {
+  const el = doc.querySelector(
+    `[data-card-zone="${ZONES.leader}"][data-card-player-id="${playerId}"]`,
+  );
+  return el ? extractCardId(el) : null;
+}
+
+/** Self-hand only — never used for opponent. */
+function extractSelfHandCards(playerId: string, doc: Document): string[] {
+  const ids: string[] = [];
+  const els = doc.querySelectorAll(
+    `[data-card-zone="${ZONES.hand}"][data-card-player-id="${playerId}"]`,
+  );
+  for (const el of els) {
+    const id = extractCardId(el);
+    if (id && !ids.includes(id)) ids.push(id);
+  }
+  return ids;
+}
+
+function extractTrashCards(playerId: string, doc: Document): string[] {
+  const ids: string[] = [];
+  const els = doc.querySelectorAll(
+    `[data-card-zone="${ZONES.trash}"][data-card-player-id="${playerId}"]`,
+  );
+  for (const el of els) {
+    const id = extractCardId(el);
+    if (id && !ids.includes(id)) ids.push(id);
+  }
+  return ids;
+}
+
+function extractDeckName(playerId: string, doc: Document): string | null {
+  const board = doc.querySelector(SELECTORS.gameBoard);
+  if (!board) return null;
+
+  // Explicit data attributes on player chrome
+  const labeled = board.querySelector(
+    `[data-player-id="${playerId}"][data-deck-name], [data-deck-name][data-card-player-id="${playerId}"], [data-deck-name][data-zone-anchor^="${playerId}:"]`,
+  );
+  const attr = labeled?.getAttribute("data-deck-name")?.trim();
+  if (attr) return attr;
+
+  // Title / aria near this player's zones
+  const zone = board.querySelector(`[data-zone-anchor^="${playerId}:"]`);
+  const region =
+    zone?.closest("[data-deck-name], [title], [aria-label]") ??
+    board.querySelector(`[data-player-id="${playerId}"]`);
+  const fromRegion =
+    region?.getAttribute("data-deck-name")?.trim() ||
+    region?.getAttribute("title")?.trim() ||
+    region?.getAttribute("aria-label")?.trim();
+  if (fromRegion && /deck/i.test(fromRegion)) {
+    const m = fromRegion.match(/deck(?:\s*name)?\s*[:\-]\s*(.+)/i);
+    return (m?.[1] ?? fromRegion).trim().slice(0, 48);
+  }
+
+  // Text scan scoped to player-adjacent text when possible
+  const text = (region?.textContent ?? board.textContent) ?? "";
+  const m = text.match(/Deck(?:\s*name)?\s*[:\-]\s*([^\n|]{3,48})/i);
+  if (m) return m[1].trim();
+  return null;
+}
+
+function buildPlayerSnapshot(
+  playerId: string,
+  doc: Document,
+  isSelf: boolean,
+): BrowserPlayerSnapshot {
+  const don = countDon(playerId, doc);
+  const board = extractBoardCards(playerId, doc);
+  const leaderId = extractLeaderId(playerId, doc);
+  const known = new Set<string>();
+  if (leaderId) known.add(leaderId);
+  for (const c of board) {
+    if (c.card_id) known.add(c.card_id);
+  }
+  for (const id of extractTrashCards(playerId, doc)) known.add(id);
+  if (isSelf) {
+    for (const id of extractSelfHandCards(playerId, doc)) known.add(id);
+  }
+  return {
+    life: countLife(playerId, doc),
+    hand_count: countHand(playerId, doc),
+    active_don: don?.active ?? null,
+    rested_don: don?.rested ?? null,
+    leader_id: leaderId,
+    deck_name: extractDeckName(playerId, doc),
+    known_cards: [...known],
+    board,
+  };
+}
+
 function extractPhase(doc: Document): string | null {
   const board = doc.querySelector(SELECTORS.gameBoard);
   if (!board) return null;
@@ -172,20 +265,6 @@ function extractCombat(doc: Document): BrowserCombatSnapshot | null {
   const observed = observeCombat(doc);
   if (observed) return combatToSnapshot(observed);
   return null;
-}
-
-function buildPlayerSnapshot(
-  playerId: string,
-  doc: Document,
-): BrowserPlayerSnapshot {
-  const don = countDon(playerId, doc);
-  return {
-    life: countLife(playerId, doc),
-    hand_count: countHand(playerId, doc),
-    active_don: don?.active ?? null,
-    rested_don: don?.rested ?? null,
-    board: extractBoardCards(playerId, doc),
-  };
 }
 
 /** Extract normalized player-visible snapshot from OneSimulator DOM */
@@ -216,8 +295,8 @@ export function extractOneSimulatorSnapshot(
     turn: extractTurn(doc),
     phase: extractPhase(doc),
     active_player: null,
-    self: buildPlayerSnapshot(selfId, doc),
-    opponent: buildPlayerSnapshot(oppId, doc),
+    self: buildPlayerSnapshot(selfId, doc, true),
+    opponent: buildPlayerSnapshot(oppId, doc, false),
     combat: extractCombat(doc),
     diagnostics: {
       ...diag,

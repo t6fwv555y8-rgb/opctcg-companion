@@ -63,6 +63,11 @@ export function GameStatePanel({ gameState }: Props) {
       <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
         <div>
           <span className="text-slate-400">You</span>
+          {(self.deck_name || self.leader_id) && (
+            <div className="truncate text-[10px] text-hud-accent">
+              {self.deck_name || self.leader_id}
+            </div>
+          )}
           <div className="stat-value">Life {self.life}</div>
           <div className="text-[10px] text-slate-500">
             DON {self.active_don} active / {self.rested_don} rested · Hand{" "}
@@ -71,6 +76,11 @@ export function GameStatePanel({ gameState }: Props) {
         </div>
         <div>
           <span className="text-slate-400">Opponent</span>
+          {(opp.deck_name || opp.leader_id) && (
+            <div className="truncate text-[10px] text-hud-accent">
+              {opp.deck_name || opp.leader_id}
+            </div>
+          )}
           <div className="stat-value">Life {opp.life}</div>
           <div className="text-[10px] text-slate-500">
             DON {opp.active_don}/{opp.rested_don} · Hand {opp.hand_count} · Board{" "}

@@ -102,8 +102,15 @@ impl RulesEngine {
     pub fn phase_coach(state: &GameState) -> String {
         let you = &state.players[state.active_player as usize];
         let opp = &state.players[(1 - state.active_player) as usize];
-        match state.phase {
-            Phase::Draw => "Draw phase — draw, then prepare DON attachment.".into(),
+        let you_tag = if !you.deck_name.is_empty() {
+            format!("[{}] ", you.deck_name)
+        } else if !you.leader.card_id.is_empty() {
+            format!("[{}] ", you.leader.card_id)
+        } else {
+            String::new()
+        };
+        let line = match state.phase {
+            Phase::Draw => "Draw phase — draw, then prepare DON attachment.".to_string(),
             Phase::Don => {
                 if you.don_active > 0 {
                     format!(
@@ -134,7 +141,8 @@ impl RulesEngine {
                 }
             }
             Phase::End => "End phase — clean up, then end turn.".into(),
-        }
+        };
+        format!("{you_tag}{line}")
     }
 
     fn score_action(

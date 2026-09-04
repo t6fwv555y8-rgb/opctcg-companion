@@ -67,6 +67,23 @@ export interface PlayerStateDto {
   trash_count: number;
   board_count: number;
   board?: BoardCardDto[];
+  deck_name?: string;
+  known_cards?: string[];
+}
+
+export interface KnownCardDto {
+  card_id: string;
+  name: string;
+  card_type: string;
+  color: string;
+}
+
+export interface DeckInfoDto {
+  name: string;
+  leader_id: string;
+  leader_name: string;
+  leader_color: string;
+  known_cards: KnownCardDto[];
 }
 
 export interface BoardCardDto {
@@ -182,6 +199,8 @@ export interface StateUpdatePayload {
   strategy: StrategyRecommendation | null;
   options?: StrategyRecommendation[];
   phase_coach?: string;
+  your_deck?: DeckInfoDto;
+  opponent_deck?: DeckInfoDto;
   latency_ms: number;
   observation: ObservationStatusDto | null;
 }

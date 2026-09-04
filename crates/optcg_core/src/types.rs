@@ -249,6 +249,12 @@ pub struct PlayerState {
     pub stage: Option<CardInstance>,
     pub hand: Vec<CardInstance>,
     pub trash: Vec<CardInstance>,
+    /// Optional deck label from simulator UI (when visible).
+    #[serde(default)]
+    pub deck_name: String,
+    /// Unique card IDs observed for this player this match (leader/board/self-hand/trash).
+    #[serde(default)]
+    pub known_cards: Vec<String>,
     // Legacy flat leader fields — kept for serialization compat
     #[serde(default)]
     pub leader_id: String,
@@ -278,10 +284,31 @@ impl PlayerState {
             stage: None,
             hand: Vec::new(),
             trash: Vec::new(),
+            deck_name: String::new(),
+            known_cards: Vec::new(),
             leader_id,
             leader_power: 5000,
             leader_rested: false,
         }
+    }
+
+    pub fn note_card(&mut self, card_id: &str) {
+        if card_id.is_empty() {
+            return;
+        }
+        if !self.known_cards.iter().any(|c| c == card_id) {
+            self.known_cards.push(card_id.to_string());
+        }
+    }
+
+    pub fn set_leader_id(&mut self, card_id: impl Into<String>) {
+        let id = card_id.into();
+        if id.is_empty() {
+            return;
+        }
+        self.leader.card_id = id.clone();
+        self.note_card(&id);
+        self.sync_leader_fields();
     }
 
     pub fn sync_leader_fields(&mut self) {

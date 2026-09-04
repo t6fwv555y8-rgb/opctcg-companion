@@ -4,6 +4,7 @@ import { CalibrationPanel } from "./components/CalibrationPanel";
 import { DebugPanel } from "./components/DebugPanel";
 import { CombatPanel } from "./components/CombatPanel";
 import { ConnectionStatus } from "./components/ConnectionStatus";
+import { DeckPanel } from "./components/DeckPanel";
 import { GameStatePanel } from "./components/GameStatePanel";
 import { SourceSelector } from "./components/SourceSelector";
 import { SourceStatusHud } from "./components/SourceStatusHud";
@@ -44,7 +45,11 @@ export default function App() {
         <div className="flex flex-col gap-2">
           <SourceStatusHud observation={bridge.observation} debug={DEBUG} />
 
-          <TurnIndicator gameState={gs} />
+          <TurnIndicator
+            gameState={gs}
+            yourDeck={bridge.snapshot?.your_deck ?? null}
+            opponentDeck={bridge.snapshot?.opponent_deck ?? null}
+          />
 
           {bridge.error && (
             <div className="rounded border border-hud-danger/50 bg-hud-danger/10 px-2 py-1 text-[10px] text-hud-danger">
@@ -60,6 +65,10 @@ export default function App() {
             </div>
           ) : (
             <>
+              <DeckPanel
+                yourDeck={bridge.snapshot?.your_deck ?? null}
+                opponentDeck={bridge.snapshot?.opponent_deck ?? null}
+              />
               <BlockerWarning
                 combat={combat}
                 analysis={bridge.snapshot?.combat_analysis ?? null}

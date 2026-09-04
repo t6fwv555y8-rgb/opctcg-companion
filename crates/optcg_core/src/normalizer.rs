@@ -495,18 +495,33 @@ impl Normalizer {
         card_id: &str,
         zone: Option<&str>,
     ) -> CoreResult<()> {
-        let zone = match zone.unwrap_or("character").to_ascii_lowercase().as_str() {
-            "stage" => Zone::Stage,
-            "event" => Zone::Trash,
-            _ => Zone::Character,
-        };
+        let zone_key = zone.unwrap_or("character").to_ascii_lowercase();
         if let Some(p) = state.player_mut(player.index()) {
-            p.hand_count = p.hand_count.saturating_sub(1);
+            p.note_card(card_id);
+            if zone_key.contains("leader") {
+                p.set_leader_id(card_id);
+                return Ok(());
+            }
+            let zone = match zone_key.as_str() {
+                "stage" => Zone::Stage,
+                "event" | "trash" => Zone::Trash,
+                "hand" => Zone::Hand,
+                _ => Zone::Character,
+            };
+            if zone != Zone::Hand {
+                p.hand_count = p.hand_count.saturating_sub(1);
+            }
             let mut instance = CardInstance::new(card_id, player.index(), zone);
             instance.position = p.characters.len() as u8;
             match zone {
                 Zone::Stage => p.stage = Some(instance),
-                Zone::Character => p.characters.push(instance),
+                Zone::Character => {
+                    if !p.characters.iter().any(|c| c.card_id == card_id && c.zone == Zone::Character) {
+                        // Allow duplicates as separate instances when observed again with different keys upstream
+                    }
+                    p.characters.push(instance);
+                }
+                Zone::Hand => p.hand.push(instance),
                 _ => p.push_trash(instance),
             }
         }

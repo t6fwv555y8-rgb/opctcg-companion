@@ -23,6 +23,13 @@ pub struct BrowserPlayerSnapshot {
     pub hand_count: Option<u8>,
     pub active_don: Option<u8>,
     pub rested_don: Option<u8>,
+    /// Leader card ID when visible.
+    pub leader_id: Option<String>,
+    /// Deck name from UI when detectable.
+    pub deck_name: Option<String>,
+    /// Unique known card IDs for this player (visible zones only).
+    #[serde(default)]
+    pub known_cards: Vec<String>,
     #[serde(default)]
     pub board: Vec<ObservedCard>,
 }

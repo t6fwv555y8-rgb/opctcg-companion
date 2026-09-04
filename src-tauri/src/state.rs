@@ -1,5 +1,8 @@
 use crate::dto::ObservationStatusDto;
-use crate::dto::{ConnectionStatusDto, GameStateDto, OverlaySettings, StateUpdatePayload};
+use crate::dto::{
+    ConnectionStatusDto, DeckInfoDto, GameStateDto, KnownCardDto, OverlaySettings,
+    StateUpdatePayload,
+};
 use optcg_database::Database;
 use optcg_rules::{BeamSearch, BeamSearchConfig, CombatMath, MctsConfig, MctsEngine, RulesEngine};
 use parking_lot::RwLock;
@@ -37,6 +40,60 @@ impl AppState {
         optcg_database::CardRepository::new(&self.database)
     }
 
+    fn deck_info_for(&self, player: &optcg_core::PlayerState) -> DeckInfoDto {
+        let repo = self.repo();
+        let leader_id = player.leader.card_id.clone();
+        let (leader_name, leader_color) = match repo.get_by_id(&leader_id) {
+            Ok(def) => (def.name, def.color),
+            Err(_) => {
+                if leader_id.is_empty() {
+                    ("Unknown leader".into(), String::new())
+                } else {
+                    (leader_id.clone(), String::new())
+                }
+            }
+        };
+
+        let mut known_cards: Vec<KnownCardDto> = player
+            .known_cards
+            .iter()
+            .filter(|id| !id.is_empty())
+            .map(|id| match repo.get_by_id(id) {
+                Ok(def) => KnownCardDto {
+                    card_id: id.clone(),
+                    name: def.name,
+                    card_type: format!("{:?}", def.card_type).to_lowercase(),
+                    color: def.color,
+                },
+                Err(_) => KnownCardDto {
+                    card_id: id.clone(),
+                    name: id.clone(),
+                    card_type: "unknown".into(),
+                    color: String::new(),
+                },
+            })
+            .collect();
+        known_cards.sort_by(|a, b| a.name.cmp(&b.name));
+
+        let name = if !player.deck_name.trim().is_empty() {
+            player.deck_name.clone()
+        } else if !leader_color.is_empty() && leader_name != "Unknown leader" {
+            format!("{leader_color} {leader_name}")
+        } else if !leader_id.is_empty() {
+            format!("Deck · {leader_id}")
+        } else {
+            "Deck unknown".into()
+        };
+
+        DeckInfoDto {
+            name,
+            leader_id,
+            leader_name,
+            leader_color,
+            known_cards,
+        }
+    }
+
     pub fn build_update_payload(
         &self,
         observation: Option<ObservationStatusDto>,
@@ -44,7 +101,23 @@ impl AppState {
         let gs = self.game_state.read();
         let repo = self.repo();
         let combat_analysis = CombatMath::analyze_current_combat(&gs, &repo);
-        let phase_coach = RulesEngine::phase_coach(&gs);
+        let your_deck = self.deck_info_for(gs.player_one());
+        let opponent_deck = self.deck_info_for(gs.player_two());
+        let mut phase_coach = RulesEngine::phase_coach(&gs);
+        // Make coaching deck-specific when we know the matchup.
+        if your_deck.leader_id != "" || opponent_deck.leader_id != "" {
+            let you = if your_deck.name != "Deck unknown" {
+                your_deck.name.as_str()
+            } else {
+                "your deck"
+            };
+            let opp = if opponent_deck.name != "Deck unknown" {
+                opponent_deck.name.as_str()
+            } else {
+                "opponent"
+            };
+            phase_coach = format!("{phase_coach} ({you} vs {opp})");
+        }
 
         let sync_confidence = observation
             .as_ref()
@@ -142,6 +215,8 @@ impl AppState {
             strategy,
             options,
             phase_coach,
+            your_deck,
+            opponent_deck,
             latency_ms,
             observation,
         }

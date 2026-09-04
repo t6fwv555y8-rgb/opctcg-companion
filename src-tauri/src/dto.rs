@@ -19,6 +19,24 @@ pub struct GameStateDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KnownCardDto {
+    pub card_id: String,
+    pub name: String,
+    pub card_type: String,
+    pub color: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeckInfoDto {
+    /// Simulator deck label when visible; otherwise leader-based fallback.
+    pub name: String,
+    pub leader_id: String,
+    pub leader_name: String,
+    pub leader_color: String,
+    pub known_cards: Vec<KnownCardDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlayerStateDto {
     pub player_index: u8,
     pub leader_id: String,
@@ -31,6 +49,10 @@ pub struct PlayerStateDto {
     pub trash_count: u32,
     pub board_count: u32,
     pub board: Vec<BoardCardDto>,
+    #[serde(default)]
+    pub deck_name: String,
+    #[serde(default)]
+    pub known_cards: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,6 +90,8 @@ impl From<&PlayerState> for PlayerStateDto {
                     position: c.position,
                 })
                 .collect(),
+            deck_name: p.deck_name.clone(),
+            known_cards: p.known_cards.clone(),
         }
     }
 }
@@ -137,6 +161,10 @@ pub struct StateUpdatePayload {
     pub options: Vec<StrategyRecommendation>,
     /// Phase coaching line ("what to do now").
     pub phase_coach: String,
+    /// Deck identity for you (player 1 / self).
+    pub your_deck: DeckInfoDto,
+    /// Deck identity for opponent (player 2).
+    pub opponent_deck: DeckInfoDto,
     pub latency_ms: u64,
     pub observation: Option<ObservationStatusDto>,
 }
