@@ -10,3 +10,8 @@ vision_events.jsonl
 .env.local
 __pycache__/
 *.pyc
+
+optcg-companion-source.tar.gz
+optcg-companion.bundle
+*.bundle
+*.tar.gz
