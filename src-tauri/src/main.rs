@@ -21,13 +21,24 @@ fn main() {
         .init();
 
     let data_dir = dirs_data_path();
-    if let Some(parent) = data_dir.parent() {
-        let _ = std::fs::create_dir_all(parent);
+    // Must create the companion data directory itself (not only its parent),
+    // otherwise SQLite open panics on first launch on macOS/Windows.
+    if let Err(e) = std::fs::create_dir_all(&data_dir) {
+        eprintln!("failed to create data dir {}: {e}", data_dir.display());
     }
+    let _ = std::fs::create_dir_all(data_dir.join("sessions"));
+    let _ = std::fs::create_dir_all(data_dir.join("logs"));
+    let _ = std::fs::create_dir_all(data_dir.join("calibration"));
 
     let db_path = data_dir.join("optcg_companion.db");
-    let database = Database::open(db_path.to_str().unwrap_or("optcg_companion.db"))
-        .expect("failed to open database");
+    let database = match Database::open(db_path.to_str().unwrap_or("optcg_companion.db")) {
+        Ok(db) => db,
+        Err(e) => {
+            eprintln!("failed to open database at {}: {e}", db_path.display());
+            eprintln!("falling back to in-memory database");
+            Database::open_in_memory().expect("in-memory database failed")
+        }
+    };
     let _ = AssetParser::seed_defaults(&database);
 
     let game_state = Arc::new(RwLock::new(optcg_core::GameState::new()));
@@ -76,14 +87,32 @@ fn main() {
             let (result_tx, result_rx) = tokio::sync::mpsc::channel(512);
             spawn_pipeline_listener(result_rx, handle, gs, mgr, pipe);
 
+            // Prefer Mock on first launch so the HUD stays up even when no simulator is present.
+            // User can switch to OneSimulator / Auto from the HUD.
             let start_pipeline = Arc::clone(&pipeline);
+            let initial_source = match std::env::var("OPTCG_SOURCE")
+                .unwrap_or_else(|_| "mock".into())
+                .to_lowercase()
+                .as_str()
+            {
+                "onesimulator" | "browser" => SourceSelection::OneSimulator,
+                "optcgsim" | "desktop" => SourceSelection::OptcgSim,
+                "auto" => SourceSelection::Auto,
+                _ => SourceSelection::Mock,
+            };
             tauri::async_runtime::spawn(async move {
-                if let Err(e) = start_pipeline.start(SourceSelection::Auto, result_tx).await {
-                    tracing::warn!(error = %e, "auto start failed, using mock adapter");
+                if let Err(e) = start_pipeline.start(initial_source, result_tx).await {
+                    tracing::warn!(error = %e, "pipeline start failed");
+                    let (tx, _rx) = tokio::sync::mpsc::channel(8);
+                    if let Err(e2) = start_pipeline.start(SourceSelection::Mock, tx).await {
+                        tracing::error!(error = %e2, "mock fallback also failed");
+                    }
                 }
             });
 
             if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
                 #[cfg(target_os = "linux")]
                 {
                     use tauri::LogicalSize;

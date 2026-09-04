@@ -83,20 +83,30 @@ In the HUD, select source **Mock** (or Auto). State should update.
 | `npm run build` | Builds JS assets only |
 | Opening GitHub in Safari/Chrome | Source viewing only |
 
-## If the window still does not appear
+## If the window still does not appear / keeps crashing
 
-Paste the **full Terminal output** of:
+1. Pull latest:
+   ```bash
+   cd ~/Desktop/opctcg-companion
+   git pull
+   ```
+2. Run from Terminal so you can see the crash reason:
+   ```bash
+   cd ~/Desktop/opctcg-companion/src-ui
+   npm run tauri:dev
+   ```
+3. Copy the **last 30–50 lines** of Terminal output (especially lines with `panic`, `error`, `failed`, `SIG`).
 
+Common causes already fixed in recent commits:
+- Missing `~/Library/Application Support/optcg-companion/` data directory (first-launch SQLite crash)
+- Auto-detect fighting for ports before Mock is ready
+
+Also try:
 ```bash
-cd ~/Desktop/opctcg-companion/src-ui
-npm run tauri:dev
+# free ports if a previous run left them busy
+lsof -i :1420 -i :9002 -i :9003
+# kill leftovers if needed, then retry tauri:dev
 ```
-
-Common errors:
-- `rustc` / `cargo` not found → install Rust, reopen Terminal
-- Xcode / `SDK` errors → `xcode-select --install`
-- `port 1420` in use → quit other Vite processes, retry
-- Compile errors → send the red error block
 
 ## Confirm you are in the repo root
 

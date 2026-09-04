@@ -44,9 +44,10 @@ pub fn get_recommendations(state: State<'_, AppState>) -> RecommendationsPayload
     let gs = app.game_state.read().clone();
     let repo = app.repo();
 
+    // Skip MCTS in the hot path — it is expensive and can freeze/crash the HUD on laptops.
     RecommendationsPayload {
         beam: app.beam.recommend(&gs, &repo).unwrap_or_default(),
-        mcts: app.mcts.search(&gs, &repo).ok(),
+        mcts: None,
         strategy: RulesEngine::recommend(&gs, &repo).ok().flatten(),
     }
 }
