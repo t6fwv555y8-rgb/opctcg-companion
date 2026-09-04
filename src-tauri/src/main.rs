@@ -87,18 +87,18 @@ fn main() {
             let (result_tx, result_rx) = tokio::sync::mpsc::channel(512);
             spawn_pipeline_listener(result_rx, handle, gs, mgr, pipe);
 
-            // Prefer Mock on first launch so the HUD stays up even when no simulator is present.
-            // User can switch to OneSimulator / Auto from the HUD.
+            // Default to OneSimulator so the browser extension can connect on :9003.
+            // Override with OPTCG_SOURCE=mock|auto|optcgsim if needed.
             let start_pipeline = Arc::clone(&pipeline);
             let initial_source = match std::env::var("OPTCG_SOURCE")
-                .unwrap_or_else(|_| "mock".into())
+                .unwrap_or_else(|_| "onesimulator".into())
                 .to_lowercase()
                 .as_str()
             {
-                "onesimulator" | "browser" => SourceSelection::OneSimulator,
+                "mock" => SourceSelection::Mock,
                 "optcgsim" | "desktop" => SourceSelection::OptcgSim,
                 "auto" => SourceSelection::Auto,
-                _ => SourceSelection::Mock,
+                _ => SourceSelection::OneSimulator,
             };
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = start_pipeline.start(initial_source, result_tx).await {
