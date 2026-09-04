@@ -19,10 +19,10 @@ export default function App() {
 
   return (
     <div
-      className="flex h-full w-full flex-col gap-2 p-2 text-white"
+      className="flex h-full min-h-0 w-full flex-col text-white"
       style={{ opacity: bridge.overlay.opacity }}
     >
-      <header className="flex items-center justify-between px-1">
+      <header className="flex shrink-0 items-center justify-between px-3 pb-1 pt-2">
         <h1 className="text-sm font-bold tracking-tight text-hud-accent">
           OPTCG Companion
         </h1>
@@ -40,55 +40,61 @@ export default function App() {
         </div>
       </header>
 
-      <SourceStatusHud observation={bridge.observation} debug={DEBUG} />
+      <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain px-2 pb-2">
+        <div className="flex flex-col gap-2">
+          <SourceStatusHud observation={bridge.observation} debug={DEBUG} />
 
-      <TurnIndicator gameState={gs} />
+          <TurnIndicator gameState={gs} />
 
-      {bridge.error && (
-        <div className="rounded border border-hud-danger/50 bg-hud-danger/10 px-2 py-1 text-[10px] text-hud-danger">
-          {bridge.error}
+          {bridge.error && (
+            <div className="rounded border border-hud-danger/50 bg-hud-danger/10 px-2 py-1 text-[10px] text-hud-danger">
+              {bridge.error}
+            </div>
+          )}
+
+          {bridge.loading ? (
+            <div className="hud-panel flex items-center justify-center p-4">
+              <span className="animate-pulse text-xs text-slate-400">
+                Connecting to companion bridge...
+              </span>
+            </div>
+          ) : (
+            <>
+              <BlockerWarning
+                combat={combat}
+                analysis={bridge.snapshot?.combat_analysis ?? null}
+              />
+              <CombatPanel
+                combat={combat}
+                analysis={bridge.snapshot?.combat_analysis ?? null}
+              />
+              <StrategyPanel
+                strategy={bridge.snapshot?.strategy ?? null}
+                options={bridge.snapshot?.options ?? []}
+                phaseCoach={bridge.snapshot?.phase_coach ?? null}
+                gameState={gs}
+                paused={
+                  bridge.observation?.analysis?.mode === "paused" ||
+                  bridge.observation?.hud_state === "lost"
+                }
+              />
+              <GameStatePanel gameState={gs} />
+              <SourceSelector
+                observation={bridge.observation}
+                onSelect={bridge.setObservationSource}
+              />
+              {DEBUG && <CalibrationPanel />}
+              <DebugPanel enabled={DEBUG} />
+              <ConnectionStatus
+                connection={bridge.snapshot?.connection ?? null}
+              />
+            </>
+          )}
         </div>
-      )}
+      </div>
 
-      {bridge.loading ? (
-        <div className="hud-panel flex flex-1 items-center justify-center p-4">
-          <span className="animate-pulse text-xs text-slate-400">
-            Connecting to companion bridge...
-          </span>
-        </div>
-      ) : (
-        <>
-          <BlockerWarning
-            combat={combat}
-            analysis={bridge.snapshot?.combat_analysis ?? null}
-          />
-          <CombatPanel
-            combat={combat}
-            analysis={bridge.snapshot?.combat_analysis ?? null}
-          />
-          <StrategyPanel
-            strategy={bridge.snapshot?.strategy ?? null}
-            options={bridge.snapshot?.options ?? []}
-            phaseCoach={bridge.snapshot?.phase_coach ?? null}
-            gameState={gs}
-            paused={
-              bridge.observation?.analysis?.mode === "paused" ||
-              bridge.observation?.hud_state === "lost"
-            }
-          />
-          <GameStatePanel gameState={gs} />
-          <SourceSelector
-            observation={bridge.observation}
-            onSelect={bridge.setObservationSource}
-          />
-          {DEBUG && <CalibrationPanel />}
-          <DebugPanel enabled={DEBUG} />
-          <ConnectionStatus connection={bridge.snapshot?.connection ?? null} />
-        </>
-      )}
-
-      <footer className="mt-auto px-1 text-center text-[9px] text-slate-500">
-        Observation adapters · mock :9002 · browser :9003
+      <footer className="shrink-0 border-t border-slate-800/80 px-2 py-1 text-center text-[9px] text-slate-500">
+        Scroll for more · mock :9002 · browser :9003
       </footer>
     </div>
   );
