@@ -16,6 +16,7 @@ optcg_database = { path = "../crates/optcg_database" }
 optcg_rules = { path = "../crates/optcg_rules" }
 optcg_events = { path = "../crates/optcg_events" }
 chrono = { workspace = true }
+optcg_coach = { path = "../crates/optcg_coach" }
 optcg_observation = { path = "../crates/optcg_observation" }
 tauri = { version = "2.0", features = [] }
 serde = { workspace = true }
@@ -26,6 +27,9 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 dirs = "5.0"
+
+[dev-dependencies]
+optcg_coach = { path = "../crates/optcg_coach", features = ["test-support"] }
 
 [features]
 default = ["custom-protocol"]
