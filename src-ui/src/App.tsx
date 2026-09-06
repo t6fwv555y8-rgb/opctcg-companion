@@ -2,6 +2,7 @@ import { BlockerWarning } from "./components/BlockerWarning";
 import { useCompanionBridge } from "./hooks/useCompanionBridge";
 import { CalibrationPanel } from "./components/CalibrationPanel";
 import { DebugPanel } from "./components/DebugPanel";
+import { CoachChatPanel } from "./components/CoachChatPanel";
 import { CombatPanel } from "./components/CombatPanel";
 import { ConnectionStatus } from "./components/ConnectionStatus";
 import { DeckPanel } from "./components/DeckPanel";
@@ -98,6 +99,7 @@ export default function App() {
                 refreshing={bridge.refreshingStrategy}
                 onRefresh={bridge.refreshDeckStrategy}
               />
+              <CoachChatPanel />
               <GameStatePanel gameState={gs} />
               <SourceSelector
                 observation={bridge.observation}
