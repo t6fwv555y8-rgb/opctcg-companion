@@ -7,6 +7,7 @@ import type {
   CoachStatus,
   CoachStream,
   CoachStreamEvent,
+  ContextScope,
   ToolRun,
 } from "../types/coach";
 
@@ -229,6 +230,18 @@ export function useCoachStream(): CoachStream {
     }
   }, []);
 
+  const setContext = useCallback(async (scope: ContextScope) => {
+    try {
+      const next = await invoke<CoachStatus>("coach_set_context", {
+        board: scope.board,
+        deck: scope.deck,
+      });
+      if (mounted.current) setStatus(next);
+    } catch (e: unknown) {
+      if (mounted.current) setError(errorText(e));
+    }
+  }, []);
+
   const interrupt = useCallback(async () => {
     try {
       await invoke<number | null>("coach_cancel");
@@ -276,5 +289,6 @@ export function useCoachStream(): CoachStream {
     interrupt,
     reset,
     setAuto,
+    setContext,
   };
 }

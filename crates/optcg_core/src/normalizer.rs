@@ -654,7 +654,8 @@ impl Normalizer {
         format!("{:x}", hasher.finish())
     }
 
-    fn summarize(event: &GameEvent) -> String {
+    /// One-line description of an event, for the action log and the HUD.
+    pub fn summarize(event: &GameEvent) -> String {
         match event {
             GameEvent::PhaseChanged { phase } => format!("PHASE_CHANGED {:?}", phase),
             GameEvent::AttackDeclared {
