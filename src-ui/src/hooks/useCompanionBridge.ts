@@ -103,55 +103,64 @@ export function useCompanionBridge(): CompanionBridge {
     [refreshSnapshot],
   );
 
-  const refreshDeckStrategy = useCallback(async () => {
-    setRefreshingStrategy(true);
-    try {
-      const payload = await invoke<StateUpdatePayload>("refresh_deck_strategy");
-      if (!mounted.current) return;
-      setSnapshot(payload);
-      setObservation(payload.observation ?? null);
-      setError(null);
-    } catch (e) {
-      if (!mounted.current) return;
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      if (mounted.current) setRefreshingStrategy(false);
-    }
-  }, []);
+  const runStateCommand = useCallback(
+    async (command: string, args?: Record<string, unknown>) => {
+      setRefreshingStrategy(true);
+      try {
+        const payload = await invoke<StateUpdatePayload>(command, args);
+        if (!mounted.current) return;
+        setSnapshot(payload);
+        setObservation(payload.observation ?? null);
+        setError(null);
+      } catch (e) {
+        if (!mounted.current) return;
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        if (mounted.current) setRefreshingStrategy(false);
+      }
+    },
+    [],
+  );
 
-  const setPastedDeck = useCallback(async (raw: string) => {
-    setRefreshingStrategy(true);
-    try {
-      const payload = await invoke<StateUpdatePayload>("set_pasted_deck", {
+  const refreshDeckStrategy = useCallback(
+    () => runStateCommand("refresh_deck_strategy"),
+    [runStateCommand],
+  );
+
+  const setPastedDeck = useCallback(
+    (raw: string) => runStateCommand("set_pasted_deck", { raw }),
+    [runStateCommand],
+  );
+
+  const clearPastedDeck = useCallback(
+    () => runStateCommand("clear_pasted_deck"),
+    [runStateCommand],
+  );
+
+  const saveDeck = useCallback(
+    ({ raw, name, id }: { raw: string; name?: string; id?: string }) =>
+      runStateCommand("save_deck", {
         raw,
-      });
-      if (!mounted.current) return;
-      setSnapshot(payload);
-      setObservation(payload.observation ?? null);
-      setError(null);
-    } catch (e) {
-      if (!mounted.current) return;
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      if (mounted.current) setRefreshingStrategy(false);
-    }
-  }, []);
+        name: name ?? null,
+        id: id ?? null,
+      }),
+    [runStateCommand],
+  );
 
-  const clearPastedDeck = useCallback(async () => {
-    setRefreshingStrategy(true);
-    try {
-      const payload = await invoke<StateUpdatePayload>("clear_pasted_deck");
-      if (!mounted.current) return;
-      setSnapshot(payload);
-      setObservation(payload.observation ?? null);
-      setError(null);
-    } catch (e) {
-      if (!mounted.current) return;
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      if (mounted.current) setRefreshingStrategy(false);
-    }
-  }, []);
+  const activateDeck = useCallback(
+    (id: string) => runStateCommand("activate_deck", { id }),
+    [runStateCommand],
+  );
+
+  const deleteDeck = useCallback(
+    (id: string) => runStateCommand("delete_deck", { id }),
+    [runStateCommand],
+  );
+
+  const renameDeck = useCallback(
+    (id: string, name: string) => runStateCommand("rename_deck", { id, name }),
+    [runStateCommand],
+  );
 
   return {
     snapshot,
@@ -166,5 +175,9 @@ export function useCompanionBridge(): CompanionBridge {
     refreshDeckStrategy,
     setPastedDeck,
     clearPastedDeck,
+    saveDeck,
+    activateDeck,
+    deleteDeck,
+    renameDeck,
   };
 }

@@ -56,6 +56,29 @@ pub struct PastedDeckDto {
     pub total_cards: u32,
 }
 
+/// One deck in the user's saved collection, with its leader resolved for display.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SavedDeckDto {
+    pub id: String,
+    pub name: String,
+    /// Original paste, so the UI can reopen a saved deck for editing.
+    pub raw: String,
+    pub leader_id: Option<String>,
+    pub leader_name: Option<String>,
+    pub leader_color: Option<String>,
+    pub total_cards: u32,
+    pub is_active: bool,
+    pub updated_at: String,
+}
+
+/// The saved deck library shipped to the HUD on every state update.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DeckCollectionDto {
+    pub decks: Vec<SavedDeckDto>,
+    pub active_id: Option<String>,
+    pub max_decks: usize,
+}
+
 impl From<&PastedDeckList> for PastedDeckDto {
     fn from(p: &PastedDeckList) -> Self {
         Self {
@@ -203,6 +226,9 @@ pub struct StateUpdatePayload {
     /// User-pasted exact deck list (if any).
     #[serde(default)]
     pub pasted_deck: Option<PastedDeckDto>,
+    /// Saved deck library and which deck is active.
+    #[serde(default)]
+    pub deck_collection: DeckCollectionDto,
     pub latency_ms: u64,
     pub observation: Option<ObservationStatusDto>,
 }
