@@ -230,10 +230,17 @@ impl ChatProvider for OpenAiProvider {
         let mut answer = String::new();
         let mut stream = response.bytes_stream();
 
-        while let Some(chunk) = stream.next().await {
-            if cancel.is_cancelled() {
-                return Err(CoachError::Cancelled);
-            }
+        loop {
+            // Race the read against cancellation: a stalled model must not make
+            // the Stop button wait for the request timeout.
+            let chunk = tokio::select! {
+                biased;
+                _ = cancel.cancelled() => return Err(CoachError::Cancelled),
+                next = stream.next() => match next {
+                    Some(chunk) => chunk,
+                    None => break,
+                },
+            };
             let chunk = chunk.map_err(|e| CoachError::Transport(e.to_string()))?;
             for delta in parser.push(&chunk)? {
                 answer.push_str(&delta);

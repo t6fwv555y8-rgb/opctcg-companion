@@ -2614,6 +2614,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "futures-util",
+ "optcg_coach",
  "optcg_core",
  "optcg_database",
  "optcg_rules",

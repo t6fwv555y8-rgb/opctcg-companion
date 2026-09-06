@@ -9,8 +9,25 @@ use std::sync::Arc;
 pub type EventSink = Arc<dyn Fn(CoachEvent) + Send + Sync>;
 
 /// Cooperative cancellation shared between a running turn and the UI.
-#[derive(Debug, Clone, Default)]
-pub struct CancelToken(Arc<AtomicBool>);
+///
+/// Exposes both a cheap synchronous check for tight loops and an awaitable
+/// form, so a provider blocked on a socket read can be interrupted instead of
+/// waiting for the next chunk that may never come.
+#[derive(Debug, Clone)]
+pub struct CancelToken {
+    flag: Arc<AtomicBool>,
+    changed: Arc<tokio::sync::watch::Sender<bool>>,
+}
+
+impl Default for CancelToken {
+    fn default() -> Self {
+        let (changed, _) = tokio::sync::watch::channel(false);
+        Self {
+            flag: Arc::new(AtomicBool::new(false)),
+            changed: Arc::new(changed),
+        }
+    }
+}
 
 impl CancelToken {
     pub fn new() -> Self {
@@ -18,11 +35,23 @@ impl CancelToken {
     }
 
     pub fn cancel(&self) {
-        self.0.store(true, Ordering::SeqCst);
+        self.flag.store(true, Ordering::SeqCst);
+        self.changed.send_replace(true);
     }
 
     pub fn is_cancelled(&self) -> bool {
-        self.0.load(Ordering::SeqCst)
+        self.flag.load(Ordering::SeqCst)
+    }
+
+    /// Resolves once cancelled, including when cancellation already happened.
+    pub async fn cancelled(&self) {
+        let mut rx = self.changed.subscribe();
+        // `subscribe` snapshots the current value, so checking it before
+        // awaiting cannot miss a cancellation that races this call.
+        if *rx.borrow_and_update() {
+            return;
+        }
+        let _ = rx.changed().await;
     }
 }
 
@@ -113,5 +142,29 @@ mod tests {
         assert!(!clone.is_cancelled());
         token.cancel();
         assert!(clone.is_cancelled(), "cancellation must be visible to holders");
+    }
+
+    #[tokio::test]
+    async fn awaiting_a_token_cancelled_later_resolves() {
+        let token = CancelToken::new();
+        let trigger = token.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            trigger.cancel();
+        });
+
+        tokio::time::timeout(std::time::Duration::from_secs(2), token.cancelled())
+            .await
+            .expect("cancelled() should resolve once cancel() runs");
+    }
+
+    #[tokio::test]
+    async fn awaiting_an_already_cancelled_token_returns_immediately() {
+        let token = CancelToken::new();
+        token.cancel();
+
+        tokio::time::timeout(std::time::Duration::from_millis(50), token.cancelled())
+            .await
+            .expect("cancelled() must not block when cancellation already happened");
     }
 }

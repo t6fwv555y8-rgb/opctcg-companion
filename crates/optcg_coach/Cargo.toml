@@ -22,3 +22,8 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
+
+[dev-dependencies]
+# Self-dependency so this crate's integration tests see `provider::test_support`,
+# which `cfg(test)` alone does not expose to a separate test crate.
+optcg_coach = { path = ".", features = ["test-support"] }
