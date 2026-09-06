@@ -313,6 +313,14 @@ pub fn build_context(
         sink(CoachEvent::tool("board_readout", board_summary(state)));
         context.push("Board", board);
 
+        if let Some(actions) = recent_actions(state) {
+            sink(CoachEvent::tool(
+                "recent_actions",
+                format!("{} recent", actions.lines().count()),
+            ));
+            context.push("Recent actions", actions);
+        }
+
         sink(CoachEvent::status("Estimating opponent counters"));
         let counters = estimate_counters(state.player_two(), repo);
         sink(CoachEvent::tool("counter_estimate", counters.summary()));
@@ -396,6 +404,26 @@ pub fn build_context(
         context.fingerprint = Some(position);
     }
     context
+}
+
+/// How many of the most recent actions the briefing carries.
+///
+/// Enough to show the shape of the current turn without spending the prompt on
+/// history the model cannot act on.
+const RECENT_ACTIONS: usize = 12;
+
+/// The last few actions, oldest first, or `None` before anything has happened.
+///
+/// This is the one thing the position readout cannot convey: whether life went
+/// from 4 to 2 this turn or ten turns ago, and what the opponent has been
+/// doing to get here.
+fn recent_actions(state: &GameState) -> Option<String> {
+    let start = state.event_log.len().saturating_sub(RECENT_ACTIONS);
+    let recent = state.event_log.get(start..)?;
+    if recent.is_empty() {
+        return None;
+    }
+    Some(recent.join("\n"))
 }
 
 fn board_summary(state: &GameState) -> String {
@@ -867,6 +895,72 @@ mod tests {
         };
         let context = build_context(&sample_state(), &repo, &decks, scope, &sink);
         (context, recorder.events())
+    }
+
+    #[test]
+    fn the_briefing_carries_what_just_happened() {
+        let db = db();
+        let repo = CardRepository::new(&db);
+        let (sink, recorder) = recording_sink();
+
+        let mut state = sample_state();
+        state.push_log("#1 PHASE_CHANGED Main");
+        state.push_log("#2 ATTACK_DECLARED OP01-001 power=5000");
+
+        let context = build_context(
+            &state,
+            &repo,
+            &DeckContext::default(),
+            ContextScope::default(),
+            &sink,
+        );
+        let prompt = context.to_prompt();
+
+        assert!(prompt.contains("## Recent actions"));
+        assert!(prompt.contains("ATTACK_DECLARED OP01-001"));
+        assert!(
+            recorder.events().iter().any(|e| matches!(
+                e,
+                CoachEvent::ToolRun(run) if run.tool == "recent_actions"
+            )),
+            "the HUD should show that the log was read"
+        );
+    }
+
+    #[test]
+    fn an_empty_log_adds_no_section() {
+        let db = db();
+        let repo = CardRepository::new(&db);
+        let (sink, _) = recording_sink();
+
+        let context = build_context(
+            &sample_state(),
+            &repo,
+            &DeckContext::default(),
+            ContextScope::default(),
+            &sink,
+        );
+
+        assert!(
+            !context.to_prompt().contains("Recent actions"),
+            "an empty heading would just waste prompt space"
+        );
+    }
+
+    #[test]
+    fn only_the_last_few_actions_are_carried() {
+        let mut state = sample_state();
+        for i in 0..60 {
+            state.push_log(format!("#{i} PHASE_CHANGED Main"));
+        }
+
+        let actions = recent_actions(&state).expect("a populated log");
+        assert_eq!(actions.lines().count(), RECENT_ACTIONS);
+        assert!(
+            actions.starts_with("#48 "),
+            "the newest actions are the ones that matter: {actions}"
+        );
+        assert!(actions.ends_with("#59 PHASE_CHANGED Main"));
     }
 
     #[test]

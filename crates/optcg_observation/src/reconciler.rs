@@ -2,7 +2,8 @@ use crate::confidence::ConfidenceConfig;
 use crate::error::ObsResult;
 use crate::session::{GameSession, SyncState};
 use crate::types::ObservationEvent;
-use optcg_core::{GameEvent, Normalizer, PlayerId};
+use chrono::Utc;
+use optcg_core::{GameEvent, LastEventInfo, Normalizer, PlayerId};
 use tracing::{debug, info, warn};
 
 /// Outcome of reconciling one observation into engine events.
@@ -310,15 +311,37 @@ impl ObservationReconciler {
                 if let Some(p) = session.state.player_mut(player.index()) {
                     let corrected = *delta > 0 && p.life != p.life.saturating_add(*delta as u32);
                     Normalizer::apply_event(&mut session.state, event)?;
-                    session.event_sequence = session.state.event_sequence;
+                    Self::record_action(session, event);
                     return Ok(corrected);
                 }
             }
         }
 
         Normalizer::apply_event(&mut session.state, event)?;
-        session.event_sequence = session.state.event_sequence;
+        Self::record_action(session, event);
         Ok(false)
+    }
+
+    /// Note what just happened in the action log.
+    ///
+    /// `Normalizer::apply_event` only mutates the board. The sequence,
+    /// last-event, and log bookkeeping lives in `Normalizer::process`, which
+    /// this path deliberately skips because observations arrive already parsed.
+    /// Without this the action history stays empty for every observed source,
+    /// leaving the HUD with no last event and the coach with no way to see what
+    /// led to the current position.
+    fn record_action(session: &mut GameSession, event: &GameEvent) {
+        let state = &mut session.state;
+        state.event_sequence += 1;
+        let info = LastEventInfo {
+            sequence: state.event_sequence,
+            event_name: event.name().to_string(),
+            summary: Normalizer::summarize(event),
+            processed_at: Utc::now(),
+        };
+        state.push_log(format!("#{} {}", info.sequence, info.summary));
+        state.last_event = Some(info);
+        session.event_sequence = state.event_sequence;
     }
 }
 
@@ -340,6 +363,68 @@ mod tests {
         let outcome = reconciler.reconcile(&mut session, &obs).unwrap();
         assert!(outcome.applied);
         assert_eq!(session.state.phase, Phase::Main);
+    }
+
+    #[test]
+    fn applied_observations_build_up_an_action_log() {
+        let mut reconciler = ObservationReconciler::default();
+        let mut session = GameSession::new(ObservationSource::Mock);
+
+        for raw in [
+            "PHASE_CHANGED|MAIN",
+            "PHASE_CHANGED|END",
+            "TURN_STARTED|PLAYER_1",
+        ] {
+            let obs = ObservationEvent::StructuredRaw {
+                raw: raw.into(),
+                source: ObservationSource::Mock,
+                confidence: 1.0,
+            };
+            assert!(reconciler.reconcile(&mut session, &obs).unwrap().applied);
+        }
+
+        assert_eq!(
+            session.state.event_log.len(),
+            3,
+            "every applied observation should be recorded: {:?}",
+            session.state.event_log
+        );
+        assert!(
+            session.state.event_log[0].starts_with("#1 PHASE_CHANGED"),
+            "got {:?}",
+            session.state.event_log[0]
+        );
+        assert_eq!(
+            session.state.event_sequence, 3,
+            "the sequence has to advance or every entry collides"
+        );
+        assert_eq!(session.event_sequence, session.state.event_sequence);
+
+        let last = session
+            .state
+            .last_event
+            .as_ref()
+            .expect("the HUD reads the last event from here");
+        assert_eq!(last.sequence, 3);
+        assert_eq!(last.event_name, "TURN_STARTED");
+    }
+
+    #[test]
+    fn a_rejected_observation_records_nothing() {
+        let mut reconciler = ObservationReconciler::default();
+        let mut session = GameSession::new(ObservationSource::ScreenVision);
+        let obs = ObservationEvent::PhaseObserved {
+            phase: Phase::Main,
+            confidence: 0.1,
+        };
+
+        assert!(!reconciler.reconcile(&mut session, &obs).unwrap().applied);
+        assert!(
+            session.state.event_log.is_empty(),
+            "a guess the reconciler threw out must not appear as something that happened"
+        );
+        assert!(session.state.last_event.is_none());
+        assert_eq!(session.state.event_sequence, 0);
     }
 
     #[test]
