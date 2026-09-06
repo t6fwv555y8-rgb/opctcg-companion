@@ -1,5 +1,5 @@
-use crate::provider::CancelToken;
-use crate::types::{ChatMessage, ChatRole};
+use crate::provider::{CancelReason, CancelToken};
+use crate::types::{ChatMessage, ChatRole, StateFingerprint};
 
 /// How many prior turns to replay to the model. Each turn is a user message
 /// plus its answer, so this is a bound on prompt growth, not on stored history.
@@ -16,7 +16,15 @@ pub const MAX_MESSAGE_CHARS: usize = 2000;
 pub struct CoachSession {
     history: Vec<ChatMessage>,
     next_turn_id: u64,
-    in_flight: Option<(u64, CancelToken)>,
+    in_flight: Option<InFlight>,
+}
+
+#[derive(Debug)]
+struct InFlight {
+    turn_id: u64,
+    cancel: CancelToken,
+    /// The position this turn was grounded on, once grounding has run.
+    grounded_on: Option<StateFingerprint>,
 }
 
 impl CoachSession {
@@ -33,7 +41,7 @@ impl CoachSession {
     }
 
     pub fn active_turn(&self) -> Option<u64> {
-        self.in_flight.as_ref().map(|(id, _)| *id)
+        self.in_flight.as_ref().map(|turn| turn.turn_id)
     }
 
     /// Begin a turn: validate the question, record it, and hand back the turn
@@ -58,9 +66,41 @@ impl CoachSession {
         self.next_turn_id += 1;
         let turn_id = self.next_turn_id;
         let cancel = CancelToken::new();
-        self.in_flight = Some((turn_id, cancel.clone()));
+        self.in_flight = Some(InFlight {
+            turn_id,
+            cancel: cancel.clone(),
+            grounded_on: None,
+        });
         self.history.push(ChatMessage::user(trimmed));
         Ok((turn_id, cancel))
+    }
+
+    /// Record the position `turn_id` was grounded on, enabling staleness checks.
+    ///
+    /// Ignored for a turn that is no longer active.
+    pub fn record_grounding(&mut self, turn_id: u64, fingerprint: StateFingerprint) {
+        if let Some(turn) = self.in_flight.as_mut().filter(|t| t.turn_id == turn_id) {
+            turn.grounded_on = Some(fingerprint);
+        }
+    }
+
+    /// Cancel the streaming turn if the board has moved away from what it was
+    /// grounded on, returning the turn id that was interrupted.
+    ///
+    /// A turn whose grounding has not finished yet is left alone: it will read
+    /// the current board when it gets there, so it cannot be stale.
+    pub fn interrupt_if_stale(&mut self, current: &StateFingerprint) -> Option<u64> {
+        let turn = self.in_flight.as_ref()?;
+        let grounded_on = turn.grounded_on.as_ref()?;
+        if !grounded_on.is_stale_against(current) {
+            return None;
+        }
+        let turn_id = turn.turn_id;
+        // The reason travels with the token so the streaming task emits the
+        // single terminal frame, keeping text and `done` in order.
+        turn.cancel.cancel_with(CancelReason::Stale);
+        self.in_flight = None;
+        Some(turn_id)
     }
 
     /// Record a completed answer and clear the in-flight turn.
@@ -97,9 +137,9 @@ impl CoachSession {
 
     /// Cancel whatever is streaming, returning the turn id if there was one.
     pub fn cancel_active(&mut self) -> Option<u64> {
-        let (turn_id, cancel) = self.in_flight.take()?;
-        cancel.cancel();
-        Some(turn_id)
+        let turn = self.in_flight.take()?;
+        turn.cancel.cancel();
+        Some(turn.turn_id)
     }
 
     /// Clear the conversation and stop any streaming turn.
@@ -213,6 +253,85 @@ mod tests {
             "stale text must not enter history"
         );
         assert_eq!(session.active_turn(), Some(second), "the live turn survives");
+    }
+
+    fn position(digest: &str) -> StateFingerprint {
+        StateFingerprint {
+            label: digest.into(),
+            digest: digest.into(),
+        }
+    }
+
+    #[test]
+    fn a_stale_turn_is_interrupted() {
+        let mut session = CoachSession::new();
+        let (turn, cancel) = session.begin_turn("what now?").unwrap();
+        session.record_grounding(turn, position("turn-4"));
+
+        assert_eq!(
+            session.interrupt_if_stale(&position("turn-4")),
+            None,
+            "an unchanged board must not interrupt the turn"
+        );
+        assert!(!cancel.is_cancelled());
+
+        assert_eq!(
+            session.interrupt_if_stale(&position("turn-5")),
+            Some(turn),
+            "a changed board should interrupt"
+        );
+        assert!(cancel.is_cancelled());
+        assert_eq!(
+            cancel.reason(),
+            Some(CancelReason::Stale),
+            "the reason must distinguish this from the user pressing Stop"
+        );
+        assert!(!session.is_busy());
+    }
+
+    #[test]
+    fn a_turn_still_grounding_is_never_stale() {
+        let mut session = CoachSession::new();
+        let (_turn, cancel) = session.begin_turn("what now?").unwrap();
+
+        // Grounding has not run, so the turn has not committed to a position
+        // yet and will read whatever is current when it gets there.
+        assert_eq!(session.interrupt_if_stale(&position("anything")), None);
+        assert!(!cancel.is_cancelled());
+        assert!(session.is_busy());
+    }
+
+    #[test]
+    fn staleness_checks_are_safe_with_nothing_in_flight() {
+        let mut session = CoachSession::new();
+        assert_eq!(session.interrupt_if_stale(&position("turn-4")), None);
+
+        let (turn, _) = session.begin_turn("q").unwrap();
+        session.record_grounding(turn, position("turn-4"));
+        session.finish_turn(turn, "a");
+        assert_eq!(
+            session.interrupt_if_stale(&position("turn-9")),
+            None,
+            "a finished turn cannot be interrupted"
+        );
+    }
+
+    #[test]
+    fn grounding_is_not_recorded_against_a_superseded_turn() {
+        let mut session = CoachSession::new();
+        let (first, _) = session.begin_turn("q1").unwrap();
+        let (second, _) = session.begin_turn("q2").unwrap();
+
+        session.record_grounding(first, position("stale-position"));
+        assert_eq!(
+            session.interrupt_if_stale(&position("current")),
+            None,
+            "the live turn has no grounding yet, so the stale write was ignored"
+        );
+
+        session.record_grounding(second, position("current"));
+        assert_eq!(session.interrupt_if_stale(&position("current")), None);
+        assert_eq!(session.interrupt_if_stale(&position("moved")), Some(second));
     }
 
     #[test]

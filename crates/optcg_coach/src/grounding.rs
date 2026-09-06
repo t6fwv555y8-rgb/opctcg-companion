@@ -1,6 +1,6 @@
 use crate::provider::EventSink;
-use crate::types::CoachEvent;
-use optcg_core::GameState;
+use crate::types::{CoachEvent, StateFingerprint};
+use optcg_core::{GameState, PlayerState};
 use optcg_database::CardRepository;
 use optcg_rules::{CombatMath, RulesEngine};
 
@@ -22,6 +22,8 @@ pub struct DeckContext {
 #[derive(Debug, Clone, Default)]
 pub struct GroundedContext {
     pub sections: Vec<(String, String)>,
+    /// The position these facts were read from.
+    pub fingerprint: StateFingerprint,
 }
 
 impl GroundedContext {
@@ -40,6 +42,166 @@ impl GroundedContext {
             self.sections.push((heading.to_string(), body));
         }
     }
+}
+
+/// Upper bound on the counter power an opponent could add to a fight.
+///
+/// The opponent's hand is hidden, so this is deliberately not a claim about
+/// what they hold. It combines two things we do observe: the counter values on
+/// cards they have already revealed this match, and how many cards are in
+/// their hand.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct CounterEstimate {
+    pub hand_size: u32,
+    /// Distinct non-zero counter values seen on their revealed cards, ascending.
+    pub observed_values: Vec<i32>,
+    /// Largest single counter observed, i.e. the most one card could add.
+    pub max_single: i32,
+    /// `max_single * hand_size`: the ceiling if every card held were their
+    /// biggest counter. A bound to plan against, not a prediction.
+    pub worst_case_total: i32,
+}
+
+impl CounterEstimate {
+    fn summary(&self) -> String {
+        if self.max_single == 0 {
+            return format!(
+                "no counters revealed yet, {} cards in hand",
+                self.hand_size
+            );
+        }
+        format!(
+            "≤{} from {} cards (max single {})",
+            self.worst_case_total, self.hand_size, self.max_single
+        )
+    }
+
+    fn readout(&self) -> String {
+        if self.hand_size == 0 {
+            return "Opponent has no cards in hand, so they cannot counter.".to_string();
+        }
+        if self.max_single == 0 {
+            return format!(
+                "Opponent holds {} cards. No counter values have been revealed this \
+                 match, so treat their counter potential as unknown.",
+                self.hand_size
+            );
+        }
+        format!(
+            "Opponent holds {} cards. Cards they have revealed carry counters of {}. \
+             If every card in hand were their largest counter ({}), they could add at \
+             most {}. This is an upper bound from revealed cards, not their actual hand.",
+            self.hand_size,
+            self.observed_values
+                .iter()
+                .map(|v| v.to_string())
+                .collect::<Vec<_>>()
+                .join(", "),
+            self.max_single,
+            self.worst_case_total
+        )
+    }
+}
+
+/// Estimate the opponent's counter ceiling from cards they have revealed.
+pub fn estimate_counters(opponent: &PlayerState, repo: &CardRepository<'_>) -> CounterEstimate {
+    let mut values: Vec<i32> = Vec::new();
+
+    // One lookup per iteration: each `get_by_id` takes the database lock, so
+    // they must not be combined into a single expression.
+    for card_id in &opponent.known_cards {
+        let Ok(card) = repo.get_by_id(card_id) else {
+            continue;
+        };
+        if card.counter > 0 {
+            values.push(card.counter);
+        }
+    }
+
+    values.sort_unstable();
+    values.dedup();
+    let max_single = values.last().copied().unwrap_or(0);
+
+    CounterEstimate {
+        hand_size: opponent.hand_count,
+        observed_values: values,
+        max_single,
+        worst_case_total: max_single * opponent.hand_count as i32,
+    }
+}
+
+/// Identify the board position an answer is grounded on.
+///
+/// Only fields that would make advice wrong are included, so the turn is not
+/// interrupted by unrelated event traffic.
+pub fn fingerprint(state: &GameState) -> StateFingerprint {
+    let you = state.player_one();
+    let opp = state.player_two();
+
+    let combat = if state.combat.active {
+        format!(
+            "combat:{}>{}{}",
+            state.combat.attacker_id.as_deref().unwrap_or("?"),
+            if state.combat.target_is_leader {
+                "leader"
+            } else {
+                state.combat.target_id.as_deref().unwrap_or("?")
+            },
+            if state.combat.blocker_offered { "+b" } else { "" }
+        )
+    } else {
+        "combat:none".to_string()
+    };
+
+    let digest = format!(
+        "t{} p{:?} a{} | {} | {} | {}",
+        state.turn_number,
+        state.phase,
+        state.active_player,
+        side_digest(you),
+        side_digest(opp),
+        combat
+    );
+
+    StateFingerprint {
+        label: format!(
+            "turn {} · {:?} · life {}-{}",
+            state.turn_number, state.phase, you.life, opp.life
+        ),
+        digest,
+    }
+}
+
+fn side_digest(player: &PlayerState) -> String {
+    let mut board: Vec<String> = player
+        .characters
+        .iter()
+        .map(|card| {
+            format!(
+                "{}{}{}",
+                card.card_id,
+                if card.rested { "r" } else { "" },
+                if card.attached_don > 0 {
+                    format!("+{}", card.attached_don)
+                } else {
+                    String::new()
+                }
+            )
+        })
+        .collect();
+    // Board order is an artifact of observation, not part of the position.
+    board.sort_unstable();
+
+    format!(
+        "L{} h{} d{}/{} ldr{}+{} [{}]",
+        player.life,
+        player.hand_count,
+        player.don_active,
+        player.don_rested,
+        player.leader.card_id,
+        player.leader.attached_don,
+        board.join(",")
+    )
 }
 
 /// The instruction block that defines the coach's job and its limits.
@@ -74,6 +236,11 @@ pub fn build_context(
     let board = board_readout(state);
     sink(CoachEvent::tool("board_readout", board_summary(state)));
     context.push("Board", board);
+
+    sink(CoachEvent::status("Estimating opponent counters"));
+    let counters = estimate_counters(state.player_two(), repo);
+    sink(CoachEvent::tool("counter_estimate", counters.summary()));
+    context.push("Opponent counter range", counters.readout());
 
     sink(CoachEvent::status("Checking the current phase"));
     let phase_coach = RulesEngine::phase_coach(state);
@@ -126,6 +293,11 @@ pub fn build_context(
     }
 
     context.push("Decks", deck_readout(decks));
+
+    // Emitted last, once the position that was actually read is known, so the
+    // UI can label the answer and detect it going stale.
+    context.fingerprint = fingerprint(state);
+    sink(CoachEvent::StateSync(context.fingerprint.clone()));
     context
 }
 
@@ -382,6 +554,160 @@ mod tests {
         fighting.combat.target_is_leader = true;
         let context = build_context(&fighting, &repo, &DeckContext::default(), &sink);
         assert!(context.to_prompt().contains("Combat: ST01-002 attacking leader"));
+    }
+
+    #[test]
+    fn counter_estimate_bounds_from_revealed_cards() {
+        let db = db();
+        let repo = CardRepository::new(&db);
+        let mut state = sample_state();
+        {
+            let opp = state.player_two_mut();
+            opp.hand_count = 4;
+            opp.known_cards = vec!["ST01-002".into(), "ST01-003".into()];
+        }
+
+        let estimate = estimate_counters(state.player_two(), &repo);
+
+        assert_eq!(estimate.hand_size, 4);
+        assert!(
+            !estimate.observed_values.is_empty(),
+            "seeded cards should carry counters"
+        );
+        assert!(
+            estimate.observed_values.windows(2).all(|w| w[0] < w[1]),
+            "values should be sorted and deduplicated: {:?}",
+            estimate.observed_values
+        );
+        assert_eq!(
+            estimate.max_single,
+            *estimate.observed_values.last().unwrap()
+        );
+        assert_eq!(
+            estimate.worst_case_total,
+            estimate.max_single * 4,
+            "worst case is the largest counter across every card held"
+        );
+    }
+
+    #[test]
+    fn counter_estimate_states_what_it_does_not_know() {
+        let db = db();
+        let repo = CardRepository::new(&db);
+        let mut state = sample_state();
+        state.player_two_mut().hand_count = 5;
+
+        // Nothing revealed yet.
+        let estimate = estimate_counters(state.player_two(), &repo);
+        assert_eq!(estimate.max_single, 0);
+        assert_eq!(estimate.worst_case_total, 0);
+        assert!(
+            estimate.readout().contains("unknown"),
+            "an empty estimate must not imply they cannot counter: {}",
+            estimate.readout()
+        );
+
+        // An empty hand is a real certainty, unlike an empty observation set.
+        state.player_two_mut().hand_count = 0;
+        let empty_hand = estimate_counters(state.player_two(), &repo);
+        assert!(empty_hand.readout().contains("cannot counter"));
+    }
+
+    #[test]
+    fn counter_estimate_ignores_unknown_card_ids() {
+        let db = db();
+        let repo = CardRepository::new(&db);
+        let mut state = sample_state();
+        state.player_two_mut().hand_count = 1;
+        state.player_two_mut().known_cards = vec!["NOT-A-REAL-CARD".into()];
+
+        let estimate = estimate_counters(state.player_two(), &repo);
+        assert!(
+            estimate.observed_values.is_empty(),
+            "a card missing from the database should be skipped, not fatal"
+        );
+    }
+
+    #[test]
+    fn context_reports_the_position_it_read() {
+        let db = db();
+        let repo = CardRepository::new(&db);
+        let (sink, recorder) = recording_sink();
+
+        let context = build_context(&sample_state(), &repo, &DeckContext::default(), &sink);
+
+        assert_eq!(context.fingerprint, fingerprint(&sample_state()));
+        assert!(context.fingerprint.label.contains("turn 4"));
+
+        let sync = recorder
+            .events()
+            .into_iter()
+            .find_map(|e| match e {
+                CoachEvent::StateSync(f) => Some(f),
+                _ => None,
+            })
+            .expect("a state_sync frame should be emitted");
+        assert_eq!(sync, context.fingerprint);
+    }
+
+    #[test]
+    fn fingerprint_changes_only_for_material_moves() {
+        let base = sample_state();
+        let before = fingerprint(&base);
+
+        // Noise that does not change the position.
+        let mut noisy = base.clone();
+        noisy.event_sequence += 25;
+        noisy.player_one_mut().trash_count += 3;
+        noisy.push_log("some log line");
+        assert_eq!(
+            fingerprint(&noisy).digest,
+            before.digest,
+            "event churn must not count as the board moving"
+        );
+
+        // Real changes.
+        let mut damaged = base.clone();
+        damaged.player_one_mut().life -= 1;
+        assert_ne!(fingerprint(&damaged).digest, before.digest, "life matters");
+
+        let mut donned = base.clone();
+        donned.player_one_mut().don_active += 1;
+        assert_ne!(fingerprint(&donned).digest, before.digest, "DON matters");
+
+        let mut drawn = base.clone();
+        drawn.player_two_mut().hand_count += 1;
+        assert_ne!(
+            fingerprint(&drawn).digest,
+            before.digest,
+            "opponent hand size matters"
+        );
+
+        let mut fighting = base.clone();
+        fighting.combat.active = true;
+        fighting.combat.attacker_id = Some("ST01-002".into());
+        assert_ne!(
+            fingerprint(&fighting).digest,
+            before.digest,
+            "combat starting matters"
+        );
+    }
+
+    #[test]
+    fn fingerprint_ignores_board_ordering() {
+        let mut left = sample_state();
+        let mut right = sample_state();
+        let a = optcg_core::CardInstance::new("ST01-002", 0, optcg_core::Zone::Character);
+        let b = optcg_core::CardInstance::new("ST01-003", 0, optcg_core::Zone::Character);
+
+        left.player_one_mut().characters = vec![a.clone(), b.clone()];
+        right.player_one_mut().characters = vec![b, a];
+
+        assert_eq!(
+            fingerprint(&left).digest,
+            fingerprint(&right).digest,
+            "observation order is not part of the position"
+        );
     }
 
     #[test]

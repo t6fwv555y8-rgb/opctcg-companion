@@ -1,5 +1,5 @@
 use crate::types::{ChatMessage, CoachEvent};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 
 /// Callback the provider pushes stream frames into.
@@ -8,6 +8,19 @@ use std::sync::Arc;
 /// does not await, and this keeps providers free of channel plumbing.
 pub type EventSink = Arc<dyn Fn(CoachEvent) + Send + Sync>;
 
+/// Why a turn was cancelled, so the UI can explain itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CancelReason {
+    /// The user pressed Stop.
+    User,
+    /// The board moved away from the position the answer was grounded on.
+    Stale,
+}
+
+const NOT_CANCELLED: u8 = 0;
+const CANCELLED_BY_USER: u8 = 1;
+const CANCELLED_AS_STALE: u8 = 2;
+
 /// Cooperative cancellation shared between a running turn and the UI.
 ///
 /// Exposes both a cheap synchronous check for tight loops and an awaitable
@@ -15,7 +28,7 @@ pub type EventSink = Arc<dyn Fn(CoachEvent) + Send + Sync>;
 /// waiting for the next chunk that may never come.
 #[derive(Debug, Clone)]
 pub struct CancelToken {
-    flag: Arc<AtomicBool>,
+    state: Arc<AtomicU8>,
     changed: Arc<tokio::sync::watch::Sender<bool>>,
 }
 
@@ -23,7 +36,7 @@ impl Default for CancelToken {
     fn default() -> Self {
         let (changed, _) = tokio::sync::watch::channel(false);
         Self {
-            flag: Arc::new(AtomicBool::new(false)),
+            state: Arc::new(AtomicU8::new(NOT_CANCELLED)),
             changed: Arc::new(changed),
         }
     }
@@ -34,13 +47,33 @@ impl CancelToken {
         Self::default()
     }
 
+    /// Cancel at the user's request.
     pub fn cancel(&self) {
-        self.flag.store(true, Ordering::SeqCst);
+        self.cancel_with(CancelReason::User);
+    }
+
+    pub fn cancel_with(&self, reason: CancelReason) {
+        let encoded = match reason {
+            CancelReason::User => CANCELLED_BY_USER,
+            CancelReason::Stale => CANCELLED_AS_STALE,
+        };
+        // First reason wins, so a later cause cannot relabel why a turn ended.
+        let _ = self
+            .state
+            .compare_exchange(NOT_CANCELLED, encoded, Ordering::SeqCst, Ordering::SeqCst);
         self.changed.send_replace(true);
     }
 
     pub fn is_cancelled(&self) -> bool {
-        self.flag.load(Ordering::SeqCst)
+        self.state.load(Ordering::SeqCst) != NOT_CANCELLED
+    }
+
+    pub fn reason(&self) -> Option<CancelReason> {
+        match self.state.load(Ordering::SeqCst) {
+            CANCELLED_BY_USER => Some(CancelReason::User),
+            CANCELLED_AS_STALE => Some(CancelReason::Stale),
+            _ => None,
+        }
     }
 
     /// Resolves once cancelled, including when cancellation already happened.
@@ -140,8 +173,23 @@ mod tests {
         let token = CancelToken::new();
         let clone = token.clone();
         assert!(!clone.is_cancelled());
+        assert_eq!(clone.reason(), None);
+
         token.cancel();
         assert!(clone.is_cancelled(), "cancellation must be visible to holders");
+        assert_eq!(clone.reason(), Some(CancelReason::User));
+    }
+
+    #[test]
+    fn the_first_cancellation_reason_wins() {
+        let token = CancelToken::new();
+        token.cancel_with(CancelReason::Stale);
+        token.cancel_with(CancelReason::User);
+        assert_eq!(
+            token.reason(),
+            Some(CancelReason::Stale),
+            "a later cause must not relabel why the turn ended"
+        );
     }
 
     #[tokio::test]

@@ -63,8 +63,33 @@ pub struct ToolRun {
 #[serde(rename_all = "snake_case")]
 pub enum FinishReason {
     Complete,
+    /// The user pressed Stop.
     Cancelled,
+    /// The board moved on, so the answer was about a position that no longer
+    /// exists. Distinct from `Cancelled` because the user did not ask for it
+    /// and the UI should explain why the answer stopped.
+    Interrupted,
     Failed,
+}
+
+/// Identifies the board position an answer is grounded on.
+///
+/// `digest` covers only the fields that make coaching advice wrong when they
+/// change, so ordinary event churn (latency samples, log lines, trash counts)
+/// does not count as the board moving.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StateFingerprint {
+    /// Short human label for the HUD, e.g. `turn 4 · Main · life 3-2`.
+    pub label: String,
+    /// Canonical form of the material fields. Compared for equality; kept
+    /// readable rather than hashed so a stale turn can be explained.
+    pub digest: String,
+}
+
+impl StateFingerprint {
+    pub fn is_stale_against(&self, current: &StateFingerprint) -> bool {
+        self.digest != current.digest
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -96,6 +121,14 @@ impl TurnSummary {
         }
     }
 
+    pub fn interrupted() -> Self {
+        Self {
+            reason: FinishReason::Interrupted,
+            text: None,
+            error: None,
+        }
+    }
+
     pub fn failed(error: impl Into<String>) -> Self {
         Self {
             reason: FinishReason::Failed,
@@ -112,6 +145,10 @@ impl TurnSummary {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum CoachEvent {
+    /// The board position this answer is grounded on. Emitted once, after
+    /// grounding and before any text, so the UI can label the answer and
+    /// recognise when it has gone stale.
+    StateSync(StateFingerprint),
     /// Progress line, e.g. "Reading board state".
     Status(String),
     /// A grounding tool finished.
