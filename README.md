@@ -198,6 +198,19 @@ Tuning lives in `auto::AutoTriggerConfig`. The policy is a pure state machine
 with the clock passed in (`auto::AutoTrigger`), so it is tested without
 sleeping.
 
+To try it against the mock source, pace the stream slower than the settle
+window:
+
+```bash
+python3 scripts/mock_stream.py --interval 2
+```
+
+At the default 1s interval **no automatic read ever fires**, because the next
+position arrives before the previous one has settled. That is the intended
+behaviour rather than a bug — a board still in motion is not one to give
+advice about — but it does mean unbroken churn starves the trigger entirely.
+Real play has natural pauses; a synthetic stream does not.
+
 > **Why not a `MutationObserver` on the game log?** That layer already exists:
 > `browser-companion` observes the simulator's DOM and feeds snapshots to the
 > pipeline, which normalizes them into `GameState`. Triggering off the
