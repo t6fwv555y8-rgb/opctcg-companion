@@ -19,9 +19,24 @@ pub struct CoachSession {
     in_flight: Option<InFlight>,
 }
 
+/// Who asked for a turn, which decides whether it joins the conversation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TurnKind {
+    /// The user asked. Recorded in history so follow-ups have context.
+    User,
+    /// Fired by a board change. Not recorded: repeated board reads would
+    /// evict the user's own conversation from the capped history and bias the
+    /// model toward repeating its last answer.
+    Auto,
+}
+
 #[derive(Debug)]
 struct InFlight {
     turn_id: u64,
+    kind: TurnKind,
+    /// Kept for automatic turns, whose question is never written to history
+    /// and so has to be appended when the prompt is assembled.
+    question: String,
     cancel: CancelToken,
     /// The position this turn was grounded on, once grounding has run.
     grounded_on: Option<StateFingerprint>,
@@ -50,6 +65,19 @@ impl CoachSession {
     /// Any turn still in flight is cancelled first, so a user who sends again
     /// without waiting gets the newest answer rather than two interleaved ones.
     pub fn begin_turn(&mut self, message: &str) -> Result<(u64, CancelToken), String> {
+        self.begin_turn_of_kind(message, TurnKind::User)
+    }
+
+    /// Begin a turn the user did not ask for, triggered by a board change.
+    pub fn begin_auto_turn(&mut self, message: &str) -> Result<(u64, CancelToken), String> {
+        self.begin_turn_of_kind(message, TurnKind::Auto)
+    }
+
+    pub fn begin_turn_of_kind(
+        &mut self,
+        message: &str,
+        kind: TurnKind,
+    ) -> Result<(u64, CancelToken), String> {
         let trimmed = message.trim();
         if trimmed.is_empty() {
             return Err("Ask the coach a question first".into());
@@ -68,11 +96,20 @@ impl CoachSession {
         let cancel = CancelToken::new();
         self.in_flight = Some(InFlight {
             turn_id,
+            kind,
+            question: trimmed.to_string(),
             cancel: cancel.clone(),
             grounded_on: None,
         });
-        self.history.push(ChatMessage::user(trimmed));
+        if kind == TurnKind::User {
+            self.history.push(ChatMessage::user(trimmed));
+        }
         Ok((turn_id, cancel))
+    }
+
+    /// Kind of the streaming turn, if one is in flight.
+    pub fn active_kind(&self) -> Option<TurnKind> {
+        self.in_flight.as_ref().map(|turn| turn.kind)
     }
 
     /// Record the position `turn_id` was grounded on, enabling staleness checks.
@@ -108,11 +145,10 @@ impl CoachSession {
     /// Ignored when `turn_id` is not the active turn, so a superseded turn
     /// finishing late cannot append its answer after a newer question.
     pub fn finish_turn(&mut self, turn_id: u64, answer: &str) -> bool {
-        if self.active_turn() != Some(turn_id) {
+        let Some(turn) = self.in_flight.take_if(|turn| turn.turn_id == turn_id) else {
             return false;
-        }
-        self.in_flight = None;
-        if !answer.trim().is_empty() {
+        };
+        if turn.kind == TurnKind::User && !answer.trim().is_empty() {
             self.history.push(ChatMessage::assistant(answer.trim()));
         }
         self.trim_history();
@@ -150,9 +186,18 @@ impl CoachSession {
 
     /// Messages to send for this turn: the system briefing then recent history.
     pub fn prompt_with(&self, system: String) -> Vec<ChatMessage> {
-        let mut messages = Vec::with_capacity(self.history.len() + 1);
+        let mut messages = Vec::with_capacity(self.history.len() + 2);
         messages.push(ChatMessage::system(system));
         messages.extend(self.history.iter().cloned());
+        // An automatic turn is absent from history, so its question has to be
+        // appended here or the model would be sent a briefing and no question.
+        if let Some(turn) = self
+            .in_flight
+            .as_ref()
+            .filter(|turn| turn.kind == TurnKind::Auto)
+        {
+            messages.push(ChatMessage::user(turn.question.clone()));
+        }
         messages
     }
 
@@ -332,6 +377,81 @@ mod tests {
         session.record_grounding(second, position("current"));
         assert_eq!(session.interrupt_if_stale(&position("current")), None);
         assert_eq!(session.interrupt_if_stale(&position("moved")), Some(second));
+    }
+
+    #[test]
+    fn an_auto_turn_stays_out_of_the_conversation() {
+        let mut session = CoachSession::new();
+        let (turn, _) = session.begin_auto_turn("what changed?").unwrap();
+
+        assert_eq!(session.active_kind(), Some(TurnKind::Auto));
+        assert!(
+            session.history().is_empty(),
+            "an unprompted question is not part of the conversation"
+        );
+
+        // The question still reaches the model for this turn.
+        let prompt = session.prompt_with("BRIEFING".into());
+        assert_eq!(prompt.len(), 2, "system briefing plus the question");
+        assert_eq!(prompt[1].role, ChatRole::User);
+        assert_eq!(prompt[1].content, "what changed?");
+
+        assert!(session.finish_turn(turn, "Attack the leader."));
+        assert!(
+            session.history().is_empty(),
+            "an automatic answer must not evict the user's own conversation"
+        );
+    }
+
+    #[test]
+    fn auto_turns_do_not_crowd_out_user_history() {
+        let mut session = CoachSession::new();
+        let (asked, _) = session.begin_turn("why am I losing?").unwrap();
+        session.finish_turn(asked, "You are behind on board.");
+
+        // Many board changes fire many automatic reads.
+        for i in 0..HISTORY_TURNS * 3 {
+            let (turn, _) = session.begin_auto_turn(&format!("read {i}")).unwrap();
+            session.finish_turn(turn, &format!("answer {i}"));
+        }
+
+        assert_eq!(
+            session.history().len(),
+            2,
+            "only the user's own turn should remain: {:?}",
+            session.history()
+        );
+        assert_eq!(session.history()[0].content, "why am I losing?");
+    }
+
+    #[test]
+    fn a_user_turn_supersedes_a_running_auto_turn() {
+        let mut session = CoachSession::new();
+        let (auto, auto_cancel) = session.begin_auto_turn("read").unwrap();
+        let (asked, _) = session.begin_turn("what about blocking?").unwrap();
+
+        assert!(auto_cancel.is_cancelled(), "the user takes priority");
+        assert_eq!(session.active_turn(), Some(asked));
+        assert_eq!(session.active_kind(), Some(TurnKind::User));
+        assert!(
+            !session.finish_turn(auto, "stale read"),
+            "the superseded auto turn must not report"
+        );
+    }
+
+    #[test]
+    fn a_user_prompt_omits_the_current_question_because_history_holds_it() {
+        let mut session = CoachSession::new();
+        session.begin_turn("what now?").unwrap();
+
+        let prompt = session.prompt_with("BRIEFING".into());
+        assert_eq!(prompt.len(), 2, "system briefing plus the recorded question");
+        assert_eq!(prompt[1].content, "what now?");
+        assert_eq!(
+            prompt.iter().filter(|m| m.content == "what now?").count(),
+            1,
+            "the question must not be duplicated"
+        );
     }
 
     #[test]
