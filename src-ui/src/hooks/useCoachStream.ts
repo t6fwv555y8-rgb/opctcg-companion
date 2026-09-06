@@ -34,9 +34,13 @@ export function useCoachStream(): CoachStream {
 
   const mounted = useRef(true);
   const currentTurn = useRef<number | null>(null);
-  // The send command returns the turn id, but the backend may emit grounding
-  // frames before that response reaches us. Hold them until the id is known.
+  // True between asking and learning the turn id. The backend may emit
+  // grounding frames before the send response reaches us, so they are held
+  // until the id is known rather than mistaken for a turn it started itself.
+  const awaitingSend = useRef(false);
   const pending = useRef<CoachStreamEvent[]>([]);
+  // Highest turn id already closed out, so late frames cannot open a new one.
+  const lastFinished = useRef(0);
 
   /** Replace the trailing assistant message, preserving earlier identities. */
   const updateStreamingMessage = useCallback(
@@ -83,6 +87,7 @@ export function useCoachStream(): CoachStream {
           setStreaming(false);
           setActivity(null);
           currentTurn.current = null;
+          lastFinished.current = Math.max(lastFinished.current, event.turn_id);
           if (reason === "failed") {
             setError(event.data.error ?? "The coach could not answer");
           }
@@ -92,6 +97,21 @@ export function useCoachStream(): CoachStream {
     },
     [updateStreamingMessage],
   );
+
+  /**
+   * Take ownership of a turn the backend started on its own, which happens
+   * when a board change triggers an unprompted read.
+   */
+  const adoptAutomaticTurn = useCallback((turnId: number) => {
+    currentTurn.current = turnId;
+    setError(null);
+    setTools([]);
+    setStreaming(true);
+    setMessages((prev) => [
+      ...prev,
+      { role: "assistant", content: "", streaming: true, automatic: true },
+    ]);
+  }, []);
 
   useEffect(() => {
     mounted.current = true;
@@ -118,8 +138,16 @@ export function useCoachStream(): CoachStream {
     listen<CoachStreamEvent>(COACH_EVENT, (event) => {
       if (!mounted.current) return;
       const frame = event.payload;
+      // A turn already closed out cannot be reopened by a late frame.
+      if (frame.turn_id <= lastFinished.current) return;
+
       if (currentTurn.current === null) {
-        pending.current.push(frame);
+        if (awaitingSend.current) {
+          pending.current.push(frame);
+          return;
+        }
+        adoptAutomaticTurn(frame.turn_id);
+        apply(frame);
         return;
       }
       if (frame.turn_id !== currentTurn.current) return;
@@ -142,12 +170,12 @@ export function useCoachStream(): CoachStream {
       cancelled = true;
       unlisten?.();
     };
-  }, [apply]);
+  }, [adoptAutomaticTurn, apply]);
 
   const send = useCallback(
     async (message: string) => {
       const question = message.trim();
-      if (!question || streaming) return;
+      if (!question) return;
 
       setError(null);
       setTools([]);
@@ -155,6 +183,12 @@ export function useCoachStream(): CoachStream {
       setStreaming(true);
       pending.current = [];
       currentTurn.current = null;
+      awaitingSend.current = true;
+      // A question supersedes whatever was streaming, including an automatic
+      // read, so close out its bubble rather than leaving it mid-stream.
+      updateStreamingMessage((m) =>
+        m.streaming ? { ...m, streaming: false } : m,
+      );
       setMessages((prev) => [
         ...prev,
         { role: "user", content: question },
@@ -168,12 +202,14 @@ export function useCoachStream(): CoachStream {
         );
         if (!mounted.current) return;
 
+        awaitingSend.current = false;
         currentTurn.current = turn_id;
         const queued = pending.current.filter((e) => e.turn_id === turn_id);
         pending.current = [];
         queued.forEach(apply);
       } catch (e: unknown) {
         if (!mounted.current) return;
+        awaitingSend.current = false;
         setError(errorText(e));
         setStreaming(false);
         setActivity(null);
@@ -181,8 +217,17 @@ export function useCoachStream(): CoachStream {
         setMessages((prev) => prev.slice(0, -2));
       }
     },
-    [apply, streaming],
+    [apply, updateStreamingMessage],
   );
+
+  const setAuto = useCallback(async (enabled: boolean) => {
+    try {
+      const next = await invoke<CoachStatus>("coach_set_auto", { enabled });
+      if (mounted.current) setStatus(next);
+    } catch (e: unknown) {
+      if (mounted.current) setError(errorText(e));
+    }
+  }, []);
 
   const interrupt = useCallback(async () => {
     try {
@@ -230,5 +275,6 @@ export function useCoachStream(): CoachStream {
     send,
     interrupt,
     reset,
+    setAuto,
   };
 }

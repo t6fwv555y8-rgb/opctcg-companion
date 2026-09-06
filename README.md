@@ -142,6 +142,43 @@ advice about a position that no longer exists.
 counts, and observation ordering do not interrupt a turn. See
 `grounding::fingerprint`.
 
+### Reading the board unprompted
+
+The `auto` toggle in the panel header lets the coach answer without being
+asked. The same fingerprint that interrupts a stale answer decides when a new
+position is worth reading, so advice appears on its own as the game moves.
+
+It is **off by default**, because unprompted reads spend tokens nobody asked
+to spend. Once on, a read fires when all of the following hold:
+
+| Guard | Default | Why |
+| --- | --- | --- |
+| Settle window | 1.5s | A play sequence (character, DON, attack) is read once when it finishes, not three times half-finished. |
+| Floor between reads | 8s | Backstop on token spend and panel churn. |
+| Position not already read | — | An unchanged board is never asked about twice. |
+| At a decision point | — | Your Main or Combat phase, or an attack resolving against you. Draw, DON, and End play themselves, so advice there is noise. |
+| Nothing already streaming | — | Automatic reads never talk over a question you asked. |
+
+Automatic answers are marked `auto` and stream into the same panel, so `Stop`
+and the board-change interrupt work on them unchanged. Asking a question
+supersedes a read in progress — you do not have to stop it first.
+
+They are deliberately **left out of the conversation history**. Recording them
+would evict your own questions from the capped history within a few game turns
+and bias the model toward repeating its last answer. The consequence: asking
+"why?" straight after an automatic read gives the model the current board but
+not its own prior wording.
+
+Tuning lives in `auto::AutoTriggerConfig`. The policy is a pure state machine
+with the clock passed in (`auto::AutoTrigger`), so it is tested without
+sleeping.
+
+> **Why not a `MutationObserver` on the game log?** That layer already exists:
+> `browser-companion` observes the simulator's DOM and feeds snapshots to the
+> pipeline, which normalizes them into `GameState`. Triggering off the
+> normalized state instead of scraped log text survives markup changes and
+> gives the model the full board rather than the last 500 characters of a log.
+
 ### Configuration
 
 Without an API key the panel still works: the **Offline coach** answers from

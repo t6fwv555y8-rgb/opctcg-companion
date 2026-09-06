@@ -48,8 +48,17 @@ const Bubble = memo(function Bubble({
             </>
           )}
         </div>
-        {!isUser && (message.groundedOn || message.endedBecause) && (
+        {!isUser &&
+          (message.automatic || message.groundedOn || message.endedBecause) && (
           <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[8px] text-slate-500">
+            {message.automatic && (
+              <span
+                title="Read automatically when the board settled"
+                className="rounded bg-hud-accent/15 px-1 font-mono text-hud-accent"
+              >
+                auto
+              </span>
+            )}
             {message.groundedOn && <span>{message.groundedOn.label}</span>}
             {message.endedBecause && (
               <span
@@ -68,6 +77,35 @@ const Bubble = memo(function Bubble({
     </div>
   );
 });
+
+function AutoToggle({
+  enabled,
+  onChange,
+}: {
+  enabled: boolean;
+  onChange: (enabled: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={enabled}
+      onClick={() => onChange(!enabled)}
+      title={
+        enabled
+          ? "Reading the board on its own after each move settles"
+          : "Read the board on its own after each move settles, without being asked"
+      }
+      className={`rounded border px-1.5 py-0.5 font-mono text-[8px] ${
+        enabled
+          ? "border-hud-accent/50 bg-hud-accent/15 text-hud-accent"
+          : "border-slate-600/60 text-slate-500 hover:text-slate-300"
+      }`}
+    >
+      auto
+    </button>
+  );
+}
 
 function ToolChips({ tools }: { tools: ToolRun[] }) {
   if (tools.length === 0) return null;
@@ -98,8 +136,10 @@ export function CoachChatPanel() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [coach.messages, coach.activity]);
 
+  // Asking supersedes whatever is streaming, so this stays available during an
+  // automatic read rather than making the user stop it first.
   const submit = (text: string) => {
-    if (!text.trim() || coach.streaming) return;
+    if (!text.trim()) return;
     setDraft("");
     void coach.send(text);
   };
@@ -125,6 +165,13 @@ export function CoachChatPanel() {
           >
             {provider}
           </span>
+          <AutoToggle
+            enabled={coach.status?.auto_enabled ?? false}
+            onChange={(enabled) => {
+              if (enabled) setOpen(true);
+              void coach.setAuto(enabled);
+            }}
+          />
           <button
             type="button"
             onClick={() => setOpen((v) => !v)}
@@ -199,7 +246,7 @@ export function CoachChatPanel() {
               className="min-w-0 flex-1 resize-none rounded border border-slate-700 bg-slate-950/80 px-2 py-1 text-[10px] leading-snug text-slate-200 placeholder:text-slate-600 focus:border-hud-accent/50 focus:outline-none"
             />
             <div className="flex shrink-0 flex-col gap-1">
-              {coach.streaming ? (
+              {coach.streaming && (
                 <button
                   type="button"
                   onClick={() => void coach.interrupt()}
@@ -207,7 +254,8 @@ export function CoachChatPanel() {
                 >
                   Stop
                 </button>
-              ) : (
+              )}
+              {(!coach.streaming || draft.trim()) && (
                 <button
                   type="button"
                   disabled={!draft.trim()}

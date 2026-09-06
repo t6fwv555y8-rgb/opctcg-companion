@@ -51,6 +51,10 @@ export interface CoachStatus {
   live: boolean;
   busy: boolean;
   active_turn: number | null;
+  /** True when the streaming turn was triggered by a board change. */
+  automatic: boolean;
+  /** True when board changes trigger reads on their own. */
+  auto_enabled: boolean;
 }
 
 export interface CoachHistory {
@@ -68,6 +72,8 @@ export interface CoachChatMessage {
   endedBecause?: Exclude<FinishReason, "complete">;
   /** The board position this answer was grounded on. */
   groundedOn?: StateFingerprint;
+  /** True when a board change triggered this read rather than the user. */
+  automatic?: boolean;
 }
 
 export interface CoachStream {
@@ -83,4 +89,6 @@ export interface CoachStream {
   /** Stop the streaming turn, keeping the partial answer on screen. */
   interrupt: () => Promise<void>;
   reset: () => Promise<void>;
+  /** Turn unprompted board reads on or off. */
+  setAuto: (enabled: boolean) => Promise<void>;
 }
