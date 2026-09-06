@@ -1,9 +1,10 @@
+use crate::dto::DeckOrigin;
 use crate::state::AppState;
 use optcg_coach::{
     AutoDecision, AutoTrigger, CancelReason, CancelToken, ChatMessage, ChatProvider, CoachError,
     CoachEvent, CoachSession, CoachStreamEvent, CoalescingSink, ContextScope, DeckContext,
-    EventSink, FlushTicker, StateFingerprint, TurnKind, TurnSummary, DEFAULT_FLUSH_INTERVAL_MS,
-    SYSTEM_PROMPT,
+    EventSink, FlushTicker, ListStanding, StateFingerprint, TurnKind, TurnSummary,
+    DEFAULT_FLUSH_INTERVAL_MS, SYSTEM_PROMPT,
 };
 use parking_lot::Mutex;
 use serde::Serialize;
@@ -106,15 +107,29 @@ fn deck_context(state: &AppState) -> DeckContext {
     DeckContext {
         your_deck: yours.name.clone(),
         your_leader: leader_label(&yours),
-        your_list: yours
-            .list_entries
-            .iter()
-            .map(|entry| format!("{}x {} ({})", entry.quantity, entry.name, entry.card_id))
-            .collect(),
+        your_list: list_lines(&yours),
+        your_list_standing: standing(&yours),
         opponent_deck: opponent.name.clone(),
         opponent_leader: leader_label(&opponent),
+        opponent_list: list_lines(&opponent),
+        opponent_list_standing: standing(&opponent),
         plan: strategy.as_ref().map(|brief| brief.your_plan.clone()),
         vs_opponent: strategy.as_ref().map(|brief| brief.vs_opponent.clone()),
+    }
+}
+
+fn list_lines(deck: &crate::dto::DeckInfoDto) -> Vec<String> {
+    deck.list_entries
+        .iter()
+        .map(|entry| format!("{}x {} ({})", entry.quantity, entry.name, entry.card_id))
+        .collect()
+}
+
+fn standing(deck: &crate::dto::DeckInfoDto) -> ListStanding {
+    match deck.origin {
+        DeckOrigin::Attached if !deck.list_entries.is_empty() => ListStanding::Confirmed,
+        DeckOrigin::Presumed if !deck.list_entries.is_empty() => ListStanding::Presumed,
+        _ => ListStanding::Unknown,
     }
 }
 
@@ -551,6 +566,7 @@ mod tests {
         let state = app_state();
         state
             .save_deck(
+                optcg_rules::Side::You,
                 None,
                 None,
                 "Deck: Red Luffy Aggro\nLeader: ST01-001\n4x ST01-002",

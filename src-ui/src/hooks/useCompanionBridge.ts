@@ -5,6 +5,7 @@ import type {
   CompanionBridge,
   ObservationStatusDto,
   OverlaySettings,
+  Side,
   SourceSelectionKind,
   StateUpdatePayload,
 } from "../types/game";
@@ -138,12 +139,30 @@ export function useCompanionBridge(): CompanionBridge {
   );
 
   const saveDeck = useCallback(
-    ({ raw, name, id }: { raw: string; name?: string; id?: string }) =>
+    ({
+      raw,
+      name,
+      id,
+      side,
+    }: {
+      raw: string;
+      name?: string;
+      id?: string;
+      side?: Side;
+    }) =>
       runStateCommand("save_deck", {
         raw,
         name: name ?? null,
         id: id ?? null,
+        side: side ?? "you",
       }),
+    [runStateCommand],
+  );
+
+  /// Point one side at a saved list, or pass null to read it from play.
+  const setDeckSource = useCallback(
+    (side: Side, deckId: string | null) =>
+      runStateCommand("set_deck_source", { side, deckId }),
     [runStateCommand],
   );
 
@@ -176,6 +195,7 @@ export function useCompanionBridge(): CompanionBridge {
     setPastedDeck,
     clearPastedDeck,
     saveDeck,
+    setDeckSource,
     activateDeck,
     deleteDeck,
     renameDeck,

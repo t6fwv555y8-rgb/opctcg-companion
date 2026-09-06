@@ -1,6 +1,8 @@
 use optcg_core::{CombatState, ConnectionStatus, GameState, LastEventInfo, Phase, PlayerState};
 use optcg_observation::{AdapterInfo, AdapterStatus, LatencySnapshot};
-use optcg_rules::{CombatAnalysis, DeckListEntry, DeckStrategyBrief, PastedDeckList, StrategyRecommendation};
+use optcg_rules::{
+    CombatAnalysis, DeckListEntry, DeckStrategyBrief, PastedDeckList, StrategyRecommendation,
+};
 use serde::{Deserialize, Serialize};
 
 /// Serializable game state snapshot for the frontend (authoritative DTO).
@@ -26,6 +28,28 @@ pub struct KnownCardDto {
     pub color: String,
 }
 
+/// Where a side's deck list came from, which decides how much the coach may
+/// take for granted about it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeckOrigin {
+    /// Read from play: the leader plus whatever cards the table has revealed.
+    /// No full list is known.
+    Observed,
+    /// Read from play, then matched to a saved list by leader. The list is a
+    /// good guess about a deck nobody has confirmed.
+    Presumed,
+    /// A list attached to this side by hand. Trustworthy for your own side.
+    Attached,
+}
+
+impl DeckOrigin {
+    /// Whether a full list accompanies this reading.
+    pub fn has_list(self) -> bool {
+        matches!(self, Self::Presumed | Self::Attached)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeckInfoDto {
     /// Simulator deck label when visible; otherwise leader-based fallback.
@@ -34,10 +58,12 @@ pub struct DeckInfoDto {
     pub leader_name: String,
     pub leader_color: String,
     pub known_cards: Vec<KnownCardDto>,
-    /// True when the user pasted an exact deck list for this side.
+    /// How this side's deck was arrived at.
+    pub origin: DeckOrigin,
+    /// The saved list backing this side, when one does.
     #[serde(default)]
-    pub from_paste: bool,
-    /// Exact list entries when pasted (you side only today).
+    pub deck_id: Option<String>,
+    /// Exact list entries, present when `origin` carries a list.
     #[serde(default)]
     pub list_entries: Vec<DeckListEntry>,
     #[serde(default)]
@@ -75,7 +101,11 @@ pub struct SavedDeckDto {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DeckCollectionDto {
     pub decks: Vec<SavedDeckDto>,
+    /// The list attached to your side, or `None` when it is read from play.
     pub active_id: Option<String>,
+    /// The list attached to the opponent, or `None` when read from play.
+    #[serde(default)]
+    pub opponent_id: Option<String>,
     pub max_decks: usize,
 }
 
@@ -140,9 +170,7 @@ impl From<&PlayerState> for PlayerStateDto {
                     card_id: c.card_id.clone(),
                     rested: c.rested,
                     attached_don: c.attached_don,
-                    power: c
-                        .effective_power(5000)
-                        .max(0) as u32,
+                    power: c.effective_power(5000).max(0) as u32,
                     position: c.position,
                 })
                 .collect(),

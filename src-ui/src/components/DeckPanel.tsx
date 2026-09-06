@@ -2,8 +2,10 @@ import { useState } from "react";
 import type {
   DeckCollectionDto,
   DeckInfoDto,
+  DeckOrigin,
   PastedDeckDto,
   SavedDeckDto,
+  Side as DeckSide,
 } from "../types/game";
 import { DeckCollectionPanel } from "./DeckCollectionPanel";
 
@@ -17,19 +19,84 @@ interface Props {
     raw: string;
     name?: string;
     id?: string;
+    side?: DeckSide;
   }) => void | Promise<void>;
   onActivateDeck?: (id: string) => void | Promise<void>;
   onDeleteDeck?: (id: string) => void | Promise<void>;
   onRenameDeck?: (id: string, name: string) => void | Promise<void>;
   onClearPaste?: () => void | Promise<void>;
+  onSetDeckSource?: (
+    side: DeckSide,
+    deckId: string | null,
+  ) => void | Promise<void>;
+}
+
+/// How a reading is described in the HUD, in the same words the coach is given.
+const ORIGIN_BADGE: Record<DeckOrigin, { text: string; hint: string } | null> = {
+  observed: null,
+  presumed: {
+    text: "read",
+    hint: "Matched to a saved list by leader. A guess, not confirmed.",
+  },
+  attached: {
+    text: "list",
+    hint: "An exact list you supplied for this side.",
+  },
+};
+
+/// Pick where one side's deck comes from: read from play, or a saved list.
+function SourcePicker({
+  side,
+  deck,
+  collection,
+  busy,
+  onSetDeckSource,
+}: {
+  side: DeckSide;
+  deck: DeckInfoDto | null;
+  collection: DeckCollectionDto | null;
+  busy: boolean;
+  onSetDeckSource: (side: DeckSide, deckId: string | null) => void | Promise<void>;
+}) {
+  const decks = collection?.decks ?? [];
+  const attached = deck?.origin === "attached" ? deck.deck_id ?? "" : "";
+
+  return (
+    <select
+      value={attached}
+      disabled={busy}
+      onChange={(e) => onSetDeckSource(side, e.target.value || null)}
+      title={
+        attached
+          ? "Using the list you picked for this side"
+          : "Reading this side from play: leader plus revealed cards"
+      }
+      className="mt-1 w-full rounded border border-slate-700/60 bg-slate-900/60 px-1 py-0.5 text-[9px] text-slate-300 disabled:opacity-50"
+    >
+      <option value="">Read from play</option>
+      {decks.map((saved) => (
+        <option key={saved.id} value={saved.id}>
+          {saved.name}
+        </option>
+      ))}
+    </select>
+  );
 }
 
 function Side({
   label,
   deck,
+  side,
+  collection = null,
+  busy = false,
+  onSetDeckSource,
 }: {
   label: string;
   deck: DeckInfoDto | null;
+  side: DeckSide;
+  collection?: DeckCollectionDto | null;
+  busy?: boolean;
+  onSetDeckSource?: (side: DeckSide, deckId: string | null) => void | Promise<void>;
 }) {
   if (!deck) {
     return (
@@ -42,19 +109,25 @@ function Side({
     );
   }
 
-  const list = deck.from_paste && deck.list_entries?.length
-    ? deck.list_entries
-    : null;
+  const list = deck.list_entries?.length ? deck.list_entries : null;
   const known = deck.known_cards.slice(0, 12);
   const extra = Math.max(0, deck.known_cards.length - known.length);
+  const badge = ORIGIN_BADGE[deck.origin];
 
   return (
     <div>
       <div className="flex items-center gap-1 text-[9px] uppercase tracking-wide text-slate-500">
         <span>{label}</span>
-        {deck.from_paste && (
-          <span className="rounded bg-hud-accent/20 px-1 text-[8px] text-hud-accent">
-            pasted
+        {badge && (
+          <span
+            title={badge.hint}
+            className={
+              deck.origin === "presumed"
+                ? "rounded bg-amber-400/20 px-1 text-[8px] text-amber-300"
+                : "rounded bg-hud-accent/20 px-1 text-[8px] text-hud-accent"
+            }
+          >
+            {badge.text}
           </span>
         )}
       </div>
@@ -66,6 +139,20 @@ function Side({
         {deck.leader_name || deck.leader_id || "Leader ?"}
         {deck.leader_id ? ` · ${deck.leader_id}` : ""}
       </div>
+      {onSetDeckSource && (
+        <SourcePicker
+          side={side}
+          deck={deck}
+          collection={collection}
+          busy={busy}
+          onSetDeckSource={onSetDeckSource}
+        />
+      )}
+      {deck.origin === "presumed" && (
+        <div className="mt-1 text-[9px] leading-tight text-amber-300/80">
+          Likely list, matched on leader — not confirmed.
+        </div>
+      )}
       {list ? (
         <ul className="mt-1 max-h-28 space-y-0.5 overflow-y-auto">
           {list.slice(0, 16).map((c) => (
@@ -126,6 +213,7 @@ export function DeckPanel({
   onDeleteDeck,
   onRenameDeck,
   onClearPaste,
+  onSetDeckSource,
 }: Props) {
   const [open, setOpen] = useState(false);
   const manageable =
@@ -158,8 +246,22 @@ export function DeckPanel({
       )}
 
       <div className="mt-2 grid grid-cols-2 gap-3">
-        <Side label="You" deck={yourDeck} />
-        <Side label="Opponent" deck={opponentDeck} />
+        <Side
+          label="You"
+          side="you"
+          deck={yourDeck}
+          collection={collection}
+          busy={applying}
+          onSetDeckSource={onSetDeckSource}
+        />
+        <Side
+          label="Opponent"
+          side="opponent"
+          deck={opponentDeck}
+          collection={collection}
+          busy={applying}
+          onSetDeckSource={onSetDeckSource}
+        />
       </div>
 
       {open && onSaveDeck && onActivateDeck && onDeleteDeck && onRenameDeck && (

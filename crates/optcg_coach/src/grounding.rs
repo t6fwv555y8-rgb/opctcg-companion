@@ -11,12 +11,33 @@ use serde::{Deserialize, Serialize};
 pub struct DeckContext {
     pub your_deck: String,
     pub your_leader: String,
-    /// Lines like `4x Usopp (ST01-002)`, present only for an exact saved list.
+    /// Lines like `4x Usopp (ST01-002)`, empty when no list backs this side.
     pub your_list: Vec<String>,
+    pub your_list_standing: ListStanding,
     pub opponent_deck: String,
     pub opponent_leader: String,
+    pub opponent_list: Vec<String>,
+    pub opponent_list_standing: ListStanding,
     pub plan: Option<String>,
     pub vs_opponent: Option<String>,
+}
+
+/// How far a side's deck list can be trusted.
+///
+/// Both sides can now be read from play, which means a list may be a match on
+/// the leader rather than something the user vouched for. The coach has to know
+/// the difference: advice built on a guessed list has to be hedged, and the
+/// model will not hedge unless the prompt tells it to.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ListStanding {
+    /// No list at all; the leader and revealed cards are everything.
+    #[default]
+    Unknown,
+    /// Matched to a saved list by leader. Likely, not settled.
+    Presumed,
+    /// A list the user attached to this side by hand.
+    Confirmed,
 }
 
 /// Which parts of the live context a turn may send.
@@ -563,16 +584,54 @@ fn deck_readout(decks: &DeckContext) -> String {
     if let Some(vs) = decks.vs_opponent.as_ref().filter(|p| !p.trim().is_empty()) {
         lines.push(format!("Against this deck: {vs}"));
     }
-    if !decks.your_list.is_empty() {
-        lines.push(format!(
+    lines.push(your_list_readout(decks));
+    lines.push(opponent_list_readout(decks));
+    lines.join("\n")
+}
+
+fn your_list_readout(decks: &DeckContext) -> String {
+    match decks.your_list_standing {
+        ListStanding::Confirmed => format!(
             "Your exact list ({} entries): {}",
             decks.your_list.len(),
             decks.your_list.join(", ")
-        ));
-    } else {
-        lines.push("Your exact list is not saved, so treat deck contents as unknown.".to_string());
+        ),
+        ListStanding::Presumed => format!(
+            "Your list is not attached, so this is the one list you have saved for this leader \
+             ({} entries): {}. Say so if you lean on a specific card.",
+            decks.your_list.len(),
+            decks.your_list.join(", ")
+        ),
+        ListStanding::Unknown => {
+            "Your exact list is not saved, so treat deck contents as unknown.".to_string()
+        }
     }
-    lines.join("\n")
+}
+
+/// The opponent's list, with the one caveat that always applies to it.
+///
+/// Knowing their deck is not knowing their hand. Even a list the user attached
+/// by hand only bounds what they could be holding, and the model will happily
+/// tell someone the opponent "has" a counter if the prompt lets it.
+fn opponent_list_readout(decks: &DeckContext) -> String {
+    match decks.opponent_list_standing {
+        ListStanding::Confirmed => format!(
+            "The opponent's list, which the user supplied ({} entries): {}. It bounds what they \
+             could hold, never what they do hold.",
+            decks.opponent_list.len(),
+            decks.opponent_list.join(", ")
+        ),
+        ListStanding::Presumed => format!(
+            "The opponent's list is a guess: their leader matches one list the user has saved \
+             ({} entries): {}. Treat it as the shape of the deck they are likely on, call it a \
+             read rather than a fact, and never say they hold a particular card.",
+            decks.opponent_list.len(),
+            decks.opponent_list.join(", ")
+        ),
+        ListStanding::Unknown => "The opponent's list is unknown. Reason from their leader and \
+             the cards they have actually revealed."
+            .to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -606,10 +665,12 @@ mod tests {
             your_deck: "Red Luffy Aggro".into(),
             your_leader: "ST01-001".into(),
             your_list: vec!["4x Usopp (ST01-002)".into()],
+            your_list_standing: ListStanding::Confirmed,
             opponent_deck: "Green Zoro".into(),
             opponent_leader: "ST01-001".into(),
             plan: Some("Race with cheap attackers".into()),
             vs_opponent: None,
+            ..Default::default()
         };
 
         let context = build_context(
@@ -895,6 +956,112 @@ mod tests {
         };
         let context = build_context(&sample_state(), &repo, &decks, scope, &sink);
         (context, recorder.events())
+    }
+
+    /// The prompt built from a deck context, for the readings that differ only
+    /// in how much the lists can be trusted.
+    fn prompt_for(decks: &DeckContext) -> String {
+        let db = db();
+        let repo = CardRepository::new(&db);
+        let (sink, _recorder) = recording_sink();
+        build_context(
+            &sample_state(),
+            &repo,
+            decks,
+            ContextScope::default(),
+            &sink,
+        )
+        .to_prompt()
+    }
+
+    #[test]
+    fn an_unknown_opponent_list_is_named_as_unknown() {
+        let prompt = prompt_for(&DeckContext {
+            opponent_deck: "Green Zoro".into(),
+            ..Default::default()
+        });
+
+        assert!(
+            prompt.contains("The opponent's list is unknown"),
+            "the model has to be told it is working blind: {prompt}"
+        );
+    }
+
+    #[test]
+    fn a_presumed_opponent_list_is_marked_as_a_read_not_a_fact() {
+        let prompt = prompt_for(&DeckContext {
+            opponent_deck: "Black Elbaph Luffy".into(),
+            opponent_list: vec!["4x Usopp (OP17-080)".into()],
+            opponent_list_standing: ListStanding::Presumed,
+            ..Default::default()
+        });
+
+        assert!(prompt.contains("4x Usopp (OP17-080)"));
+        assert!(
+            prompt.contains("a guess"),
+            "a matched list must be framed as a guess: {prompt}"
+        );
+        assert!(
+            prompt.contains("never say they hold a particular card"),
+            "the model must be barred from claiming their hand: {prompt}"
+        );
+    }
+
+    #[test]
+    fn even_a_supplied_opponent_list_does_not_become_their_hand() {
+        let prompt = prompt_for(&DeckContext {
+            opponent_deck: "Black Elbaph Luffy".into(),
+            opponent_list: vec!["4x Usopp (OP17-080)".into()],
+            opponent_list_standing: ListStanding::Confirmed,
+            ..Default::default()
+        });
+
+        assert!(
+            prompt.contains("never what they do hold"),
+            "knowing their deck is not knowing their hand: {prompt}"
+        );
+    }
+
+    #[test]
+    fn your_own_presumed_list_asks_the_model_to_flag_it() {
+        let prompt = prompt_for(&DeckContext {
+            your_deck: "Red Luffy".into(),
+            your_list: vec!["4x Usopp (ST01-002)".into()],
+            your_list_standing: ListStanding::Presumed,
+            ..Default::default()
+        });
+
+        assert!(prompt.contains("one list you have saved for this leader"));
+        assert!(prompt.contains("Say so if you lean on a specific card"));
+    }
+
+    #[test]
+    fn deck_lists_stay_behind_the_deck_scope() {
+        let decks = DeckContext {
+            opponent_deck: "Black Elbaph Luffy".into(),
+            opponent_list: vec!["4x Usopp (OP17-080)".into()],
+            opponent_list_standing: ListStanding::Confirmed,
+            ..Default::default()
+        };
+        let db = db();
+        let repo = CardRepository::new(&db);
+        let (sink, _recorder) = recording_sink();
+        let prompt = build_context(
+            &sample_state(),
+            &repo,
+            &decks,
+            ContextScope {
+                board: true,
+                deck: false,
+            },
+            &sink,
+        )
+        .to_prompt();
+
+        assert!(
+            !prompt.contains("OP17-080"),
+            "withholding decks must withhold their list too: {prompt}"
+        );
     }
 
     #[test]

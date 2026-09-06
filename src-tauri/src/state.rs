@@ -1,16 +1,26 @@
 use crate::dto::ObservationStatusDto;
 use crate::dto::{
-    ConnectionStatusDto, DeckCollectionDto, DeckInfoDto, GameStateDto, KnownCardDto,
+    ConnectionStatusDto, DeckCollectionDto, DeckInfoDto, DeckOrigin, GameStateDto, KnownCardDto,
     OverlaySettings, PastedDeckDto, SavedDeckDto, StateUpdatePayload,
 };
 use optcg_database::Database;
 use optcg_rules::{
     BeamSearch, BeamSearchConfig, CombatMath, DeckCollection, DeckProfile, DeckStrategyBrief,
-    DeckStrategyCoach, MctsConfig, MctsEngine, PastedDeckList, RulesEngine, SavedDeck, MAX_DECKS,
+    DeckStrategyCoach, MctsConfig, MctsEngine, PastedDeckList, RulesEngine, SavedDeck, Side,
+    MAX_DECKS,
 };
 use parking_lot::RwLock;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+
+/// A side's deck as the app currently understands it.
+struct ResolvedDeck {
+    list: Option<PastedDeckList>,
+    origin: DeckOrigin,
+    /// The saved deck the list came from, when it came from one.
+    deck_id: Option<String>,
+}
 
 pub struct AppState {
     pub database: Database,
@@ -24,6 +34,9 @@ pub struct AppState {
     pub pasted_deck: RwLock<Option<PastedDeckList>>,
     /// The user's saved deck library.
     pub deck_collection: RwLock<DeckCollection>,
+    /// Lists parsed out of saved decks, keyed by deck id. Resolving a side runs
+    /// on every state update, and parsing hits the card DB for each entry.
+    list_cache: RwLock<HashMap<String, PastedDeckList>>,
     pasted_deck_path: PathBuf,
     collection_path: PathBuf,
 }
@@ -54,6 +67,7 @@ impl AppState {
             deck_strategy: RwLock::new(None),
             pasted_deck: RwLock::new(None),
             deck_collection: RwLock::new(DeckCollection::default()),
+            list_cache: RwLock::new(HashMap::new()),
             pasted_deck_path,
             collection_path,
         };
@@ -175,9 +189,96 @@ impl AppState {
     /// Deck identity for both sides, as shown in the HUD.
     pub fn deck_infos(&self) -> (DeckInfoDto, DeckInfoDto) {
         let gs = self.game_state.read();
-        let yours = self.deck_info_for(gs.player_one(), true);
-        let opponent = self.deck_info_for(gs.player_two(), false);
+        let yours = self.deck_info_for(gs.player_one(), Side::You);
+        let opponent = self.deck_info_for(gs.player_two(), Side::Opponent);
         (yours, opponent)
+    }
+
+    /// Attach a saved list to a side, or pass `None` to read that side from
+    /// play instead.
+    pub fn set_deck_source(&self, side: Side, deck_id: Option<&str>) -> Result<(), String> {
+        {
+            let mut collection = self.deck_collection.write();
+            if !collection.attach(side, deck_id) {
+                return Err(format!(
+                    "No saved deck with id '{}'",
+                    deck_id.unwrap_or_default()
+                ));
+            }
+            self.persist_collection(&collection);
+        }
+        // Your side keeps `pasted_deck` in step, since the HUD and the legacy
+        // paste commands both read it.
+        if side == Side::You {
+            match self.deck_collection.read().active().cloned() {
+                Some(deck) => self.load_active_list(&deck),
+                None => *self.pasted_deck.write() = None,
+            }
+        }
+        let _ = self.refresh_deck_strategy();
+        Ok(())
+    }
+
+    /// The list to coach a side with, and how confident we get to be about it.
+    ///
+    /// A side with a list attached uses it outright. Otherwise the side is read
+    /// from play: a leader we hold exactly one saved list for brings that list
+    /// back as a presumed reading, and anything else leaves us with just the
+    /// leader and whatever cards the table has revealed.
+    fn resolve_deck(&self, side: Side, leader_id: &str) -> ResolvedDeck {
+        let (attached, presumed) = {
+            let collection = self.deck_collection.read();
+            let attached = collection
+                .attached(side)
+                .map(|deck| (deck.id.clone(), deck.name.clone(), deck.raw.clone()));
+            let presumed = collection
+                .presumed_for(side, leader_id)
+                .map(|deck| (deck.id.clone(), deck.name.clone(), deck.raw.clone()));
+            (attached, presumed)
+        };
+
+        for (candidate, origin) in [
+            (attached, DeckOrigin::Attached),
+            (presumed, DeckOrigin::Presumed),
+        ] {
+            let Some((id, name, raw)) = candidate else {
+                continue;
+            };
+            if let Some(list) = self.parsed_list(&id, &name, &raw) {
+                return ResolvedDeck {
+                    list: Some(list),
+                    origin,
+                    deck_id: Some(id),
+                };
+            }
+        }
+        ResolvedDeck {
+            list: None,
+            origin: DeckOrigin::Observed,
+            deck_id: None,
+        }
+    }
+
+    /// Parse a saved deck's raw text, reusing the last parse of that same text.
+    ///
+    /// Parsing rather than storing entries means card database updates reach
+    /// lists saved long ago; the cache keys on the raw text so an edit is
+    /// always re-read.
+    fn parsed_list(&self, id: &str, name: &str, raw: &str) -> Option<PastedDeckList> {
+        let raw = raw.trim();
+        if let Some(hit) = self.list_cache.read().get(id) {
+            if hit.raw == raw && hit.name.as_deref() == Some(name) {
+                return Some(hit.clone());
+            }
+        }
+        let mut list = PastedDeckList::parse(raw, &self.repo());
+        if list.is_empty() {
+            return None;
+        }
+        // The collection name is authoritative, so renames show up in the HUD.
+        list.name = Some(name.to_string());
+        self.list_cache.write().insert(id.to_string(), list.clone());
+        Some(list)
     }
 
     /// Last built strategy brief, without forcing a rebuild.
@@ -217,16 +318,21 @@ impl AppState {
         DeckCollectionDto {
             decks,
             active_id,
+            opponent_id: collection.opponent_id.clone(),
             max_decks: MAX_DECKS,
         }
     }
 
-    /// Save a deck list into the collection and make it active.
+    /// Save a deck list into the collection and attach it to `side`.
     ///
     /// `id` targets an existing deck; without it the deck is matched by name so
     /// re-pasting the same list updates it rather than creating a duplicate.
+    ///
+    /// Saving a list for the opponent must not disturb your own side, which is
+    /// what makes it possible to keep their lists around at all.
     pub fn save_deck(
         &self,
+        side: Side,
         id: Option<&str>,
         name: Option<&str>,
         raw: &str,
@@ -239,6 +345,7 @@ impl AppState {
 
         let saved = {
             let mut collection = self.deck_collection.write();
+            let previously_yours = collection.active_id.clone();
             let deck_id = collection.upsert(
                 id,
                 &display_name,
@@ -247,6 +354,13 @@ impl AppState {
                 list.total_cards,
                 &now_rfc3339(),
             )?;
+            // `upsert` claims your side for the new deck, which is right when
+            // you are saving your own list and wrong when you are saving
+            // theirs.
+            if side == Side::Opponent {
+                collection.active_id = previously_yours;
+                collection.opponent_id = Some(deck_id.clone());
+            }
             let saved = collection
                 .get(&deck_id)
                 .cloned()
@@ -255,7 +369,12 @@ impl AppState {
             saved
         };
 
-        self.activate_locally(&saved);
+        match side {
+            Side::You => self.activate_locally(&saved),
+            Side::Opponent => {
+                let _ = self.refresh_deck_strategy();
+            }
+        }
         Ok(saved)
     }
 
@@ -334,7 +453,7 @@ impl AppState {
     }
 
     pub fn set_pasted_deck(&self, raw: &str) -> Result<PastedDeckList, String> {
-        self.save_deck(None, None, raw)?;
+        self.save_deck(Side::You, None, None, raw)?;
         self.pasted_deck
             .read()
             .clone()
@@ -361,8 +480,8 @@ impl AppState {
     /// Rebuild detailed deck-vs-deck strategy for the current matchup.
     pub fn refresh_deck_strategy(&self) -> DeckStrategyBrief {
         let gs = self.game_state.read();
-        let your_deck = self.deck_info_for(gs.player_one(), true);
-        let opponent_deck = self.deck_info_for(gs.player_two(), false);
+        let your_deck = self.deck_info_for(gs.player_one(), Side::You);
+        let opponent_deck = self.deck_info_for(gs.player_two(), Side::Opponent);
         let brief = DeckStrategyCoach::brief(
             &gs,
             &self.profile_from_deck(&your_deck),
@@ -406,14 +525,14 @@ impl AppState {
         }
     }
 
-    fn deck_info_for(&self, player: &optcg_core::PlayerState, is_you: bool) -> DeckInfoDto {
+    fn deck_info_for(&self, player: &optcg_core::PlayerState, side: Side) -> DeckInfoDto {
         let repo = self.repo();
         let mut leader_id = player.leader.card_id.clone();
-        let pasted = if is_you {
-            self.pasted_deck.read().clone()
-        } else {
-            None
-        };
+        let ResolvedDeck {
+            list: pasted,
+            origin,
+            deck_id,
+        } = self.resolve_deck(side, &leader_id);
 
         if leader_id.is_empty() {
             if let Some(ref p) = pasted {
@@ -454,33 +573,27 @@ impl AppState {
             })
             .collect();
 
-        let (
-            from_paste,
-            list_entries,
-            list_total_cards,
-            list_warnings,
-            paste_name,
-        ) = if let Some(ref p) = pasted {
-            // Merge paste into known for display
-            for e in &p.entries {
-                if !known_cards.iter().any(|k| k.card_id == e.card_id) {
-                    known_cards.push(KnownCardDto {
-                        card_id: e.card_id.clone(),
-                        name: e.name.clone(),
-                        card_type: e.card_type.clone(),
-                        color: e.color.clone(),
-                    });
+        let (list_entries, list_total_cards, list_warnings, paste_name) = match pasted {
+            Some(p) => {
+                // A list you attached by hand is something you know, so it
+                // joins the known cards. A presumed list is a guess, and
+                // folding a guess in here would let the coach talk about cards
+                // this opponent may never have drafted, let alone revealed.
+                if origin == DeckOrigin::Attached {
+                    for e in &p.entries {
+                        if !known_cards.iter().any(|k| k.card_id == e.card_id) {
+                            known_cards.push(KnownCardDto {
+                                card_id: e.card_id.clone(),
+                                name: e.name.clone(),
+                                card_type: e.card_type.clone(),
+                                color: e.color.clone(),
+                            });
+                        }
+                    }
                 }
+                (p.entries, p.total_cards, p.warnings, p.name)
             }
-            (
-                true,
-                p.entries.clone(),
-                p.total_cards,
-                p.warnings.clone(),
-                p.name.clone(),
-            )
-        } else {
-            (false, Vec::new(), 0, Vec::new(), None)
+            None => (Vec::new(), 0, Vec::new(), None),
         };
 
         known_cards.sort_by(|a, b| a.name.cmp(&b.name));
@@ -511,7 +624,8 @@ impl AppState {
             leader_name,
             leader_color,
             known_cards,
-            from_paste,
+            origin,
+            deck_id,
             list_entries,
             list_total_cards,
             list_warnings,
@@ -525,8 +639,8 @@ impl AppState {
         let gs = self.game_state.read();
         let repo = self.repo();
         let combat_analysis = CombatMath::analyze_current_combat(&gs, &repo);
-        let your_deck = self.deck_info_for(gs.player_one(), true);
-        let opponent_deck = self.deck_info_for(gs.player_two(), false);
+        let your_deck = self.deck_info_for(gs.player_one(), Side::You);
+        let opponent_deck = self.deck_info_for(gs.player_two(), Side::Opponent);
         let deck_strategy = self.ensure_deck_strategy(&your_deck, &opponent_deck, &gs);
         let mut phase_coach = RulesEngine::phase_coach(&gs);
         // Make coaching deck-specific when we know the matchup.
@@ -581,7 +695,8 @@ impl AppState {
         }
 
         // Prefer beam-search top line when eligible — richer multi-step sequencing.
-        let strategy = if eligibility.eligible || eligibility.mode != optcg_observation::AnalysisMode::Paused
+        let strategy = if eligibility.eligible
+            || eligibility.mode != optcg_observation::AnalysisMode::Paused
         {
             if let Ok(beam) = self.beam.recommend(&gs, &repo) {
                 if let Some(top) = beam.first() {
@@ -634,11 +749,7 @@ impl AppState {
             }
         }
 
-        let pasted_deck = self
-            .pasted_deck
-            .read()
-            .as_ref()
-            .map(PastedDeckDto::from);
+        let pasted_deck = self.pasted_deck.read().as_ref().map(PastedDeckDto::from);
         let deck_collection = self.deck_collection_dto();
 
         StateUpdatePayload {
@@ -677,10 +788,8 @@ mod tests {
     fn temp_data_dir(tag: &str) -> PathBuf {
         static COUNTER: AtomicU32 = AtomicU32::new(0);
         let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!(
-            "optcg-state-{tag}-{}-{n}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("optcg-state-{tag}-{}-{n}", std::process::id()));
         std::fs::remove_dir_all(&dir).ok();
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -696,6 +805,216 @@ mod tests {
         )
     }
 
+    /// Their leader is Luffy's other printing, so it can be told apart from the
+    /// leader both fixture lists are built on.
+    const ELBAPH: &str = "Deck: Black Elbaph Luffy\nLeader: OP17-079\n4x OP17-080\n4x OP17-081";
+
+    /// An app state whose game state the test can drive, for the readings that
+    /// depend on what is on the table.
+    fn app_state_with_board(data_dir: &Path) -> (AppState, Arc<RwLock<optcg_core::GameState>>) {
+        let database = Database::open_in_memory().unwrap();
+        AssetParser::seed_defaults(&database).unwrap();
+        let board = Arc::new(RwLock::new(optcg_core::GameState::new()));
+        let state = AppState::new(database, Arc::clone(&board), data_dir.to_path_buf());
+        (state, board)
+    }
+
+    fn set_opponent_leader(board: &Arc<RwLock<optcg_core::GameState>>, card_id: &str) {
+        board.write().player_two_mut().leader.card_id = card_id.to_string();
+    }
+
+    #[test]
+    fn the_opponent_is_read_from_play_rather_than_given_your_list() {
+        let dir = temp_data_dir("opponent-default");
+        let (state, board) = app_state_with_board(&dir);
+        set_opponent_leader(&board, "ST01-001");
+        state.save_deck(Side::You, None, None, LUFFY).unwrap();
+
+        let (_, opponent) = state.deck_infos();
+        assert_eq!(
+            opponent.origin,
+            DeckOrigin::Observed,
+            "saving your own deck must not put a list in the opponent's hands"
+        );
+        assert!(opponent.list_entries.is_empty());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_list_can_be_attached_to_the_opponent() {
+        let dir = temp_data_dir("opponent-attach");
+        let (state, board) = app_state_with_board(&dir);
+        set_opponent_leader(&board, "OP17-079");
+        let theirs = state.save_deck(Side::You, None, None, ELBAPH).unwrap();
+
+        state
+            .set_deck_source(Side::Opponent, Some(&theirs.id))
+            .unwrap();
+
+        let (_, opponent) = state.deck_infos();
+        assert_eq!(opponent.origin, DeckOrigin::Attached);
+        assert_eq!(opponent.deck_id.as_deref(), Some(theirs.id.as_str()));
+        assert!(
+            opponent
+                .list_entries
+                .iter()
+                .any(|e| e.card_id == "OP17-080"),
+            "the attached list should reach the HUD: {:?}",
+            opponent.list_entries
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn their_leader_brings_back_the_one_list_saved_for_it() {
+        let dir = temp_data_dir("opponent-presumed");
+        let (state, board) = app_state_with_board(&dir);
+        // The point of the feature: their list was recorded in an earlier game,
+        // and this game starts with the opponent read from play.
+        state.save_deck(Side::Opponent, None, None, ELBAPH).unwrap();
+        state.set_deck_source(Side::Opponent, None).unwrap();
+        set_opponent_leader(&board, "OP17-079");
+
+        let (_, opponent) = state.deck_infos();
+        assert_eq!(
+            opponent.origin,
+            DeckOrigin::Presumed,
+            "a leader we have exactly one list for should be recognised"
+        );
+        assert!(opponent
+            .list_entries
+            .iter()
+            .any(|e| e.card_id == "OP17-081"));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_presumed_list_does_not_become_a_card_we_claim_to_have_seen() {
+        let dir = temp_data_dir("presumed-not-known");
+        let (state, board) = app_state_with_board(&dir);
+        state.save_deck(Side::Opponent, None, None, ELBAPH).unwrap();
+        state.set_deck_source(Side::Opponent, None).unwrap();
+        set_opponent_leader(&board, "OP17-079");
+
+        let (_, opponent) = state.deck_infos();
+        assert_eq!(opponent.origin, DeckOrigin::Presumed);
+        assert!(
+            opponent.known_cards.is_empty(),
+            "guessed cards must stay out of what the table has revealed: {:?}",
+            opponent.known_cards
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn two_lists_on_one_leader_leave_the_side_unread() {
+        let dir = temp_data_dir("ambiguous-leader");
+        let (state, board) = app_state_with_board(&dir);
+        // Both fixtures are built on ST01-001, and neither side claims one.
+        state.save_deck(Side::Opponent, None, None, LUFFY).unwrap();
+        state.save_deck(Side::Opponent, None, None, ZORO).unwrap();
+        state.set_deck_source(Side::Opponent, None).unwrap();
+        set_opponent_leader(&board, "ST01-001");
+
+        let (_, opponent) = state.deck_infos();
+        assert_eq!(
+            opponent.origin,
+            DeckOrigin::Observed,
+            "picking one of two lists would invent the opponent's deck"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn saving_their_list_leaves_your_own_side_alone() {
+        let dir = temp_data_dir("save-opponent");
+        let (state, board) = app_state_with_board(&dir);
+        board.write().player_one_mut().leader.card_id = "ST01-001".into();
+        set_opponent_leader(&board, "OP17-079");
+        let yours = state.save_deck(Side::You, None, None, LUFFY).unwrap();
+
+        state.save_deck(Side::Opponent, None, None, ELBAPH).unwrap();
+
+        let (mine, theirs) = state.deck_infos();
+        assert_eq!(
+            mine.deck_id.as_deref(),
+            Some(yours.id.as_str()),
+            "recording their list must not change what you are playing"
+        );
+        assert_eq!(mine.origin, DeckOrigin::Attached);
+        assert_eq!(theirs.origin, DeckOrigin::Attached);
+        assert_eq!(theirs.name, "Black Elbaph Luffy");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn your_side_can_be_handed_back_to_being_read_from_play() {
+        let dir = temp_data_dir("detach-you");
+        let (state, board) = app_state_with_board(&dir);
+        set_opponent_leader(&board, "OP17-079");
+        state.save_deck(Side::You, None, None, ELBAPH).unwrap();
+        board.write().player_one_mut().leader.card_id = "ST01-001".into();
+
+        state.set_deck_source(Side::You, None).unwrap();
+
+        let (yours, _) = state.deck_infos();
+        assert_eq!(yours.origin, DeckOrigin::Observed);
+        assert!(
+            state.pasted_deck.read().is_none(),
+            "detaching your side should clear the active list the HUD reads"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn attaching_an_unknown_list_is_an_error_not_a_silent_detach() {
+        let dir = temp_data_dir("attach-unknown");
+        let (state, board) = app_state_with_board(&dir);
+        set_opponent_leader(&board, "OP17-079");
+        let theirs = state.save_deck(Side::You, None, None, ELBAPH).unwrap();
+        state
+            .set_deck_source(Side::Opponent, Some(&theirs.id))
+            .unwrap();
+
+        assert!(state
+            .set_deck_source(Side::Opponent, Some("no-such-deck"))
+            .is_err());
+        assert_eq!(state.deck_infos().1.origin, DeckOrigin::Attached);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_side_assignment_survives_a_restart() {
+        let dir = temp_data_dir("assignment-persist");
+        let theirs = {
+            let (state, board) = app_state_with_board(&dir);
+            set_opponent_leader(&board, "OP17-079");
+            let theirs = state.save_deck(Side::You, None, None, ELBAPH).unwrap();
+            state
+                .set_deck_source(Side::Opponent, Some(&theirs.id))
+                .unwrap();
+            theirs.id
+        };
+
+        let (restarted, board) = app_state_with_board(&dir);
+        set_opponent_leader(&board, "OP17-079");
+        assert_eq!(
+            restarted.deck_collection_dto().opponent_id.as_deref(),
+            Some(theirs.as_str())
+        );
+        assert_eq!(restarted.deck_infos().1.origin, DeckOrigin::Attached);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     fn active_list_name(state: &AppState) -> Option<String> {
         state
             .pasted_deck
@@ -709,8 +1028,11 @@ mod tests {
         let dir = temp_data_dir("save");
         let state = app_state(&dir);
 
-        let saved = state.save_deck(None, None, LUFFY).unwrap();
-        assert_eq!(saved.name, "Red Luffy Aggro", "name comes from the Deck: line");
+        let saved = state.save_deck(Side::You, None, None, LUFFY).unwrap();
+        assert_eq!(
+            saved.name, "Red Luffy Aggro",
+            "name comes from the Deck: line"
+        );
         assert_eq!(saved.leader_id.as_deref(), Some("ST01-001"));
         assert_eq!(saved.total_cards, 8);
 
@@ -734,7 +1056,7 @@ mod tests {
         let state = app_state(&dir);
 
         let saved = state
-            .save_deck(None, None, "Leader: ST01-001\n4x ST01-002")
+            .save_deck(Side::You, None, None, "Leader: ST01-001\n4x ST01-002")
             .unwrap();
         assert_eq!(saved.name, "Red Monkey.D.Luffy");
 
@@ -746,7 +1068,9 @@ mod tests {
         let dir = temp_data_dir("explicit");
         let state = app_state(&dir);
 
-        let saved = state.save_deck(None, Some("Tournament build"), LUFFY).unwrap();
+        let saved = state
+            .save_deck(Side::You, None, Some("Tournament build"), LUFFY)
+            .unwrap();
         assert_eq!(saved.name, "Tournament build");
         assert_eq!(
             active_list_name(&state).as_deref(),
@@ -762,9 +1086,9 @@ mod tests {
         let dir = temp_data_dir("resave");
         let state = app_state(&dir);
 
-        let first = state.save_deck(None, None, LUFFY).unwrap();
+        let first = state.save_deck(Side::You, None, None, LUFFY).unwrap();
         let again = state
-            .save_deck(None, None, &format!("{LUFFY}\n2x ST01-005"))
+            .save_deck(Side::You, None, None, &format!("{LUFFY}\n2x ST01-005"))
             .unwrap();
 
         assert_eq!(first.id, again.id);
@@ -778,10 +1102,10 @@ mod tests {
     fn a_rejected_paste_leaves_the_collection_untouched() {
         let dir = temp_data_dir("reject");
         let state = app_state(&dir);
-        state.save_deck(None, None, LUFFY).unwrap();
+        state.save_deck(Side::You, None, None, LUFFY).unwrap();
 
-        assert!(state.save_deck(None, None, "   ").is_err());
-        assert!(state.save_deck(None, None, "!!!! ???").is_err());
+        assert!(state.save_deck(Side::You, None, None, "   ").is_err());
+        assert!(state.save_deck(Side::You, None, None, "!!!! ???").is_err());
         assert_eq!(state.deck_collection_dto().decks.len(), 1);
         assert_eq!(active_list_name(&state).as_deref(), Some("Red Luffy Aggro"));
 
@@ -793,8 +1117,8 @@ mod tests {
         let dir = temp_data_dir("activate");
         let state = app_state(&dir);
 
-        let luffy = state.save_deck(None, None, LUFFY).unwrap();
-        let zoro = state.save_deck(None, None, ZORO).unwrap();
+        let luffy = state.save_deck(Side::You, None, None, LUFFY).unwrap();
+        let zoro = state.save_deck(Side::You, None, None, ZORO).unwrap();
         assert_eq!(active_list_name(&state).as_deref(), Some("Zoro Rush"));
 
         state.activate_deck(&luffy.id).unwrap();
@@ -819,7 +1143,7 @@ mod tests {
     fn renaming_the_active_deck_updates_the_hud_name() {
         let dir = temp_data_dir("rename");
         let state = app_state(&dir);
-        let saved = state.save_deck(None, None, LUFFY).unwrap();
+        let saved = state.save_deck(Side::You, None, None, LUFFY).unwrap();
 
         state.rename_deck(&saved.id, "Red Luffy v2").unwrap();
         assert_eq!(active_list_name(&state).as_deref(), Some("Red Luffy v2"));
@@ -836,8 +1160,8 @@ mod tests {
     fn deleting_the_active_deck_promotes_another() {
         let dir = temp_data_dir("delete-active");
         let state = app_state(&dir);
-        state.save_deck(None, None, LUFFY).unwrap();
-        let zoro = state.save_deck(None, None, ZORO).unwrap();
+        state.save_deck(Side::You, None, None, LUFFY).unwrap();
+        let zoro = state.save_deck(Side::You, None, None, ZORO).unwrap();
 
         state.delete_deck(&zoro.id).unwrap();
         let dto = state.deck_collection_dto();
@@ -856,8 +1180,8 @@ mod tests {
     fn deleting_an_inactive_deck_keeps_the_active_one() {
         let dir = temp_data_dir("delete-inactive");
         let state = app_state(&dir);
-        let luffy = state.save_deck(None, None, LUFFY).unwrap();
-        let zoro = state.save_deck(None, None, ZORO).unwrap();
+        let luffy = state.save_deck(Side::You, None, None, LUFFY).unwrap();
+        let zoro = state.save_deck(Side::You, None, None, ZORO).unwrap();
 
         state.delete_deck(&luffy.id).unwrap();
         assert_eq!(
@@ -866,7 +1190,10 @@ mod tests {
         );
         assert_eq!(active_list_name(&state).as_deref(), Some("Zoro Rush"));
 
-        assert!(state.delete_deck(&luffy.id).is_err(), "deleting twice errors");
+        assert!(
+            state.delete_deck(&luffy.id).is_err(),
+            "deleting twice errors"
+        );
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -875,12 +1202,15 @@ mod tests {
     fn deleting_the_last_deck_clears_the_active_list() {
         let dir = temp_data_dir("delete-last");
         let state = app_state(&dir);
-        let saved = state.save_deck(None, None, LUFFY).unwrap();
+        let saved = state.save_deck(Side::You, None, None, LUFFY).unwrap();
 
         state.delete_deck(&saved.id).unwrap();
         assert!(state.deck_collection_dto().decks.is_empty());
         assert!(state.pasted_deck.read().is_none());
-        assert!(!state.build_update_payload(None).your_deck.from_paste);
+        assert_eq!(
+            state.build_update_payload(None).your_deck.origin,
+            DeckOrigin::Observed
+        );
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -889,7 +1219,7 @@ mod tests {
     fn clearing_deselects_but_keeps_the_deck_saved() {
         let dir = temp_data_dir("clear");
         let state = app_state(&dir);
-        state.save_deck(None, None, LUFFY).unwrap();
+        state.save_deck(Side::You, None, None, LUFFY).unwrap();
 
         state.clear_active_deck();
         let dto = state.deck_collection_dto();
@@ -906,8 +1236,8 @@ mod tests {
         let dir = temp_data_dir("restart");
         {
             let state = app_state(&dir);
-            state.save_deck(None, None, LUFFY).unwrap();
-            let zoro = state.save_deck(None, None, ZORO).unwrap();
+            state.save_deck(Side::You, None, None, LUFFY).unwrap();
+            let zoro = state.save_deck(Side::You, None, None, ZORO).unwrap();
             state.activate_deck(&zoro.id).unwrap();
         }
 
@@ -925,7 +1255,7 @@ mod tests {
         let dir = temp_data_dir("restart-clear");
         {
             let state = app_state(&dir);
-            state.save_deck(None, None, LUFFY).unwrap();
+            state.save_deck(Side::You, None, None, LUFFY).unwrap();
             state.clear_active_deck();
         }
 

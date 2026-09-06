@@ -71,6 +71,7 @@ fn main() {
             commands::set_pasted_deck,
             commands::clear_pasted_deck,
             commands::get_deck_collection,
+            commands::set_deck_source,
             commands::save_deck,
             commands::activate_deck,
             commands::delete_deck,
