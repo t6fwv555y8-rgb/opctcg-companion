@@ -10,7 +10,13 @@ export interface ToolRun {
   summary: string;
 }
 
-export type FinishReason = "complete" | "cancelled" | "failed";
+export type FinishReason =
+  | "complete"
+  /** The user pressed Stop. */
+  | "cancelled"
+  /** The board moved on, so the answer described a position that is now gone. */
+  | "interrupted"
+  | "failed";
 
 export interface TurnSummary {
   reason: FinishReason;
@@ -19,12 +25,21 @@ export interface TurnSummary {
   error?: string | null;
 }
 
+/** The board position an answer is grounded on. */
+export interface StateFingerprint {
+  /** Short human label, e.g. `turn 4 · Main · life 3-2`. */
+  label: string;
+  /** Canonical form of the fields that make advice stale when they change. */
+  digest: string;
+}
+
 /**
- * One frame from the agent's output stream, as emitted on `coach-chat-event`.
+ * One frame from the agent's output stream, as emitted on `coach://event`.
  * `turn_id` identifies the question it belongs to; frames from an older turn
  * are dropped rather than mixed into the current answer.
  */
 export type CoachStreamEvent =
+  | { turn_id: number; type: "state_sync"; data: StateFingerprint }
   | { turn_id: number; type: "status"; data: string }
   | { turn_id: number; type: "tool_run"; data: ToolRun }
   | { turn_id: number; type: "text_delta"; data: string }
@@ -49,9 +64,13 @@ export interface CoachChatMessage {
   content: string;
   /** True while this assistant message is still streaming. */
   streaming?: boolean;
+  /** How the turn ended, once it has. Absent for a clean completion. */
+  endedBecause?: Exclude<FinishReason, "complete">;
+  /** The board position this answer was grounded on. */
+  groundedOn?: StateFingerprint;
 }
 
-export interface CoachChat {
+export interface CoachStream {
   messages: CoachChatMessage[];
   status: CoachStatus | null;
   /** Latest progress line for the streaming turn. */
@@ -61,6 +80,7 @@ export interface CoachChat {
   streaming: boolean;
   error: string | null;
   send: (message: string) => Promise<void>;
-  cancel: () => Promise<void>;
+  /** Stop the streaming turn, keeping the partial answer on screen. */
+  interrupt: () => Promise<void>;
   reset: () => Promise<void>;
 }
