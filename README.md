@@ -104,10 +104,71 @@ Inject events as JSON over WebSocket or write to monitored log files:
 - **Optimal Strategy** — Beam search sequencing + MCTS win-rate estimates
 - **Combat Math** — Power differential, counter requirements, lethal detection
 - **Blocker Warnings** — Real-time blocker availability and recommendations
-- **Deck Collection** — Save multiple decks, switch the active one mid-session
+- **Deck Collection** — Save multiple decks, and choose per side whether a deck
+  is read from play or taken from a saved list (see below)
+- **Scouting** — Learns opponents' decks and pace across games (see below)
 - **Ask the Coach** — Streaming chat grounded in the live board (see below)
 - **Connectivity Bar** — WebSocket, file monitor, latency, event count
 - **Click-Through Toggle** — OS-level transparent overlay mode
+
+## Where each side's deck comes from
+
+Both sides of the **Decks** panel have a source, and both start on **Read from
+play**: the leader across the table plus whatever cards have been revealed.
+Pasting a list is an option, not a prerequisite.
+
+| Source | What the app knows |
+| --- | --- |
+| Read from play | The leader and the cards actually revealed. |
+| Presumed | The leader matched exactly one saved list, so that list is used as a read. Badged `read` in amber. |
+| Attached | A list you supplied for that side. Badged `list`. |
+
+The paste form has a **mine / theirs** target, so recording an opponent's list
+does not change what you are playing. Save their list once and the next game
+against that leader starts already mapped, without you doing anything.
+
+Two guards keep a presumption from becoming an invention. Two saved lists on one
+leader leaves the side read from play rather than choosing between them, and a
+list attached to your side is never presumed for theirs — sharing a leader in a
+mirror match is no reason to hand the opponent your own fifty cards.
+
+Provenance reaches the coach, which matters more than it sounds. A presumed list
+is named as a read rather than a fact, the model is told not to claim they hold
+a particular card, and guessed cards stay out of the revealed-card set that the
+counter estimate reasons from. Even a list you supplied for the opponent is
+framed as bounding what they *could* hold, never what they do.
+
+## Scouting
+
+You cannot see what an opponent is playing unless they hand you their list. But
+they show you the part of it they had to play in order to win, one card at a
+time, every game. The **Scouting** panel keeps those cards.
+
+Recording is automatic and needs no interaction: every observed position is read
+for anything it says about the opponent's deck. Over a few games this turns into
+two readings, each carrying the number of games behind it:
+
+- **Which cards they run.** Per card, the share of games it appeared in and the
+  most copies seen at once. A card in four of five games is worth playing
+  around; the same card seen once is not, and the panel draws the difference.
+  The headline is deliberately modest — "18 of their 50 mapped".
+- **How the deck plays.** Pace measured from first damage, board development
+  and game length rather than guessed from the leader's name. Left unstated
+  below three games, because one game is an opponent's draw and not a deck's
+  character. Reliability reads `thin`, `fair`, or `solid`.
+
+A few things deliberately do not count as evidence. An idle HUD sitting on a
+default position is not a game anyone played, twenty state updates are not
+twenty games, and a card that stayed in their deck all game is invisible — copy
+counts are a floor, never a claim about the fifty. The ledger lives in
+`scouting.json` in the app data directory; an unfinished game survives a
+restart, and closing the window folds it in.
+
+The coach receives this as inference and is told so: built from N earlier games,
+drawn from cards they have played, explicitly not a list anyone confirmed, and
+never grounds for saying a card is in their hand right now. Once you attach
+their real list the report disappears, since an estimate of a deck held in full
+is noise. Withholding decks with the sharing pills withholds this too.
 
 ## Ask the Coach
 

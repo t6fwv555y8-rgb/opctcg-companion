@@ -268,9 +268,19 @@ impl AppState {
         let read = StrategyRead::from_profile(&profile);
         let repo = self.repo();
 
+        // The recorded name is the simulator's deck label, which is often not
+        // visible; the leader's own card name is the better fallback.
+        let leader_name = if map.leader_name.trim().is_empty() {
+            repo.get_by_id(&map.leader_id)
+                .map(|def| def.name)
+                .unwrap_or_else(|_| map.leader_id.clone())
+        } else {
+            map.leader_name.clone()
+        };
+
         Some(ScoutingReportDto {
             leader_id: map.leader_id.clone(),
-            leader_name: map.leader_name.clone(),
+            leader_name,
             games: map.games,
             reliability: map.reliability.label().to_string(),
             pace: read

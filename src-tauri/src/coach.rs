@@ -531,6 +531,93 @@ mod tests {
         )
     }
 
+    /// An app state whose board the test can drive.
+    fn app_state_with_board() -> (AppState, Arc<parking_lot::RwLock<optcg_core::GameState>>) {
+        let database = Database::open_in_memory().unwrap();
+        AssetParser::seed_defaults(&database).unwrap();
+        let board = Arc::new(RwLock::new(optcg_core::GameState::new()));
+        let state = AppState::new(database, Arc::clone(&board), isolated_data_dir());
+        (state, board)
+    }
+
+    /// Watch `games` games in which the opponent plays `card`.
+    fn scout_games(
+        state: &AppState,
+        board: &Arc<parking_lot::RwLock<optcg_core::GameState>>,
+        games: u128,
+        card: &str,
+    ) {
+        for game in 1..=games {
+            {
+                let mut gs = board.write();
+                gs.game_id = uuid::Uuid::from_u128(game);
+                gs.turn_number = 3;
+                gs.player_two_mut().leader.card_id = "OP17-079".into();
+                gs.player_two_mut().characters = vec![optcg_core::CardInstance::new(
+                    card,
+                    1,
+                    optcg_core::Zone::Character,
+                )];
+            }
+            state.scout_position();
+        }
+    }
+
+    #[test]
+    fn what_we_learned_about_them_reaches_the_deck_context() {
+        let (state, board) = app_state_with_board();
+        scout_games(&state, &board, 4, "OP17-080");
+
+        let scouting = deck_context(&state)
+            .opponent_scouting
+            .expect("four games against this leader should reach the coach");
+
+        assert_eq!(scouting.games, 4);
+        assert_eq!(scouting.reliability, "fair");
+        assert!(
+            scouting
+                .likely_cards
+                .iter()
+                .any(|line| line.contains("Usopp") && line.contains("4 of 4 games")),
+            "the card and its rate should both travel: {:?}",
+            scouting.likely_cards
+        );
+    }
+
+    #[test]
+    fn an_unscouted_opponent_adds_nothing_to_the_context() {
+        let state = app_state();
+
+        assert!(
+            deck_context(&state).opponent_scouting.is_none(),
+            "with nothing seen there is nothing to report"
+        );
+    }
+
+    #[test]
+    fn scouting_is_dropped_once_we_hold_their_real_list() {
+        let (state, board) = app_state_with_board();
+        scout_games(&state, &board, 4, "OP17-080");
+        assert!(deck_context(&state).opponent_scouting.is_some());
+
+        let theirs = state
+            .save_deck(
+                optcg_rules::Side::Opponent,
+                None,
+                None,
+                "Deck: Black Elbaph\nLeader: OP17-079\n4x OP17-080",
+            )
+            .unwrap();
+        state
+            .set_deck_source(optcg_rules::Side::Opponent, Some(&theirs.id))
+            .unwrap();
+
+        assert!(
+            deck_context(&state).opponent_scouting.is_none(),
+            "an estimate of a deck we hold in full is noise"
+        );
+    }
+
     /// A directory of its own per call. Tests in a crate share one process and
     /// run concurrently, so a directory keyed only on the process id would let
     /// them collide over the same `deck_collection.json`.
