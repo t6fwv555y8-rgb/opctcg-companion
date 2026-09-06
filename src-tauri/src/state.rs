@@ -172,6 +172,19 @@ impl AppState {
         }
     }
 
+    /// Deck identity for both sides, as shown in the HUD.
+    pub fn deck_infos(&self) -> (DeckInfoDto, DeckInfoDto) {
+        let gs = self.game_state.read();
+        let yours = self.deck_info_for(gs.player_one(), true);
+        let opponent = self.deck_info_for(gs.player_two(), false);
+        (yours, opponent)
+    }
+
+    /// Last built strategy brief, without forcing a rebuild.
+    pub fn cached_deck_strategy(&self) -> Option<DeckStrategyBrief> {
+        self.deck_strategy.read().clone()
+    }
+
     pub fn deck_collection_dto(&self) -> DeckCollectionDto {
         let collection = self.deck_collection.read();
         let repo = self.repo();
