@@ -1,12 +1,26 @@
-import { useEffect, useState } from "react";
-import type { DeckInfoDto, PastedDeckDto } from "../types/game";
+import { useState } from "react";
+import type {
+  DeckCollectionDto,
+  DeckInfoDto,
+  PastedDeckDto,
+  SavedDeckDto,
+} from "../types/game";
+import { DeckCollectionPanel } from "./DeckCollectionPanel";
 
 interface Props {
   yourDeck: DeckInfoDto | null;
   opponentDeck: DeckInfoDto | null;
   pastedDeck?: PastedDeckDto | null;
+  collection?: DeckCollectionDto | null;
   applying?: boolean;
-  onApplyPaste?: (raw: string) => void | Promise<void>;
+  onSaveDeck?: (args: {
+    raw: string;
+    name?: string;
+    id?: string;
+  }) => void | Promise<void>;
+  onActivateDeck?: (id: string) => void | Promise<void>;
+  onDeleteDeck?: (id: string) => void | Promise<void>;
+  onRenameDeck?: (id: string, name: string) => void | Promise<void>;
   onClearPaste?: () => void | Promise<void>;
 }
 
@@ -96,93 +110,70 @@ function Side({
   );
 }
 
-const PLACEHOLDER = `Deck: Red Luffy Aggro
-Leader: ST01-001
-4x ST01-002
-4x ST01-003
-2x ST01-010
-4x ST01-012`;
+function activeDeckLabel(collection: DeckCollectionDto | null): SavedDeckDto | null {
+  if (!collection?.active_id) return null;
+  return collection.decks.find((deck) => deck.is_active) ?? null;
+}
 
 export function DeckPanel({
   yourDeck,
   opponentDeck,
   pastedDeck = null,
+  collection = null,
   applying = false,
-  onApplyPaste,
+  onSaveDeck,
+  onActivateDeck,
+  onDeleteDeck,
+  onRenameDeck,
   onClearPaste,
 }: Props) {
-  const [draft, setDraft] = useState(pastedDeck?.raw ?? "");
   const [open, setOpen] = useState(false);
-
-  useEffect(() => {
-    if (pastedDeck?.raw != null) {
-      setDraft(pastedDeck.raw);
-    }
-  }, [pastedDeck?.raw]);
+  const manageable =
+    Boolean(onSaveDeck) &&
+    Boolean(onActivateDeck) &&
+    Boolean(onDeleteDeck) &&
+    Boolean(onRenameDeck);
+  const active = activeDeckLabel(collection);
+  const savedCount = collection?.decks.length ?? 0;
 
   return (
     <div className="hud-panel p-3">
       <div className="flex items-center justify-between gap-2">
         <div className="hud-title">Decks</div>
-        {onApplyPaste && (
+        {manageable && (
           <button
             type="button"
             onClick={() => setOpen((v) => !v)}
             className="rounded border border-slate-600/60 px-2 py-0.5 text-[10px] text-slate-300 hover:bg-slate-800/60"
           >
-            {open ? "Hide paste" : "Paste list"}
+            {open ? "Hide decks" : savedCount > 0 ? `My decks (${savedCount})` : "Add deck"}
           </button>
         )}
       </div>
+
+      {active && !open && (
+        <div className="mt-1 truncate text-[9px] text-slate-500">
+          Using <span className="text-hud-accent">{active.name}</span>
+        </div>
+      )}
 
       <div className="mt-2 grid grid-cols-2 gap-3">
         <Side label="You" deck={yourDeck} />
         <Side label="Opponent" deck={opponentDeck} />
       </div>
 
-      {open && onApplyPaste && (
-        <div className="mt-2 space-y-1.5 border-t border-slate-700/50 pt-2">
-          <div className="text-[9px] uppercase tracking-wide text-slate-500">
-            Paste your exact deck
-          </div>
-          <textarea
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            placeholder={PLACEHOLDER}
-            rows={7}
-            className="w-full resize-y rounded border border-slate-700 bg-slate-950/80 px-2 py-1 font-mono text-[10px] leading-snug text-slate-200 placeholder:text-slate-600 focus:border-hud-accent/50 focus:outline-none"
+      {open && onSaveDeck && onActivateDeck && onDeleteDeck && onRenameDeck && (
+        <div className="mt-2">
+          <DeckCollectionPanel
+            collection={collection}
+            warnings={pastedDeck?.warnings ?? []}
+            busy={applying}
+            onSave={onSaveDeck}
+            onActivate={onActivateDeck}
+            onDelete={onDeleteDeck}
+            onRename={onRenameDeck}
+            onClearActive={onClearPaste}
           />
-          <p className="text-[9px] leading-snug text-slate-500">
-            Formats: <span className="font-mono">4x ST01-002</span>,{" "}
-            <span className="font-mono">ST01-012 x4</span>,{" "}
-            <span className="font-mono">Leader: ST01-001</span>,{" "}
-            <span className="font-mono">Deck: Name</span>
-          </p>
-          {pastedDeck?.warnings && pastedDeck.warnings.length > 0 && (
-            <p className="text-[9px] text-amber-400/90">
-              {pastedDeck.warnings.slice(0, 3).join(" · ")}
-            </p>
-          )}
-          <div className="flex gap-1">
-            <button
-              type="button"
-              disabled={applying || !draft.trim()}
-              onClick={() => onApplyPaste(draft)}
-              className="rounded border border-hud-accent/40 bg-hud-accent/10 px-2 py-0.5 text-[10px] font-semibold text-hud-accent hover:bg-hud-accent/20 disabled:opacity-50"
-            >
-              {applying ? "Applying…" : "Apply list"}
-            </button>
-            {onClearPaste && pastedDeck && (
-              <button
-                type="button"
-                disabled={applying}
-                onClick={() => onClearPaste()}
-                className="rounded border border-slate-600/60 px-2 py-0.5 text-[10px] text-slate-300 hover:bg-slate-800/60 disabled:opacity-50"
-              >
-                Clear
-              </button>
-            )}
-          </div>
         </div>
       )}
     </div>

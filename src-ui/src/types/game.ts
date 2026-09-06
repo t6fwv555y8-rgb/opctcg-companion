@@ -104,6 +104,24 @@ export interface PastedDeckDto {
   total_cards: number;
 }
 
+export interface SavedDeckDto {
+  id: string;
+  name: string;
+  raw: string;
+  leader_id: string | null;
+  leader_name: string | null;
+  leader_color: string | null;
+  total_cards: number;
+  is_active: boolean;
+  updated_at: string;
+}
+
+export interface DeckCollectionDto {
+  decks: SavedDeckDto[];
+  active_id: string | null;
+  max_decks: number;
+}
+
 export interface KnownCardDto {
   card_id: string;
   name: string;
@@ -239,6 +257,7 @@ export interface StateUpdatePayload {
   your_deck?: DeckInfoDto;
   opponent_deck?: DeckInfoDto;
   pasted_deck?: PastedDeckDto | null;
+  deck_collection?: DeckCollectionDto;
   latency_ms: number;
   observation: ObservationStatusDto | null;
 }
@@ -261,4 +280,12 @@ export interface CompanionBridge {
   refreshDeckStrategy: () => Promise<void>;
   setPastedDeck: (raw: string) => Promise<void>;
   clearPastedDeck: () => Promise<void>;
+  saveDeck: (args: {
+    raw: string;
+    name?: string;
+    id?: string;
+  }) => Promise<void>;
+  activateDeck: (id: string) => Promise<void>;
+  deleteDeck: (id: string) => Promise<void>;
+  renameDeck: (id: string, name: string) => Promise<void>;
 }

@@ -69,8 +69,12 @@ export default function App() {
                 yourDeck={bridge.snapshot?.your_deck ?? null}
                 opponentDeck={bridge.snapshot?.opponent_deck ?? null}
                 pastedDeck={bridge.snapshot?.pasted_deck ?? null}
+                collection={bridge.snapshot?.deck_collection ?? null}
                 applying={bridge.refreshingStrategy}
-                onApplyPaste={bridge.setPastedDeck}
+                onSaveDeck={bridge.saveDeck}
+                onActivateDeck={bridge.activateDeck}
+                onDeleteDeck={bridge.deleteDeck}
+                onRenameDeck={bridge.renameDeck}
                 onClearPaste={bridge.clearPastedDeck}
               />
               <BlockerWarning
