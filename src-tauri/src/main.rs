@@ -92,6 +92,7 @@ fn main() {
             coach::coach_reset,
             coach::coach_history,
             coach::coach_status,
+            coach::coach_set_auto,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
@@ -101,6 +102,18 @@ fn main() {
 
             let (result_tx, result_rx) = tokio::sync::mpsc::channel(512);
             spawn_pipeline_listener(result_rx, handle, gs, mgr, pipe);
+
+            // Drives unprompted board reads. Polled rather than driven by state
+            // updates so the settle window can expire after the last change.
+            let auto_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let mut ticker =
+                    tokio::time::interval(std::time::Duration::from_millis(500));
+                loop {
+                    ticker.tick().await;
+                    coach::poll_auto_trigger(&auto_handle);
+                }
+            });
 
             // Default to OneSimulator so the browser extension can connect on :9003.
             // Override with OPTCG_SOURCE=mock|auto|optcgsim if needed.

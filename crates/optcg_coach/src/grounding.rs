@@ -130,6 +130,26 @@ pub fn estimate_counters(opponent: &PlayerState, repo: &CardRepository<'_>) -> C
     }
 }
 
+/// The HUD is always the player at index 0.
+const YOU: u8 = 0;
+
+/// True when the player has a choice worth coaching right now.
+///
+/// Used to keep automatic reads quiet through the opponent's turn and the
+/// phases that play themselves, where unprompted advice is just noise.
+pub fn is_decision_point(state: &GameState) -> bool {
+    // Their attack is resolving against you: block and counter decisions are
+    // the highest-value moment to be coached, on either player's turn.
+    if state.combat.active && state.combat.target_player == Some(YOU) {
+        return true;
+    }
+    // Your own turn, in the phases where you choose what to do.
+    if state.active_player == YOU {
+        return matches!(state.phase, optcg_core::Phase::Main | optcg_core::Phase::Combat);
+    }
+    false
+}
+
 /// Identify the board position an answer is grounded on.
 ///
 /// Only fields that would make advice wrong are included, so the turn is not
@@ -708,6 +728,44 @@ mod tests {
             fingerprint(&right).digest,
             "observation order is not part of the position"
         );
+    }
+
+    #[test]
+    fn decision_points_are_where_the_player_actually_chooses() {
+        use optcg_core::Phase;
+
+        let mut state = sample_state();
+
+        state.active_player = 0;
+        for phase in [Phase::Main, Phase::Combat] {
+            state.phase = phase;
+            assert!(
+                is_decision_point(&state),
+                "{phase:?} on your turn is a decision point"
+            );
+        }
+        for phase in [Phase::Draw, Phase::Don, Phase::End] {
+            state.phase = phase;
+            assert!(
+                !is_decision_point(&state),
+                "{phase:?} plays itself, so advice would be noise"
+            );
+        }
+
+        // The opponent's turn is quiet.
+        state.active_player = 1;
+        state.phase = Phase::Main;
+        assert!(!is_decision_point(&state));
+
+        // Except when their attack is resolving against you, which is the
+        // highest-value moment to be coached.
+        state.combat.active = true;
+        state.combat.target_player = Some(0);
+        assert!(is_decision_point(&state));
+
+        // Their attack on their own board is not your decision.
+        state.combat.target_player = Some(1);
+        assert!(!is_decision_point(&state));
     }
 
     #[test]

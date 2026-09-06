@@ -18,6 +18,7 @@
 //! the rules engine, and there is no path from a model response back into game
 //! state or the filesystem.
 
+pub mod auto;
 pub mod grounding;
 pub mod offline;
 pub mod openai;
@@ -26,16 +27,17 @@ pub mod session;
 pub mod sink;
 pub mod types;
 
+pub use auto::{AutoDecision, AutoTrigger, AutoTriggerConfig, AUTO_QUESTION};
 pub use grounding::{
-    build_context, estimate_counters, fingerprint, CounterEstimate, DeckContext, GroundedContext,
-    SYSTEM_PROMPT,
+    build_context, estimate_counters, fingerprint, is_decision_point, CounterEstimate, DeckContext,
+    GroundedContext, SYSTEM_PROMPT,
 };
 pub use offline::OfflineProvider;
 pub use openai::{OpenAiConfig, OpenAiProvider, DEFAULT_BASE_URL, DEFAULT_MODEL};
 pub use provider::{
     CancelReason, CancelToken, ChatProvider, CoachError, CoachResult, EventSink,
 };
-pub use session::{CoachSession, HISTORY_TURNS, MAX_MESSAGE_CHARS};
+pub use session::{CoachSession, TurnKind, HISTORY_TURNS, MAX_MESSAGE_CHARS};
 pub use sink::{CoalescingSink, FlushTicker, DEFAULT_FLUSH_INTERVAL_MS};
 pub use types::{
     ChatMessage, ChatRole, CoachEvent, CoachStreamEvent, FinishReason, StateFingerprint, ToolRun,

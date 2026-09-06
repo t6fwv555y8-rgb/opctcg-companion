@@ -1,13 +1,13 @@
 use crate::state::AppState;
 use optcg_coach::{
-    CancelReason, CancelToken, ChatMessage, ChatProvider, CoachError, CoachEvent, CoachSession,
-    CoachStreamEvent, CoalescingSink, DeckContext, EventSink, FlushTicker, StateFingerprint,
-    TurnSummary, DEFAULT_FLUSH_INTERVAL_MS, SYSTEM_PROMPT,
+    AutoDecision, AutoTrigger, CancelReason, CancelToken, ChatMessage, ChatProvider, CoachError,
+    CoachEvent, CoachSession, CoachStreamEvent, CoalescingSink, DeckContext, EventSink,
+    FlushTicker, StateFingerprint, TurnKind, TurnSummary, DEFAULT_FLUSH_INTERVAL_MS, SYSTEM_PROMPT,
 };
 use parking_lot::Mutex;
 use serde::Serialize;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
 /// Tauri event channel carrying [`CoachStreamEvent`] frames to the HUD.
@@ -23,6 +23,7 @@ pub const COACH_EVENT: &str = "coach://event";
 pub struct CoachRuntime {
     provider: Arc<dyn ChatProvider>,
     session: Arc<Mutex<CoachSession>>,
+    auto: Arc<Mutex<AutoTrigger>>,
 }
 
 impl CoachRuntime {
@@ -36,16 +37,21 @@ impl CoachRuntime {
         Self {
             provider,
             session: Arc::new(Mutex::new(CoachSession::new())),
+            auto: Arc::new(Mutex::new(AutoTrigger::default())),
         }
     }
 
     pub fn status(&self) -> CoachStatusDto {
+        // Bound before taking the session lock; the two are never held together.
+        let auto_enabled = self.auto.lock().is_enabled();
         let session = self.session.lock();
         CoachStatusDto {
             provider: self.provider.label(),
             live: self.provider.is_live(),
             busy: session.is_busy(),
             active_turn: session.active_turn(),
+            automatic: session.active_kind() == Some(TurnKind::Auto),
+            auto_enabled,
         }
     }
 }
@@ -58,6 +64,11 @@ pub struct CoachStatusDto {
     pub live: bool,
     pub busy: bool,
     pub active_turn: Option<u64>,
+    /// True when the streaming turn was triggered by a board change rather
+    /// than asked for.
+    pub automatic: bool,
+    /// True when board changes trigger reads on their own.
+    pub auto_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -238,16 +249,8 @@ async fn run_turn<G, F>(
     sink(CoachEvent::Done(summary));
 }
 
-/// Ask the coach a question. Returns as soon as the turn is registered; the
-/// answer arrives as [`COACH_EVENT`] frames.
-#[tauri::command]
-pub fn coach_send_message(
-    app: AppHandle,
-    coach: tauri::State<'_, CoachRuntime>,
-    message: String,
-) -> Result<CoachTurnDto, String> {
-    let (turn_id, cancel) = coach.session.lock().begin_turn(&message)?;
-
+/// Start streaming a turn that the session has already registered.
+fn spawn_turn(app: AppHandle, coach: &CoachRuntime, turn_id: u64, cancel: CancelToken) {
     let coalescing = Arc::new(CoalescingSink::new(emit_sink(app.clone(), turn_id)));
     let sink = coalescing.as_event_sink();
 
@@ -265,8 +268,74 @@ pub fn coach_send_message(
         )
         .await;
     });
+}
 
+/// Ask the coach a question. Returns as soon as the turn is registered; the
+/// answer arrives as [`COACH_EVENT`] frames.
+#[tauri::command]
+pub fn coach_send_message(
+    app: AppHandle,
+    coach: tauri::State<'_, CoachRuntime>,
+    message: String,
+) -> Result<CoachTurnDto, String> {
+    let (turn_id, cancel) = coach.session.lock().begin_turn(&message)?;
+    spawn_turn(app, coach.inner(), turn_id, cancel);
     Ok(CoachTurnDto { turn_id })
+}
+
+/// Turn unprompted board reads on or off.
+#[tauri::command]
+pub fn coach_set_auto(coach: tauri::State<'_, CoachRuntime>, enabled: bool) -> CoachStatusDto {
+    coach.auto.lock().set_enabled(enabled);
+    tracing::info!(enabled, "automatic coach reads toggled");
+    coach.status()
+}
+
+/// Read the board unprompted when it settles on a new position worth advice.
+///
+/// Called on a fixed cadence rather than only on state updates, because the
+/// settle window has to be able to expire after the last change arrives.
+/// Cheap when idle: it returns before touching game state unless automatic
+/// reads are on and nothing is already streaming.
+pub fn poll_auto_trigger(app: &AppHandle) {
+    let Some(coach) = app.try_state::<CoachRuntime>() else {
+        return;
+    };
+    if !coach.auto.lock().is_enabled() {
+        return;
+    }
+    // Never talk over a turn already in flight, the user's least of all.
+    if coach.session.lock().is_busy() {
+        return;
+    }
+    let Some(state) = app.try_state::<AppState>() else {
+        return;
+    };
+
+    let (position, at_decision_point) = {
+        let game_state = state.game_state.read();
+        (
+            optcg_coach::fingerprint(&game_state),
+            optcg_coach::is_decision_point(&game_state),
+        )
+    };
+
+    let decision = coach
+        .auto
+        .lock()
+        .observe(&position, at_decision_point, Instant::now());
+    if decision != AutoDecision::Fire {
+        return;
+    }
+
+    let started = coach.session.lock().begin_auto_turn(optcg_coach::AUTO_QUESTION);
+    match started {
+        Ok((turn_id, cancel)) => {
+            tracing::debug!(turn_id, position = %position.label, "reading the board unprompted");
+            spawn_turn(app.clone(), coach.inner(), turn_id, cancel);
+        }
+        Err(e) => tracing::warn!(error = %e, "could not start an automatic read"),
+    }
 }
 
 /// Stop the streaming turn. The partial answer stays on screen.
@@ -308,10 +377,11 @@ pub fn interrupt_if_board_changed(app: &AppHandle) {
     }
 }
 
-/// Clear the conversation.
+/// Clear the conversation and let the current board be read again.
 #[tauri::command]
 pub fn coach_reset(coach: tauri::State<'_, CoachRuntime>) -> CoachHistoryDto {
     coach.session.lock().reset();
+    coach.auto.lock().reset();
     coach_history(coach)
 }
 
@@ -339,13 +409,25 @@ mod tests {
     fn app_state() -> AppState {
         let database = Database::open_in_memory().unwrap();
         AssetParser::seed_defaults(&database).unwrap();
-        let dir = std::env::temp_dir().join(format!("optcg-coach-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
         AppState::new(
             database,
             Arc::new(RwLock::new(optcg_core::GameState::new())),
-            dir,
+            isolated_data_dir(),
         )
+    }
+
+    /// A directory of its own per call. Tests in a crate share one process and
+    /// run concurrently, so a directory keyed only on the process id would let
+    /// them collide over the same `deck_collection.json`.
+    fn isolated_data_dir() -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static COUNTER: AtomicU32 = AtomicU32::new(0);
+
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("optcg-coach-{}-{n}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
     }
 
     #[test]
@@ -519,6 +601,38 @@ mod tests {
         .await;
 
         assert_eq!(session.lock().history().len(), 2, "the turn completed");
+    }
+
+    #[tokio::test]
+    async fn an_auto_turn_streams_without_joining_the_conversation() {
+        let session = Arc::new(Mutex::new(CoachSession::new()));
+        let (turn_id, cancel) = session
+            .lock()
+            .begin_auto_turn(optcg_coach::AUTO_QUESTION)
+            .unwrap();
+
+        let recorder = drive_turn(&session, turn_id, cancel).await;
+
+        assert!(
+            !recorder.text().is_empty(),
+            "an automatic read should stream like any other turn"
+        );
+        assert!(
+            matches!(
+                recorder.events().last(),
+                Some(CoachEvent::Done(TurnSummary {
+                    reason: optcg_coach::FinishReason::Complete,
+                    ..
+                }))
+            ),
+            "got {:?}",
+            recorder.events()
+        );
+        assert!(
+            session.lock().history().is_empty(),
+            "unprompted reads must not accumulate in the conversation"
+        );
+        assert!(!session.lock().is_busy());
     }
 
     #[tokio::test]
