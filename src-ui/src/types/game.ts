@@ -126,6 +126,30 @@ export interface SavedDeckDto {
   updated_at: string;
 }
 
+/// What past games say about the opponent's deck.
+export interface ScoutingReportDto {
+  leader_id: string;
+  leader_name: string;
+  games: number;
+  /// How far the sample goes: "thin", "fair", or "solid".
+  reliability: string;
+  pace: string;
+  /// Copies the map can name, against the fifty in a deck.
+  mapped_copies: number;
+  cards: ScoutedCardDto[];
+  notes: string[];
+}
+
+export interface ScoutedCardDto {
+  card_id: string;
+  name: string;
+  games_seen: number;
+  /// Share of games this card appeared in, between 0 and 1.
+  confidence: number;
+  likely_copies: number;
+  earliest_turn: number;
+}
+
 export interface DeckCollectionDto {
   decks: SavedDeckDto[];
   active_id: string | null;
@@ -269,6 +293,7 @@ export interface StateUpdatePayload {
   opponent_deck?: DeckInfoDto;
   pasted_deck?: PastedDeckDto | null;
   deck_collection?: DeckCollectionDto;
+  scouting?: ScoutingReportDto | null;
   latency_ms: number;
   observation: ObservationStatusDto | null;
 }

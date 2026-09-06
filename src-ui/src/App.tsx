@@ -6,6 +6,7 @@ import { CoachChatPanel } from "./components/CoachChatPanel";
 import { CombatPanel } from "./components/CombatPanel";
 import { ConnectionStatus } from "./components/ConnectionStatus";
 import { DeckPanel } from "./components/DeckPanel";
+import { ScoutingPanel } from "./components/ScoutingPanel";
 import { GameStatePanel } from "./components/GameStatePanel";
 import { SourceSelector } from "./components/SourceSelector";
 import { SourceStatusHud } from "./components/SourceStatusHud";
@@ -79,6 +80,7 @@ export default function App() {
                 onRenameDeck={bridge.renameDeck}
                 onClearPaste={bridge.clearPastedDeck}
               />
+              <ScoutingPanel report={bridge.snapshot?.scouting ?? null} />
               <BlockerWarning
                 combat={combat}
                 analysis={bridge.snapshot?.combat_analysis ?? null}

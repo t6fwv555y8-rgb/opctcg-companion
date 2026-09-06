@@ -18,8 +18,30 @@ pub struct DeckContext {
     pub opponent_leader: String,
     pub opponent_list: Vec<String>,
     pub opponent_list_standing: ListStanding,
+    /// What earlier games against this leader add up to, when there were any.
+    pub opponent_scouting: Option<ScoutingBrief>,
     pub plan: Option<String>,
     pub vs_opponent: Option<String>,
+}
+
+/// Evidence gathered from past games against the leader across the table.
+///
+/// This is the weakest kind of knowledge in the briefing and the most useful,
+/// because it is the only kind available about a deck nobody has shown you. It
+/// carries its own sample size so the model can hedge in proportion.
+#[derive(Debug, Clone, Default)]
+pub struct ScoutingBrief {
+    pub games: u32,
+    /// How far the sample goes: `thin`, `fair`, or `solid`.
+    pub reliability: String,
+    /// How the deck has played, measured rather than assumed.
+    pub pace: String,
+    /// Lines like `2x Usopp (OP17-080) — 4 of 5 games`.
+    pub likely_cards: Vec<String>,
+    /// Plain statements of what was measured.
+    pub notes: Vec<String>,
+    /// Copies the map can name, against the fifty in a deck.
+    pub mapped_copies: u32,
 }
 
 /// How far a side's deck list can be trusted.
@@ -400,6 +422,18 @@ pub fn build_context(
 
     if scope.deck {
         context.push("Decks", deck_readout(decks));
+
+        if let Some(scouting) = decks.opponent_scouting.as_ref() {
+            sink(CoachEvent::tool(
+                "scouting_report",
+                format!(
+                    "{} game{} on this leader",
+                    scouting.games,
+                    if scouting.games == 1 { "" } else { "s" }
+                ),
+            ));
+            context.push("Scouting report", scouting_readout(scouting));
+        }
     }
 
     // Name what was held back, or the model fills the gap by inventing a board.
@@ -425,6 +459,45 @@ pub fn build_context(
         context.fingerprint = Some(position);
     }
     context
+}
+
+/// What past games say about this deck, framed as evidence rather than fact.
+///
+/// The framing is the whole job here. These cards were never confirmed, only
+/// seen, and a model handed a list of card names will otherwise talk about them
+/// as though the opponent had shown a decklist.
+fn scouting_readout(scouting: &ScoutingBrief) -> String {
+    let mut lines = vec![format!(
+        "Built from {} earlier game{} against this leader, so the sample is \
+         {}. Everything here is inference from cards they have played, not a \
+         list anyone confirmed.",
+        scouting.games,
+        if scouting.games == 1 { "" } else { "s" },
+        scouting.reliability
+    )];
+
+    lines.push(format!("How this deck has played: {}.", scouting.pace));
+
+    if !scouting.likely_cards.is_empty() {
+        lines.push(format!(
+            "Cards they have shown, with how often ({} of their 50 accounted \
+             for): {}",
+            scouting.mapped_copies,
+            scouting.likely_cards.join(", ")
+        ));
+        lines.push(
+            "Use these to anticipate, not to assert. A card seen in most games \
+             is worth playing around; say it is likely rather than certain, and \
+             never claim it is in their hand right now."
+                .to_string(),
+        );
+    }
+
+    if !scouting.notes.is_empty() {
+        lines.push(format!("Measured: {}", scouting.notes.join(" ")));
+    }
+
+    lines.join("\n")
 }
 
 /// How many of the most recent actions the briefing carries.
@@ -1033,6 +1106,101 @@ mod tests {
 
         assert!(prompt.contains("one list you have saved for this leader"));
         assert!(prompt.contains("Say so if you lean on a specific card"));
+    }
+
+    fn scouted() -> ScoutingBrief {
+        ScoutingBrief {
+            games: 5,
+            reliability: "fair".into(),
+            pace: "aggressive".into(),
+            likely_cards: vec!["2x Usopp (OP17-080) — 5 of 5 games".into()],
+            notes: vec!["First takes life on turn 3.0, in 5 of 5 games.".into()],
+            mapped_copies: 18,
+        }
+    }
+
+    #[test]
+    fn a_scouting_report_reaches_the_briefing_with_its_sample_size() {
+        let prompt = prompt_for(&DeckContext {
+            opponent_deck: "Black Elbaph Luffy".into(),
+            opponent_scouting: Some(scouted()),
+            ..Default::default()
+        });
+
+        assert!(prompt.contains("## Scouting report"));
+        assert!(
+            prompt.contains("5 earlier games"),
+            "the model must know how much evidence there is: {prompt}"
+        );
+        assert!(prompt.contains("2x Usopp (OP17-080)"));
+        assert!(prompt.contains("18 of their 50"));
+    }
+
+    #[test]
+    fn a_scouting_report_is_framed_as_inference_not_a_list() {
+        let prompt = prompt_for(&DeckContext {
+            opponent_deck: "Black Elbaph Luffy".into(),
+            opponent_scouting: Some(scouted()),
+            ..Default::default()
+        });
+
+        assert!(
+            prompt.contains("not a \nlist anyone confirmed")
+                || prompt.contains("not a list anyone confirmed"),
+            "scouted cards were seen, never confirmed: {prompt}"
+        );
+        assert!(
+            prompt.contains("never claim it is in their hand right now"),
+            "a mapped deck is still not a known hand: {prompt}"
+        );
+    }
+
+    #[test]
+    fn one_game_of_scouting_says_so() {
+        let prompt = prompt_for(&DeckContext {
+            opponent_deck: "Black Elbaph Luffy".into(),
+            opponent_scouting: Some(ScoutingBrief {
+                games: 1,
+                reliability: "thin".into(),
+                pace: "not yet established".into(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+
+        assert!(
+            prompt.contains("1 earlier game against"),
+            "a single game must not read as plural evidence: {prompt}"
+        );
+        assert!(prompt.contains("thin"));
+    }
+
+    #[test]
+    fn scouting_stays_behind_the_deck_scope() {
+        let decks = DeckContext {
+            opponent_deck: "Black Elbaph Luffy".into(),
+            opponent_scouting: Some(scouted()),
+            ..Default::default()
+        };
+        let db = db();
+        let repo = CardRepository::new(&db);
+        let (sink, _recorder) = recording_sink();
+        let prompt = build_context(
+            &sample_state(),
+            &repo,
+            &decks,
+            ContextScope {
+                board: true,
+                deck: false,
+            },
+            &sink,
+        )
+        .to_prompt();
+
+        assert!(
+            !prompt.contains("Scouting report"),
+            "withholding decks must withhold what we worked out about them: {prompt}"
+        );
     }
 
     #[test]

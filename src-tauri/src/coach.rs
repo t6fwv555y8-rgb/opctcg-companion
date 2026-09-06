@@ -6,6 +6,7 @@ use optcg_coach::{
     EventSink, FlushTicker, ListStanding, StateFingerprint, TurnKind, TurnSummary,
     DEFAULT_FLUSH_INTERVAL_MS, SYSTEM_PROMPT,
 };
+use optcg_scouting::{DeckMap, StrategyRead};
 use parking_lot::Mutex;
 use serde::Serialize;
 use std::sync::Arc;
@@ -113,9 +114,62 @@ fn deck_context(state: &AppState) -> DeckContext {
         opponent_leader: leader_label(&opponent),
         opponent_list: list_lines(&opponent),
         opponent_list_standing: standing(&opponent),
+        opponent_scouting: scouting_brief(state, &opponent),
         plan: strategy.as_ref().map(|brief| brief.your_plan.clone()),
         vs_opponent: strategy.as_ref().map(|brief| brief.vs_opponent.clone()),
     }
+}
+
+/// How many mapped cards the briefing carries.
+///
+/// The map is sorted most-established first, so this takes the part of it worth
+/// planning around and leaves the long tail of one-off sightings out of the
+/// prompt.
+const SCOUTED_CARDS: usize = 20;
+
+/// What past games say about the deck across the table.
+///
+/// Returns `None` when their list is already known, since a scouting estimate
+/// of a deck we have in full is noise, and when nothing has been seen yet.
+fn scouting_brief(
+    state: &AppState,
+    opponent: &crate::dto::DeckInfoDto,
+) -> Option<optcg_coach::ScoutingBrief> {
+    if opponent.origin == DeckOrigin::Attached {
+        return None;
+    }
+    let profile = state.scouting_for(&opponent.leader_id)?;
+    let map = DeckMap::from_profile(&profile)?;
+    let read = StrategyRead::from_profile(&profile);
+    let repo = state.repo();
+
+    let likely_cards = map
+        .cards
+        .iter()
+        .take(SCOUTED_CARDS)
+        .map(|card| {
+            let name = repo
+                .get_by_id(&card.card_id)
+                .map(|def| def.name)
+                .unwrap_or_else(|_| card.card_id.clone());
+            format!(
+                "{}x {} ({}) — {} of {} games",
+                card.likely_copies, name, card.card_id, card.games_seen, map.games
+            )
+        })
+        .collect();
+
+    Some(optcg_coach::ScoutingBrief {
+        games: map.games,
+        reliability: map.reliability.label().to_string(),
+        pace: read
+            .as_ref()
+            .map(|read| read.pace.label().to_string())
+            .unwrap_or_else(|| "not yet established".into()),
+        likely_cards,
+        notes: read.map(|read| read.notes).unwrap_or_default(),
+        mapped_copies: map.mapped_copies(),
+    })
 }
 
 fn list_lines(deck: &crate::dto::DeckInfoDto) -> Vec<String> {
