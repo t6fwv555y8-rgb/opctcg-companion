@@ -115,14 +115,32 @@ The **Ask the Coach** panel answers questions about the live match. Every turn
 runs in three stages, all visible in the HUD as they happen:
 
 1. **Grounding** — read-only analysis of the current board: board readout,
-   phase guidance, combat math, and ranked legal actions. Each step appears as
-   a chip under the conversation.
-2. **Generation** — the answer streams in token by token.
-3. **Completion** — the turn closes, or reports that it was stopped or failed.
+   opponent counter ceiling, phase guidance, combat math, and ranked legal
+   actions. Each step appears as a chip under the conversation. Grounding runs
+   before any text is generated, so the chips arrive first.
+2. **Generation** — the answer streams in, labelled with the position it was
+   read from.
+3. **Completion** — the turn closes, or reports that it was stopped,
+   interrupted, or failed.
 
 The coach is read-only by construction: it can query game state and the rules
 engine, and there is no path from a model response back into game state, the
 filesystem, or the simulator.
+
+The opponent's counter estimate is an **upper bound from cards they have
+revealed** this match, combined with their hand size — never a claim about
+their actual hand, which is hidden.
+
+### Answers stop when the board moves
+
+An answer describes one position. If the board changes materially while it is
+streaming — life, DON, hand size, board contents, phase, or combat — the turn
+is interrupted and the bubble is marked `Board changed`, rather than finishing
+advice about a position that no longer exists.
+
+"Materially" excludes ordinary event churn: latency samples, log lines, trash
+counts, and observation ordering do not interrupt a turn. See
+`grounding::fingerprint`.
 
 ### Configuration
 
@@ -151,14 +169,36 @@ provider sends your board state and saved deck list to that endpoint.
 
 ### Streaming transport
 
-Frames reach the HUD on the `coach-chat-event` Tauri event channel as
-`{"turn_id": 1, "type": "status" | "tool_run" | "text_delta" | "done", "data": ...}`.
+Frames reach the HUD on the `coach://event` Tauri event channel:
+
+```json
+{"turn_id": 1, "type": "state_sync", "data": {"label": "turn 4 · Main · life 3-2", "digest": "..."}}
+{"turn_id": 1, "type": "status",      "data": "Ranking legal actions"}
+{"turn_id": 1, "type": "tool_run",    "data": {"tool": "counter_estimate", "summary": "≤8000 from 4 cards"}}
+{"turn_id": 1, "type": "text_delta",  "data": "Attack the leader"}
+{"turn_id": 1, "type": "done",        "data": {"reason": "complete", "text": "..."}}
+```
+
+`turn_id` lets the UI drop frames from a question the user has already replaced.
+Exactly one `done` frame is emitted per turn.
 
 A Tauri app has no HTTP origin to serve Server-Sent Events from, and `emit` is
 already the app's backend-to-webview push channel — the same mechanism
 `game-state-updated` uses. It fills the role SSE would in a browser deployment
 without shipping a second process. SSE is still involved, just on the outbound
 side: the client parses `text/event-stream` from the model API.
+
+### Backpressure
+
+A model emitting 50 tokens a second would otherwise mean 50 IPC messages and 50
+React renders a second, competing with the HUD's own state updates.
+`CoalescingSink` batches text on a 40ms cadence, which cuts that by roughly an
+order of magnitude, and a flush ticker drains the tail if the model stalls
+mid-answer. Any non-text frame flushes buffered text first, so `status`,
+`tool_run`, and `done` can never overtake text produced before them.
+
+On the frontend, message bubbles are memoized and completed messages keep their
+object identity, so a streaming answer re-renders only its own bubble.
 
 ## License
 
