@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod coach;
 mod commands;
 mod dto;
 mod runtime;
@@ -56,6 +57,7 @@ fn main() {
             pipeline: Arc::clone(&pipeline),
             manager: Arc::clone(&manager),
         })
+        .manage(coach::CoachRuntime::from_env())
         .invoke_handler(tauri::generate_handler![
             commands::get_game_state,
             commands::get_connection_status,
@@ -85,6 +87,11 @@ fn main() {
             commands::capture_debug_snapshot,
             commands::set_replay_speed,
             commands::replay_step_forward,
+            coach::coach_send_message,
+            coach::coach_cancel,
+            coach::coach_reset,
+            coach::coach_history,
+            coach::coach_status,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();

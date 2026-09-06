@@ -93,6 +93,7 @@ fn broadcast_state(
     ));
     let payload = state.build_update_payload(observation);
     let _ = app.emit("game-state-updated", payload.clone());
+    crate::coach::interrupt_if_board_changed(app);
     payload
 }
 
@@ -395,4 +396,6 @@ pub fn emit_state_update(
 ) {
     let payload = app_state.build_update_payload(observation);
     let _ = app.emit("game-state-updated", payload);
+    // A streaming answer about the previous position is worse than no answer.
+    crate::coach::interrupt_if_board_changed(app);
 }

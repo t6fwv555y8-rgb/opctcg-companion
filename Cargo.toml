@@ -4,6 +4,7 @@ members = [
     "crates/optcg_core",
     "crates/optcg_database",
     "crates/optcg_rules",
+    "crates/optcg_coach",
     "crates/optcg_events",
     "crates/optcg_observation",
     "src-tauri",
@@ -29,6 +30,13 @@ chrono = { version = "0.4", features = ["serde"] }
 notify = "6.1"
 tokio-tungstenite = "0.24"
 futures-util = "0.3"
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "stream",
+    "rustls-tls",
+    "charset",
+    "http2",
+] }
 rand = "0.8"
 parking_lot = "0.12"
 async-trait = "0.1"

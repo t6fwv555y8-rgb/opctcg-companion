@@ -1,0 +1,29 @@
+[package]
+name = "optcg_coach"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Streaming AI coach: grounded prompt assembly, chat providers, and agent event stream"
+
+[features]
+# Exposes provider::test_support so downstream crates can assert on event streams.
+test-support = []
+
+[dependencies]
+optcg_core = { path = "../optcg_core" }
+optcg_database = { path = "../optcg_database" }
+optcg_rules = { path = "../optcg_rules" }
+async-trait = { workspace = true }
+futures-util = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+# Self-dependency so this crate's integration tests see `provider::test_support`,
+# which `cfg(test)` alone does not expose to a separate test crate.
+optcg_coach = { path = ".", features = ["test-support"] }
