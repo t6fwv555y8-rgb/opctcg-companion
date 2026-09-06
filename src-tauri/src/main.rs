@@ -93,6 +93,7 @@ fn main() {
             coach::coach_history,
             coach::coach_status,
             coach::coach_set_auto,
+            coach::coach_set_context,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
@@ -107,8 +108,7 @@ fn main() {
             // updates so the settle window can expire after the last change.
             let auto_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                let mut ticker =
-                    tokio::time::interval(std::time::Duration::from_millis(500));
+                let mut ticker = tokio::time::interval(std::time::Duration::from_millis(500));
                 loop {
                     ticker.tick().await;
                     coach::poll_auto_trigger(&auto_handle);

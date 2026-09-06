@@ -1,6 +1,11 @@
 import { memo, useEffect, useRef, useState } from "react";
 import { useCoachStream } from "../hooks/useCoachStream";
-import type { CoachChatMessage, FinishReason, ToolRun } from "../types/coach";
+import type {
+  CoachChatMessage,
+  ContextScope,
+  FinishReason,
+  ToolRun,
+} from "../types/coach";
 
 const SUGGESTIONS = [
   "What should I do this turn?",
@@ -80,30 +85,94 @@ const Bubble = memo(function Bubble({
 
 function AutoToggle({
   enabled,
+  disabled,
   onChange,
 }: {
   enabled: boolean;
+  disabled: boolean;
   onChange: (enabled: boolean) => void;
 }) {
+  const title = disabled
+    ? "Unavailable while the board is withheld — an automatic read has nothing to read"
+    : enabled
+      ? "Reading the board on its own after each move settles"
+      : "Read the board on its own after each move settles, without being asked";
+
   return (
     <button
       type="button"
       role="switch"
       aria-checked={enabled}
+      disabled={disabled}
       onClick={() => onChange(!enabled)}
-      title={
-        enabled
-          ? "Reading the board on its own after each move settles"
-          : "Read the board on its own after each move settles, without being asked"
-      }
-      className={`rounded border px-1.5 py-0.5 font-mono text-[8px] ${
+      title={title}
+      className={`rounded border px-1.5 py-0.5 font-mono text-[8px] disabled:opacity-40 ${
         enabled
           ? "border-hud-accent/50 bg-hud-accent/15 text-hud-accent"
-          : "border-slate-600/60 text-slate-500 hover:text-slate-300"
+          : "border-slate-600/60 text-slate-500 enabled:hover:text-slate-300"
       }`}
     >
       auto
     </button>
+  );
+}
+
+/**
+ * What the next question will send, and a way to take any of it back.
+ *
+ * Every turn ships the live board and your deck list to whichever model is
+ * configured, which may be a third-party API. This makes that visible at the
+ * point of asking and lets it be withheld per question.
+ */
+function ContextPills({
+  scope,
+  onChange,
+}: {
+  scope: ContextScope;
+  onChange: (scope: ContextScope) => void;
+}) {
+  const items = [
+    {
+      key: "board" as const,
+      label: "Board",
+      title: "Live position, counter estimate, phase, combat math, ranked options",
+    },
+    {
+      key: "deck" as const,
+      label: "Deck",
+      title: "Your saved deck list, leader, and matchup plan",
+    },
+  ];
+
+  return (
+    <div className="flex flex-wrap items-center gap-1 text-[9px]">
+      <span className="text-slate-500">
+        {scope.board || scope.deck ? "Sharing" : "Sharing nothing"}
+      </span>
+      {items.map(({ key, label, title }) => {
+        const on = scope[key];
+        return (
+          <button
+            key={key}
+            type="button"
+            role="switch"
+            aria-checked={on}
+            title={on ? `${title} — click to withhold` : `${title} — click to share`}
+            onClick={() => onChange({ ...scope, [key]: !on })}
+            className={`rounded border px-1 py-px ${
+              on
+                ? "border-hud-accent/40 bg-hud-accent/10 text-hud-accent"
+                : "border-slate-700/60 text-slate-600 line-through hover:text-slate-400"
+            }`}
+          >
+            {label}
+          </button>
+        );
+      })}
+      {!scope.board && !scope.deck && (
+        <span className="text-slate-600">— rules answers only</span>
+      )}
+    </div>
   );
 }
 
@@ -167,6 +236,7 @@ export function CoachChatPanel() {
           </span>
           <AutoToggle
             enabled={coach.status?.auto_enabled ?? false}
+            disabled={coach.status ? !coach.status.context.board : true}
             onChange={(enabled) => {
               if (enabled) setOpen(true);
               void coach.setAuto(enabled);
@@ -228,6 +298,13 @@ export function CoachChatPanel() {
 
           {coach.error && (
             <p className="text-[9px] text-hud-danger">{coach.error}</p>
+          )}
+
+          {coach.status && (
+            <ContextPills
+              scope={coach.status.context}
+              onChange={(scope) => void coach.setContext(scope)}
+            />
           )}
 
           <div className="flex items-end gap-1">

@@ -3,6 +3,7 @@ use crate::types::{CoachEvent, StateFingerprint};
 use optcg_core::{GameState, PlayerState};
 use optcg_database::CardRepository;
 use optcg_rules::{CombatMath, RulesEngine};
+use serde::{Deserialize, Serialize};
 
 /// Deck context the desktop app already computes, passed in so this crate does
 /// not need to know about the app's DTOs.
@@ -18,12 +19,61 @@ pub struct DeckContext {
     pub vs_opponent: Option<String>,
 }
 
+/// Which parts of the live context a turn may send.
+///
+/// Everything is shared by default, since board-aware coaching is the point of
+/// the app. But a rules or matchup question does not need your deck list
+/// shipped to a third-party API, and there was no way to withhold it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContextScope {
+    /// The live position and everything read off it: board, counter estimate,
+    /// phase guidance, combat math, ranked options.
+    pub board: bool,
+    /// Your saved deck list, leader, and matchup plan.
+    pub deck: bool,
+}
+
+impl Default for ContextScope {
+    fn default() -> Self {
+        Self {
+            board: true,
+            deck: true,
+        }
+    }
+}
+
+impl ContextScope {
+    /// Share nothing: answers come from rules knowledge alone.
+    pub const NOTHING: Self = Self {
+        board: false,
+        deck: false,
+    };
+
+    pub fn shares_anything(self) -> bool {
+        self.board || self.deck
+    }
+
+    /// What this scope keeps back, for the model and the UI to name.
+    pub fn withheld(self) -> Vec<&'static str> {
+        let mut out = Vec::new();
+        if !self.board {
+            out.push("the live board");
+        }
+        if !self.deck {
+            out.push("your deck list");
+        }
+        out
+    }
+}
+
 /// Facts gathered from the live match, ready to prepend to a chat turn.
 #[derive(Debug, Clone, Default)]
 pub struct GroundedContext {
     pub sections: Vec<(String, String)>,
-    /// The position these facts were read from.
-    pub fingerprint: StateFingerprint,
+    /// The position these facts were read from, absent when the board was not
+    /// shared. Answers with no position cannot go stale, so leaving this unset
+    /// is what keeps board changes from interrupting them.
+    pub fingerprint: Option<StateFingerprint>,
 }
 
 impl GroundedContext {
@@ -65,10 +115,7 @@ pub struct CounterEstimate {
 impl CounterEstimate {
     fn summary(&self) -> String {
         if self.max_single == 0 {
-            return format!(
-                "no counters revealed yet, {} cards in hand",
-                self.hand_size
-            );
+            return format!("no counters revealed yet, {} cards in hand", self.hand_size);
         }
         format!(
             "≤{} from {} cards (max single {})",
@@ -145,7 +192,10 @@ pub fn is_decision_point(state: &GameState) -> bool {
     }
     // Your own turn, in the phases where you choose what to do.
     if state.active_player == YOU {
-        return matches!(state.phase, optcg_core::Phase::Main | optcg_core::Phase::Combat);
+        return matches!(
+            state.phase,
+            optcg_core::Phase::Main | optcg_core::Phase::Combat
+        );
     }
     false
 }
@@ -167,7 +217,11 @@ pub fn fingerprint(state: &GameState) -> StateFingerprint {
             } else {
                 state.combat.target_id.as_deref().unwrap_or("?")
             },
-            if state.combat.blocker_offered { "+b" } else { "" }
+            if state.combat.blocker_offered {
+                "+b"
+            } else {
+                ""
+            }
         )
     } else {
         "combat:none".to_string()
@@ -248,76 +302,99 @@ pub fn build_context(
     state: &GameState,
     repo: &CardRepository<'_>,
     decks: &DeckContext,
+    scope: ContextScope,
     sink: &EventSink,
 ) -> GroundedContext {
     let mut context = GroundedContext::default();
 
-    sink(CoachEvent::status("Reading board state"));
-    let board = board_readout(state);
-    sink(CoachEvent::tool("board_readout", board_summary(state)));
-    context.push("Board", board);
+    if scope.board {
+        sink(CoachEvent::status("Reading board state"));
+        let board = board_readout(state);
+        sink(CoachEvent::tool("board_readout", board_summary(state)));
+        context.push("Board", board);
 
-    sink(CoachEvent::status("Estimating opponent counters"));
-    let counters = estimate_counters(state.player_two(), repo);
-    sink(CoachEvent::tool("counter_estimate", counters.summary()));
-    context.push("Opponent counter range", counters.readout());
+        sink(CoachEvent::status("Estimating opponent counters"));
+        let counters = estimate_counters(state.player_two(), repo);
+        sink(CoachEvent::tool("counter_estimate", counters.summary()));
+        context.push("Opponent counter range", counters.readout());
 
-    sink(CoachEvent::status("Checking the current phase"));
-    let phase_coach = RulesEngine::phase_coach(state);
-    context.push("Phase guidance", phase_coach);
+        sink(CoachEvent::status("Checking the current phase"));
+        let phase_coach = RulesEngine::phase_coach(state);
+        context.push("Phase guidance", phase_coach);
 
-    if state.combat.active {
-        sink(CoachEvent::status("Running combat math"));
-        if let Some(analysis) = CombatMath::analyze_current_combat(state, repo) {
-            sink(CoachEvent::tool(
-                "combat_math",
-                format!(
-                    "{:?} · needs {} counter",
-                    analysis.survival_status, analysis.required_counter
-                ),
-            ));
-            context.push("Combat math", combat_readout(&analysis));
-        }
-    }
-
-    sink(CoachEvent::status("Ranking legal actions"));
-    match RulesEngine::rank_actions(state, repo) {
-        Ok(options) if !options.is_empty() => {
-            let shown = options.len().min(6);
-            sink(CoachEvent::tool(
-                "rank_actions",
-                format!("{shown} of {} options", options.len()),
-            ));
-            let body = options
-                .iter()
-                .take(shown)
-                .enumerate()
-                .map(|(i, option)| {
+        if state.combat.active {
+            sink(CoachEvent::status("Running combat math"));
+            if let Some(analysis) = CombatMath::analyze_current_combat(state, repo) {
+                sink(CoachEvent::tool(
+                    "combat_math",
                     format!(
-                        "{}. {} (score {:.2}) — {}",
-                        i + 1,
-                        option.action.description,
-                        option.score,
-                        option.reasoning
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            context.push("Ranked options", body);
+                        "{:?} · needs {} counter",
+                        analysis.survival_status, analysis.required_counter
+                    ),
+                ));
+                context.push("Combat math", combat_readout(&analysis));
+            }
         }
-        Ok(_) => sink(CoachEvent::tool("rank_actions", "no legal actions")),
-        Err(e) => {
-            tracing::debug!(error = %e, "could not rank actions for coach context");
-            sink(CoachEvent::tool("rank_actions", "unavailable"));
+
+        sink(CoachEvent::status("Ranking legal actions"));
+        match RulesEngine::rank_actions(state, repo) {
+            Ok(options) if !options.is_empty() => {
+                let shown = options.len().min(6);
+                sink(CoachEvent::tool(
+                    "rank_actions",
+                    format!("{shown} of {} options", options.len()),
+                ));
+                let body = options
+                    .iter()
+                    .take(shown)
+                    .enumerate()
+                    .map(|(i, option)| {
+                        format!(
+                            "{}. {} (score {:.2}) — {}",
+                            i + 1,
+                            option.action.description,
+                            option.score,
+                            option.reasoning
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                context.push("Ranked options", body);
+            }
+            Ok(_) => sink(CoachEvent::tool("rank_actions", "no legal actions")),
+            Err(e) => {
+                tracing::debug!(error = %e, "could not rank actions for coach context");
+                sink(CoachEvent::tool("rank_actions", "unavailable"));
+            }
         }
     }
 
-    context.push("Decks", deck_readout(decks));
+    if scope.deck {
+        context.push("Decks", deck_readout(decks));
+    }
+
+    // Name what was held back, or the model fills the gap by inventing a board.
+    let withheld = scope.withheld();
+    if !withheld.is_empty() {
+        context.push(
+            "Withheld",
+            format!(
+                "The player chose not to share {}. Do not guess at what you \
+                 cannot see — answer from rules knowledge and say what you \
+                 would need to look at.",
+                withheld.join(" or ")
+            ),
+        );
+    }
 
     // Emitted last, once the position that was actually read is known, so the
-    // UI can label the answer and detect it going stale.
-    context.fingerprint = fingerprint(state);
-    sink(CoachEvent::StateSync(context.fingerprint.clone()));
+    // UI can label the answer and detect it going stale. An answer given
+    // without the board has no position and so can never go stale.
+    if scope.board {
+        let position = fingerprint(state);
+        sink(CoachEvent::StateSync(position.clone()));
+        context.fingerprint = Some(position);
+    }
     context
 }
 
@@ -428,7 +505,11 @@ fn combat_readout(analysis: &optcg_rules::CombatAnalysis) -> String {
     if analysis.blocker_available {
         lines.push(format!(
             "A blocker is available; blocking is {}recommended.",
-            if analysis.recommended_block { "" } else { "not " }
+            if analysis.recommended_block {
+                ""
+            } else {
+                "not "
+            }
         ));
     }
     lines.join("\n")
@@ -461,9 +542,7 @@ fn deck_readout(decks: &DeckContext) -> String {
             decks.your_list.join(", ")
         ));
     } else {
-        lines.push(
-            "Your exact list is not saved, so treat deck contents as unknown.".to_string(),
-        );
+        lines.push("Your exact list is not saved, so treat deck contents as unknown.".to_string());
     }
     lines.join("\n")
 }
@@ -505,10 +584,19 @@ mod tests {
             vs_opponent: None,
         };
 
-        let context = build_context(&sample_state(), &repo, &decks, &sink);
+        let context = build_context(
+            &sample_state(),
+            &repo,
+            &decks,
+            ContextScope::default(),
+            &sink,
+        );
         let prompt = context.to_prompt();
 
-        assert!(prompt.contains("## Board"), "missing board section: {prompt}");
+        assert!(
+            prompt.contains("## Board"),
+            "missing board section: {prompt}"
+        );
         assert!(prompt.contains("life 3"), "own life missing: {prompt}");
         assert!(prompt.contains("Red Luffy Aggro"));
         assert!(prompt.contains("4x Usopp (ST01-002)"));
@@ -521,11 +609,19 @@ mod tests {
         let repo = CardRepository::new(&db);
         let (sink, recorder) = recording_sink();
 
-        build_context(&sample_state(), &repo, &DeckContext::default(), &sink);
+        build_context(
+            &sample_state(),
+            &repo,
+            &DeckContext::default(),
+            ContextScope::default(),
+            &sink,
+        );
         let events = recorder.events();
 
         assert!(
-            events.iter().any(|e| matches!(e, CoachEvent::Status(s) if s.contains("board"))),
+            events
+                .iter()
+                .any(|e| matches!(e, CoachEvent::Status(s) if s.contains("board"))),
             "expected a board status event: {events:?}"
         );
         assert!(
@@ -552,7 +648,13 @@ mod tests {
         let repo = CardRepository::new(&db);
         let (sink, _recorder) = recording_sink();
 
-        let context = build_context(&sample_state(), &repo, &DeckContext::default(), &sink);
+        let context = build_context(
+            &sample_state(),
+            &repo,
+            &DeckContext::default(),
+            ContextScope::default(),
+            &sink,
+        );
         assert!(
             context.to_prompt().contains("not saved"),
             "the model should be told the list is unknown"
@@ -565,15 +667,29 @@ mod tests {
         let repo = CardRepository::new(&db);
         let (sink, _recorder) = recording_sink();
 
-        let peaceful = build_context(&sample_state(), &repo, &DeckContext::default(), &sink);
+        let peaceful = build_context(
+            &sample_state(),
+            &repo,
+            &DeckContext::default(),
+            ContextScope::default(),
+            &sink,
+        );
         assert!(!peaceful.to_prompt().contains("## Combat math"));
 
         let mut fighting = sample_state();
         fighting.combat.active = true;
         fighting.combat.attacker_id = Some("ST01-002".into());
         fighting.combat.target_is_leader = true;
-        let context = build_context(&fighting, &repo, &DeckContext::default(), &sink);
-        assert!(context.to_prompt().contains("Combat: ST01-002 attacking leader"));
+        let context = build_context(
+            &fighting,
+            &repo,
+            &DeckContext::default(),
+            ContextScope::default(),
+            &sink,
+        );
+        assert!(context
+            .to_prompt()
+            .contains("Combat: ST01-002 attacking leader"));
     }
 
     #[test]
@@ -654,10 +770,20 @@ mod tests {
         let repo = CardRepository::new(&db);
         let (sink, recorder) = recording_sink();
 
-        let context = build_context(&sample_state(), &repo, &DeckContext::default(), &sink);
+        let context = build_context(
+            &sample_state(),
+            &repo,
+            &DeckContext::default(),
+            ContextScope::default(),
+            &sink,
+        );
 
-        assert_eq!(context.fingerprint, fingerprint(&sample_state()));
-        assert!(context.fingerprint.label.contains("turn 4"));
+        let position = context
+            .fingerprint
+            .clone()
+            .expect("sharing the board should record a position");
+        assert_eq!(position, fingerprint(&sample_state()));
+        assert!(position.label.contains("turn 4"));
 
         let sync = recorder
             .events()
@@ -667,7 +793,7 @@ mod tests {
                 _ => None,
             })
             .expect("a state_sync frame should be emitted");
-        assert_eq!(sync, context.fingerprint);
+        assert_eq!(sync, position);
     }
 
     #[test]
@@ -728,6 +854,98 @@ mod tests {
             fingerprint(&right).digest,
             "observation order is not part of the position"
         );
+    }
+
+    fn context_with(scope: ContextScope) -> (GroundedContext, Vec<CoachEvent>) {
+        let db = db();
+        let repo = CardRepository::new(&db);
+        let (sink, recorder) = recording_sink();
+        let decks = DeckContext {
+            your_deck: "Red Zoro".into(),
+            your_leader: "OP01-001".into(),
+            ..Default::default()
+        };
+        let context = build_context(&sample_state(), &repo, &decks, scope, &sink);
+        (context, recorder.events())
+    }
+
+    #[test]
+    fn withholding_the_board_removes_it_and_everything_read_off_it() {
+        let (context, events) = context_with(ContextScope {
+            board: false,
+            deck: true,
+        });
+        let prompt = context.to_prompt();
+
+        for absent in [
+            "## Board",
+            "## Opponent counter range",
+            "## Phase guidance",
+            "## Ranked options",
+        ] {
+            assert!(!prompt.contains(absent), "{absent} should be withheld");
+        }
+        assert!(prompt.contains("Red Zoro"), "the deck was still shared");
+
+        // The model has to be told, or it fills the gap by inventing a board.
+        assert!(prompt.contains("## Withheld"));
+        assert!(prompt.contains("the live board"));
+
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, CoachEvent::ToolRun(_) | CoachEvent::StateSync(_))),
+            "no board tool should run: {events:?}"
+        );
+        assert!(
+            context.fingerprint.is_none(),
+            "an answer without a position cannot go stale, so none is recorded"
+        );
+    }
+
+    #[test]
+    fn withholding_the_deck_keeps_the_board() {
+        let (context, _) = context_with(ContextScope {
+            board: true,
+            deck: false,
+        });
+        let prompt = context.to_prompt();
+
+        assert!(prompt.contains("## Board"));
+        assert!(!prompt.contains("Red Zoro"), "the deck list was withheld");
+        assert!(prompt.contains("your deck list"));
+        assert!(
+            context.fingerprint.is_some(),
+            "a board-grounded answer still records its position"
+        );
+    }
+
+    #[test]
+    fn sharing_nothing_still_produces_a_usable_prompt() {
+        let (context, events) = context_with(ContextScope::NOTHING);
+        let prompt = context.to_prompt();
+
+        assert!(!ContextScope::NOTHING.shares_anything());
+        assert!(
+            prompt.contains("the live board") && prompt.contains("your deck list"),
+            "both omissions must be named: {prompt}"
+        );
+        assert!(
+            prompt.contains("Do not guess"),
+            "the model needs telling not to invent context"
+        );
+        assert!(
+            !events.iter().any(|e| matches!(e, CoachEvent::ToolRun(_))),
+            "nothing should be read at all"
+        );
+    }
+
+    #[test]
+    fn sharing_everything_names_no_omissions() {
+        let (context, _) = context_with(ContextScope::default());
+        assert!(ContextScope::default().shares_anything());
+        assert!(ContextScope::default().withheld().is_empty());
+        assert!(!context.to_prompt().contains("## Withheld"));
     }
 
     #[test]

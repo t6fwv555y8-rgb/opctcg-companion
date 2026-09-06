@@ -45,6 +45,14 @@ export type CoachStreamEvent =
   | { turn_id: number; type: "text_delta"; data: string }
   | { turn_id: number; type: "done"; data: TurnSummary };
 
+/** What the coach may send to the model. */
+export interface ContextScope {
+  /** The live position and everything read off it. */
+  board: boolean;
+  /** Your saved deck list, leader, and matchup plan. */
+  deck: boolean;
+}
+
 export interface CoachStatus {
   /** Model name, or `Offline coach` when no API key is configured. */
   provider: string;
@@ -55,6 +63,8 @@ export interface CoachStatus {
   automatic: boolean;
   /** True when board changes trigger reads on their own. */
   auto_enabled: boolean;
+  /** What the next turn will send. */
+  context: ContextScope;
 }
 
 export interface CoachHistory {
@@ -91,4 +101,6 @@ export interface CoachStream {
   reset: () => Promise<void>;
   /** Turn unprompted board reads on or off. */
   setAuto: (enabled: boolean) => Promise<void>;
+  /** Choose what the coach may send to the model. */
+  setContext: (scope: ContextScope) => Promise<void>;
 }

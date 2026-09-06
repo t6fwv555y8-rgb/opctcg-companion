@@ -142,6 +142,31 @@ advice about a position that no longer exists.
 counts, and observation ordering do not interrupt a turn. See
 `grounding::fingerprint`.
 
+### Choosing what gets shared
+
+Every turn sends the live board and your deck list to whichever model is
+configured — which, with an API key set, is a third-party service. The pills
+above the chat input show what the next question will carry, and each one can
+be switched off:
+
+| Pill | Covers |
+| --- | --- |
+| `Board` | Live position, opponent counter estimate, phase guidance, combat math, ranked options |
+| `Deck` | Your saved deck list, leader, and matchup plan |
+
+Both are on by default, since board-aware coaching is the point of the app.
+Withholding is per-question rather than permanent, and the scope is captured
+when a turn starts, so toggling mid-answer cannot change what was already
+sent.
+
+Two consequences worth knowing:
+
+- Whatever is withheld is **named in the briefing**, with an instruction not to
+  guess. Without that the model fills the gap by inventing a board.
+- An answer given without the board has no position, so it **cannot be
+  interrupted** by a board change, and automatic reads are unavailable —
+  they exist to answer board changes and have nothing to read.
+
 ### Reading the board unprompted
 
 The `auto` toggle in the panel header lets the coach answer without being

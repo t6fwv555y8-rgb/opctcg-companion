@@ -324,7 +324,10 @@ mod tests {
 
         trigger.reset();
         let after = start + Duration::from_secs(2);
-        assert_eq!(trigger.observe(&position("a"), true, after), AutoDecision::Settling);
+        assert_eq!(
+            trigger.observe(&position("a"), true, after),
+            AutoDecision::Settling
+        );
         assert_eq!(
             trigger.observe(&position("a"), true, after + Duration::from_secs(1)),
             AutoDecision::Fire,

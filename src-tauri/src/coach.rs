@@ -1,8 +1,9 @@
 use crate::state::AppState;
 use optcg_coach::{
     AutoDecision, AutoTrigger, CancelReason, CancelToken, ChatMessage, ChatProvider, CoachError,
-    CoachEvent, CoachSession, CoachStreamEvent, CoalescingSink, DeckContext, EventSink,
-    FlushTicker, StateFingerprint, TurnKind, TurnSummary, DEFAULT_FLUSH_INTERVAL_MS, SYSTEM_PROMPT,
+    CoachEvent, CoachSession, CoachStreamEvent, CoalescingSink, ContextScope, DeckContext,
+    EventSink, FlushTicker, StateFingerprint, TurnKind, TurnSummary, DEFAULT_FLUSH_INTERVAL_MS,
+    SYSTEM_PROMPT,
 };
 use parking_lot::Mutex;
 use serde::Serialize;
@@ -24,6 +25,7 @@ pub struct CoachRuntime {
     provider: Arc<dyn ChatProvider>,
     session: Arc<Mutex<CoachSession>>,
     auto: Arc<Mutex<AutoTrigger>>,
+    scope: Arc<Mutex<ContextScope>>,
 }
 
 impl CoachRuntime {
@@ -38,12 +40,14 @@ impl CoachRuntime {
             provider,
             session: Arc::new(Mutex::new(CoachSession::new())),
             auto: Arc::new(Mutex::new(AutoTrigger::default())),
+            scope: Arc::new(Mutex::new(ContextScope::default())),
         }
     }
 
     pub fn status(&self) -> CoachStatusDto {
-        // Bound before taking the session lock; the two are never held together.
+        // Each bound before taking the session lock; none are held together.
         let auto_enabled = self.auto.lock().is_enabled();
+        let context = *self.scope.lock();
         let session = self.session.lock();
         CoachStatusDto {
             provider: self.provider.label(),
@@ -52,6 +56,7 @@ impl CoachRuntime {
             active_turn: session.active_turn(),
             automatic: session.active_kind() == Some(TurnKind::Auto),
             auto_enabled,
+            context,
         }
     }
 }
@@ -69,6 +74,8 @@ pub struct CoachStatusDto {
     pub automatic: bool,
     /// True when board changes trigger reads on their own.
     pub auto_enabled: bool,
+    /// What the next turn will send to the model.
+    pub context: ContextScope,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -124,18 +131,26 @@ fn leader_label(deck: &crate::dto::DeckInfoDto) -> String {
 /// The grounded prompt plus the position it was read from.
 struct Briefing {
     prompt: String,
-    fingerprint: StateFingerprint,
+    /// Absent when the board was not shared, so the turn has no position to go
+    /// stale against.
+    fingerprint: Option<StateFingerprint>,
 }
 
 /// Run the read-only grounding tools and assemble the system prompt.
 ///
 /// Synchronous on purpose: it reads game state and the card database, so
 /// keeping it await-free means no lock is ever held across a suspension point.
-fn build_briefing(state: &AppState, sink: &EventSink) -> Briefing {
-    let decks = deck_context(state);
+fn build_briefing(state: &AppState, scope: ContextScope, sink: &EventSink) -> Briefing {
+    // Skip the deck read entirely when it is not being shared, rather than
+    // gathering it and dropping it.
+    let decks = if scope.deck {
+        deck_context(state)
+    } else {
+        DeckContext::default()
+    };
     let game_state = state.game_state.read();
     let repo = state.repo();
-    let context = optcg_coach::build_context(&game_state, &repo, &decks, sink);
+    let context = optcg_coach::build_context(&game_state, &repo, &decks, scope, sink);
     Briefing {
         prompt: format!(
             "{SYSTEM_PROMPT}\n\n# MATCH BRIEFING\n{}",
@@ -150,10 +165,10 @@ fn build_briefing(state: &AppState, sink: &EventSink) -> Briefing {
 /// Grounding hits SQLite and the rules engine, so it runs on the blocking pool
 /// rather than occupying an async worker. Returns `None` only if app state is
 /// gone (shutdown) or the blocking task panicked.
-async fn ground_turn(app: AppHandle, sink: EventSink) -> Option<Briefing> {
+async fn ground_turn(app: AppHandle, scope: ContextScope, sink: EventSink) -> Option<Briefing> {
     tokio::task::spawn_blocking(move || {
         let state = app.try_state::<AppState>()?;
-        Some(build_briefing(state.inner(), &sink))
+        Some(build_briefing(state.inner(), scope, &sink))
     })
     .await
     .inspect_err(|e| tracing::warn!(error = %e, "grounding task failed"))
@@ -213,7 +228,9 @@ async fn run_turn<G, F>(
             sink(CoachEvent::Done(summarize_cancellation(&cancel)));
             return;
         }
-        guard.record_grounding(turn_id, briefing.fingerprint);
+        if let Some(position) = briefing.fingerprint {
+            guard.record_grounding(turn_id, position);
+        }
         guard.prompt_with(briefing.prompt)
     };
 
@@ -254,11 +271,14 @@ fn spawn_turn(app: AppHandle, coach: &CoachRuntime, turn_id: u64, cancel: Cancel
     let coalescing = Arc::new(CoalescingSink::new(emit_sink(app.clone(), turn_id)));
     let sink = coalescing.as_event_sink();
 
+    // Captured at turn start, so toggling sharing mid-answer cannot change
+    // what was already sent.
+    let scope = *coach.scope.lock();
     let provider = Arc::clone(&coach.provider);
     let session = Arc::clone(&coach.session);
     tauri::async_runtime::spawn(async move {
         run_turn(
-            |sink| ground_turn(app, sink),
+            |sink| ground_turn(app, scope, sink),
             provider,
             session,
             coalescing,
@@ -291,6 +311,24 @@ pub fn coach_set_auto(coach: tauri::State<'_, CoachRuntime>, enabled: bool) -> C
     coach.status()
 }
 
+/// Choose what the coach may send to the model.
+///
+/// Withdrawing the board also stops automatic reads, which exist to answer
+/// board changes and have nothing to say without it.
+#[tauri::command]
+pub fn coach_set_context(
+    coach: tauri::State<'_, CoachRuntime>,
+    board: bool,
+    deck: bool,
+) -> CoachStatusDto {
+    *coach.scope.lock() = ContextScope { board, deck };
+    if !board {
+        coach.auto.lock().set_enabled(false);
+    }
+    tracing::info!(board, deck, "coach context sharing changed");
+    coach.status()
+}
+
 /// Read the board unprompted when it settles on a new position worth advice.
 ///
 /// Called on a fixed cadence rather than only on state updates, because the
@@ -302,6 +340,11 @@ pub fn poll_auto_trigger(app: &AppHandle) {
         return;
     };
     if !coach.auto.lock().is_enabled() {
+        return;
+    }
+    // An automatic read answers a board change, so it is pointless once the
+    // board is being withheld.
+    if !coach.scope.lock().board {
         return;
     }
     // Never talk over a turn already in flight, the user's least of all.
@@ -328,7 +371,10 @@ pub fn poll_auto_trigger(app: &AppHandle) {
         return;
     }
 
-    let started = coach.session.lock().begin_auto_turn(optcg_coach::AUTO_QUESTION);
+    let started = coach
+        .session
+        .lock()
+        .begin_auto_turn(optcg_coach::AUTO_QUESTION);
     match started {
         Ok((turn_id, cancel)) => {
             tracing::debug!(turn_id, position = %position.label, "reading the board unprompted");
@@ -431,18 +477,45 @@ mod tests {
     }
 
     #[test]
+    fn withholding_the_board_leaves_the_briefing_without_a_position() {
+        let state = app_state();
+        let (sink, _) = recording_sink();
+
+        let briefing = build_briefing(
+            &state,
+            ContextScope {
+                board: false,
+                deck: true,
+            },
+            &sink,
+        );
+
+        assert!(
+            briefing.fingerprint.is_none(),
+            "no position means a board change cannot interrupt the answer"
+        );
+        assert!(!briefing.prompt.contains("## Board"));
+        assert!(
+            briefing.prompt.contains("## Withheld"),
+            "the model must be told what it cannot see"
+        );
+    }
+
+    #[test]
     fn briefing_includes_the_system_prompt_and_live_board() {
         let state = app_state();
         let (sink, recorder) = recording_sink();
 
-        let briefing = build_briefing(&state, &sink);
+        let briefing = build_briefing(&state, ContextScope::default(), &sink);
 
         assert!(briefing.prompt.starts_with("You are the in-game coach"));
         assert!(briefing.prompt.contains("# MATCH BRIEFING"));
         assert!(briefing.prompt.contains("## Board"));
         assert!(briefing.prompt.contains("## Opponent counter range"));
         assert!(
-            !briefing.fingerprint.digest.is_empty(),
+            briefing
+                .fingerprint
+                .is_some_and(|position| !position.digest.is_empty()),
             "the briefing must record the position it read"
         );
         assert!(
@@ -456,7 +529,7 @@ mod tests {
         let state = app_state();
         let (sink, recorder) = recording_sink();
 
-        build_briefing(&state, &sink);
+        build_briefing(&state, ContextScope::default(), &sink);
         let events = recorder.events();
 
         assert!(
@@ -488,7 +561,10 @@ mod tests {
         assert_eq!(context.your_deck, "Red Luffy Aggro");
         assert!(context.your_leader.contains("ST01-001"));
         assert!(
-            context.your_list.iter().any(|line| line.contains("4x Usopp")),
+            context
+                .your_list
+                .iter()
+                .any(|line| line.contains("4x Usopp")),
             "exact list should reach the coach: {:?}",
             context.your_list
         );
@@ -509,10 +585,10 @@ mod tests {
     fn test_briefing() -> Briefing {
         Briefing {
             prompt: BRIEFING.into(),
-            fingerprint: StateFingerprint {
+            fingerprint: Some(StateFingerprint {
                 label: "turn 4".into(),
                 digest: "turn-4".into(),
-            },
+            }),
         }
     }
 
@@ -562,7 +638,10 @@ mod tests {
             events.last().is_some_and(CoachEvent::is_terminal),
             "the terminal frame must come last, after all batched text"
         );
-        assert!(!recorder.text().is_empty(), "the answer should have streamed");
+        assert!(
+            !recorder.text().is_empty(),
+            "the answer should have streamed"
+        );
         assert!(!session.lock().is_busy(), "the turn should be closed out");
         assert_eq!(session.lock().history().len(), 2);
     }
@@ -582,13 +661,9 @@ mod tests {
         run_turn(
             move |_sink| async move {
                 let briefing = test_briefing();
+                let position = briefing.fingerprint.clone().expect("stub has a position");
                 // Nothing recorded yet, so the turn cannot be stale.
-                assert_eq!(
-                    watcher
-                        .lock()
-                        .interrupt_if_stale(&briefing.fingerprint.clone()),
-                    None
-                );
+                assert_eq!(watcher.lock().interrupt_if_stale(&position), None);
                 Some(briefing)
             },
             Arc::new(OfflineProvider::instant()),
@@ -734,6 +809,9 @@ mod tests {
             "got {:?}",
             recorder.events()
         );
-        assert!(!session.lock().is_busy(), "the turn must not stay in flight");
+        assert!(
+            !session.lock().is_busy(),
+            "the turn must not stay in flight"
+        );
     }
 }
