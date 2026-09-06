@@ -81,6 +81,21 @@ pub fn get_state_snapshot(
         )))
 }
 
+/// Build a fresh state payload and push it to the HUD.
+fn broadcast_state(
+    app: &AppHandle,
+    state: &AppState,
+    runtime: &RuntimeHandles,
+) -> StateUpdatePayload {
+    let observation = Some(build_observation_status(
+        &runtime.manager,
+        &runtime.pipeline,
+    ));
+    let payload = state.build_update_payload(observation);
+    let _ = app.emit("game-state-updated", payload.clone());
+    payload
+}
+
 /// Force-refresh detailed deck-vs-deck strategy for the current matchup.
 #[command]
 pub fn refresh_deck_strategy(
@@ -89,16 +104,12 @@ pub fn refresh_deck_strategy(
     runtime: State<'_, RuntimeHandles>,
 ) -> StateUpdatePayload {
     let _ = state.inner().refresh_deck_strategy();
-    let observation = Some(build_observation_status(
-        &runtime.manager,
-        &runtime.pipeline,
-    ));
-    let payload = state.inner().build_update_payload(observation);
-    let _ = app.emit("game-state-updated", payload.clone());
-    payload
+    broadcast_state(&app, state.inner(), runtime.inner())
 }
 
 /// Paste an exact deck list (card IDs + quantities) for deeper strategy.
+///
+/// The list is also saved into the deck collection and made active.
 #[command]
 pub fn set_pasted_deck(
     app: AppHandle,
@@ -107,16 +118,10 @@ pub fn set_pasted_deck(
     raw: String,
 ) -> Result<StateUpdatePayload, String> {
     let _ = state.inner().set_pasted_deck(&raw)?;
-    let observation = Some(build_observation_status(
-        &runtime.manager,
-        &runtime.pipeline,
-    ));
-    let payload = state.inner().build_update_payload(observation);
-    let _ = app.emit("game-state-updated", payload.clone());
-    Ok(payload)
+    Ok(broadcast_state(&app, state.inner(), runtime.inner()))
 }
 
-/// Clear the pasted deck list.
+/// Deselect the active deck. Saved decks stay in the collection.
 #[command]
 pub fn clear_pasted_deck(
     app: AppHandle,
@@ -124,13 +129,69 @@ pub fn clear_pasted_deck(
     runtime: State<'_, RuntimeHandles>,
 ) -> StateUpdatePayload {
     state.inner().clear_pasted_deck();
-    let observation = Some(build_observation_status(
-        &runtime.manager,
-        &runtime.pipeline,
-    ));
-    let payload = state.inner().build_update_payload(observation);
-    let _ = app.emit("game-state-updated", payload.clone());
-    payload
+    broadcast_state(&app, state.inner(), runtime.inner())
+}
+
+/// The saved deck collection, without rebuilding the whole state payload.
+#[command]
+pub fn get_deck_collection(state: State<'_, AppState>) -> crate::dto::DeckCollectionDto {
+    state.inner().deck_collection_dto()
+}
+
+/// Save a deck list under a name and make it active.
+///
+/// Pass `id` to overwrite a specific saved deck; otherwise the deck is matched
+/// by name so re-saving the same deck updates it in place.
+#[command]
+pub fn save_deck(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    runtime: State<'_, RuntimeHandles>,
+    raw: String,
+    name: Option<String>,
+    id: Option<String>,
+) -> Result<StateUpdatePayload, String> {
+    state
+        .inner()
+        .save_deck(id.as_deref(), name.as_deref(), &raw)?;
+    Ok(broadcast_state(&app, state.inner(), runtime.inner()))
+}
+
+/// Make a saved deck the active deck and rebuild coaching around it.
+#[command]
+pub fn activate_deck(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    runtime: State<'_, RuntimeHandles>,
+    id: String,
+) -> Result<StateUpdatePayload, String> {
+    state.inner().activate_deck(&id)?;
+    Ok(broadcast_state(&app, state.inner(), runtime.inner()))
+}
+
+/// Delete a saved deck from the collection.
+#[command]
+pub fn delete_deck(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    runtime: State<'_, RuntimeHandles>,
+    id: String,
+) -> Result<StateUpdatePayload, String> {
+    state.inner().delete_deck(&id)?;
+    Ok(broadcast_state(&app, state.inner(), runtime.inner()))
+}
+
+/// Rename a saved deck, keeping its id stable.
+#[command]
+pub fn rename_deck(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    runtime: State<'_, RuntimeHandles>,
+    id: String,
+    name: String,
+) -> Result<StateUpdatePayload, String> {
+    state.inner().rename_deck(&id, &name)?;
+    Ok(broadcast_state(&app, state.inner(), runtime.inner()))
 }
 
 #[command]
