@@ -28,7 +28,12 @@ pub struct SavedDeck {
 pub struct DeckCollection {
     pub version: u32,
     pub decks: Vec<SavedDeck>,
+    /// The list attached to your side, or `None` to read it from play.
     pub active_id: Option<String>,
+    /// The list attached to the opponent's side, or `None` to read it from
+    /// play. Defaulted so collections written before this existed still load.
+    #[serde(default)]
+    pub opponent_id: Option<String>,
 }
 
 impl Default for DeckCollection {
@@ -37,6 +42,24 @@ impl Default for DeckCollection {
             version: COLLECTION_VERSION,
             decks: Vec::new(),
             active_id: None,
+            opponent_id: None,
+        }
+    }
+}
+
+/// Which side of the board a saved list is attached to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Side {
+    You,
+    Opponent,
+}
+
+impl Side {
+    pub fn other(self) -> Self {
+        match self {
+            Self::You => Self::Opponent,
+            Self::Opponent => Self::You,
         }
     }
 }
@@ -93,6 +116,62 @@ impl DeckCollection {
         }
         self.active_id = Some(id.to_string());
         true
+    }
+
+    fn assignment(&self, side: Side) -> &Option<String> {
+        match side {
+            Side::You => &self.active_id,
+            Side::Opponent => &self.opponent_id,
+        }
+    }
+
+    fn assignment_mut(&mut self, side: Side) -> &mut Option<String> {
+        match side {
+            Side::You => &mut self.active_id,
+            Side::Opponent => &mut self.opponent_id,
+        }
+    }
+
+    /// The list attached to `side`, or `None` when that side reads from play.
+    pub fn attached(&self, side: Side) -> Option<&SavedDeck> {
+        self.assignment(side).as_ref().and_then(|id| self.get(id))
+    }
+
+    /// Attach a saved list to `side`, or pass `None` to read from play instead.
+    ///
+    /// Returns false only when `id` names a deck that does not exist, so a
+    /// stale id from the UI cannot silently detach the side.
+    pub fn attach(&mut self, side: Side, id: Option<&str>) -> bool {
+        match id {
+            Some(id) => {
+                if self.get(id).is_none() {
+                    return false;
+                }
+                *self.assignment_mut(side) = Some(id.to_string());
+            }
+            None => *self.assignment_mut(side) = None,
+        }
+        true
+    }
+
+    /// The list to presume for `side` given the leader on the table.
+    ///
+    /// This is what lets a side be read from play: recognise the leader and the
+    /// list saved for it comes back. Two rules keep it from inventing decks.
+    /// Several lists on one leader means declining, since choosing between them
+    /// would put cards in front of the coach that nobody is playing. And a list
+    /// attached to the other side is skipped, because sharing a leader in a
+    /// mirror match is no reason to hand your own fifty cards to the opponent.
+    pub fn presumed_for(&self, side: Side, leader_id: &str) -> Option<&SavedDeck> {
+        if leader_id.is_empty() {
+            return None;
+        }
+        let taken = self.assignment(side.other()).as_deref();
+        let mut matches = self.decks.iter().filter(|deck| {
+            deck.leader_id.as_deref() == Some(leader_id) && Some(deck.id.as_str()) != taken
+        });
+        let first = matches.next()?;
+        matches.next().is_none().then_some(first)
     }
 
     /// Insert a deck, or replace the contents of an existing one.
@@ -172,6 +251,11 @@ impl DeckCollection {
         if self.active_id.as_deref() == Some(id) {
             self.active_id = self.decks.first().map(|d| d.id.clone());
         }
+        // The opponent falls back to being read from play rather than to some
+        // arbitrary other list, which would be a claim about their deck.
+        if self.opponent_id.as_deref() == Some(id) {
+            self.opponent_id = None;
+        }
         true
     }
 
@@ -216,6 +300,11 @@ impl DeckCollection {
         if let Some(active) = self.active_id.clone() {
             if !self.decks.iter().any(|d| d.id == active) {
                 self.active_id = self.decks.first().map(|d| d.id.clone());
+            }
+        }
+        if let Some(opponent) = self.opponent_id.clone() {
+            if !self.decks.iter().any(|d| d.id == opponent) {
+                self.opponent_id = None;
             }
         }
     }
@@ -274,6 +363,143 @@ mod tests {
             .expect("upsert should succeed")
     }
 
+    fn add_with_leader(collection: &mut DeckCollection, name: &str, leader: &str) -> String {
+        collection
+            .upsert(None, name, "4x ST01-002", Some(leader.to_string()), 50, NOW)
+            .expect("upsert should succeed")
+    }
+
+    #[test]
+    fn both_sides_read_from_play_until_a_list_is_attached() {
+        let mut collection = DeckCollection::default();
+        add(&mut collection, "Red Luffy Aggro", "4x ST01-002");
+
+        assert!(
+            collection.attached(Side::Opponent).is_none(),
+            "the opponent is never assumed to be playing a list you saved"
+        );
+    }
+
+    #[test]
+    fn a_list_attaches_to_the_opponent_without_touching_your_side() {
+        let mut collection = DeckCollection::default();
+        let yours = add(&mut collection, "Red Luffy Aggro", "4x ST01-002");
+        let theirs = add(&mut collection, "Blue Doflamingo", "4x OP01-060");
+        collection.attach(Side::You, Some(&yours));
+
+        assert!(collection.attach(Side::Opponent, Some(&theirs)));
+        assert_eq!(
+            collection.attached(Side::You).map(|d| d.id.as_str()),
+            Some(yours.as_str())
+        );
+        assert_eq!(
+            collection.attached(Side::Opponent).map(|d| d.id.as_str()),
+            Some(theirs.as_str())
+        );
+    }
+
+    #[test]
+    fn detaching_a_side_returns_it_to_being_read_from_play() {
+        let mut collection = DeckCollection::default();
+        let id = add(&mut collection, "Blue Doflamingo", "4x OP01-060");
+        collection.attach(Side::Opponent, Some(&id));
+
+        assert!(collection.attach(Side::Opponent, None));
+        assert!(collection.attached(Side::Opponent).is_none());
+    }
+
+    #[test]
+    fn attaching_an_unknown_list_is_refused_rather_than_detaching() {
+        let mut collection = DeckCollection::default();
+        let id = add(&mut collection, "Blue Doflamingo", "4x OP01-060");
+        collection.attach(Side::Opponent, Some(&id));
+
+        assert!(!collection.attach(Side::Opponent, Some("no-such-deck")));
+        assert_eq!(
+            collection.attached(Side::Opponent).map(|d| d.id.as_str()),
+            Some(id.as_str()),
+            "a stale id must not quietly clear the side"
+        );
+    }
+
+    #[test]
+    fn a_leader_seen_across_the_table_finds_the_list_you_saved_for_it() {
+        let mut collection = DeckCollection::default();
+        let id = add_with_leader(&mut collection, "Blue Doflamingo", "OP01-060");
+        collection.attach(Side::You, None);
+
+        assert_eq!(
+            collection
+                .presumed_for(Side::Opponent, "OP01-060")
+                .map(|d| d.id.as_str()),
+            Some(id.as_str())
+        );
+    }
+
+    #[test]
+    fn a_leader_with_two_saved_lists_is_left_unresolved() {
+        let mut collection = DeckCollection::default();
+        add_with_leader(&mut collection, "Doflamingo Control", "OP01-060");
+        add_with_leader(&mut collection, "Doflamingo Ramp", "OP01-060");
+        collection.attach(Side::You, None);
+
+        assert!(
+            collection
+                .presumed_for(Side::Opponent, "OP01-060")
+                .is_none(),
+            "picking between two lists would invent cards the opponent may not hold"
+        );
+    }
+
+    #[test]
+    fn an_unseen_leader_matches_nothing() {
+        let mut collection = DeckCollection::default();
+        add_with_leader(&mut collection, "Blue Doflamingo", "OP01-060");
+
+        assert!(collection
+            .presumed_for(Side::Opponent, "ST01-001")
+            .is_none());
+        assert!(
+            collection.presumed_for(Side::Opponent, "").is_none(),
+            "an unread leader must not match the first saved list"
+        );
+    }
+
+    #[test]
+    fn a_mirror_match_does_not_hand_the_opponent_your_own_list() {
+        let mut collection = DeckCollection::default();
+        let yours = add_with_leader(&mut collection, "My Doflamingo", "OP01-060");
+        collection.attach(Side::You, Some(&yours));
+
+        assert!(
+            collection
+                .presumed_for(Side::Opponent, "OP01-060")
+                .is_none(),
+            "sharing a leader is not evidence they are on your list"
+        );
+        assert_eq!(
+            collection
+                .presumed_for(Side::You, "OP01-060")
+                .map(|d| d.id.as_str()),
+            Some(yours.as_str()),
+            "your own side should still recognise it"
+        );
+    }
+
+    #[test]
+    fn deleting_the_opponents_list_returns_them_to_being_read_from_play() {
+        let mut collection = DeckCollection::default();
+        add(&mut collection, "Red Luffy Aggro", "4x ST01-002");
+        let theirs = add(&mut collection, "Blue Doflamingo", "4x OP01-060");
+        collection.attach(Side::Opponent, Some(&theirs));
+
+        assert!(collection.remove(&theirs));
+        assert!(
+            collection.opponent_id.is_none(),
+            "the opponent must not inherit some other saved list"
+        );
+    }
+
     #[test]
     fn upsert_creates_slug_id_and_activates() {
         let mut collection = DeckCollection::default();
@@ -282,7 +508,10 @@ mod tests {
         assert_eq!(id, "red-luffy-aggro");
         assert_eq!(collection.decks.len(), 1);
         assert_eq!(collection.active_id.as_deref(), Some("red-luffy-aggro"));
-        assert_eq!(collection.active().map(|d| d.name.as_str()), Some("Red Luffy Aggro"));
+        assert_eq!(
+            collection.active().map(|d| d.name.as_str()),
+            Some("Red Luffy Aggro")
+        );
     }
 
     #[test]
@@ -290,7 +519,14 @@ mod tests {
         let mut collection = DeckCollection::default();
         add(&mut collection, "Red Luffy", "4x ST01-002");
         let id = collection
-            .upsert(None, "red luffy", "4x ST01-003", Some("ST01-001".into()), 51, LATER)
+            .upsert(
+                None,
+                "red luffy",
+                "4x ST01-003",
+                Some("ST01-001".into()),
+                51,
+                LATER,
+            )
             .unwrap();
 
         assert_eq!(collection.decks.len(), 1, "same name must not duplicate");
@@ -321,7 +557,9 @@ mod tests {
         add(&mut collection, "Deck B", "b");
         assert_eq!(collection.decks[0].id, "deck-b");
 
-        collection.upsert(Some(&first), "Deck A", "a2", None, 50, LATER).unwrap();
+        collection
+            .upsert(Some(&first), "Deck A", "a2", None, 50, LATER)
+            .unwrap();
         assert_eq!(collection.decks[0].id, "deck-a");
     }
 
@@ -353,8 +591,14 @@ mod tests {
         assert_eq!(collection.active_id.as_deref(), Some("deck-a"));
 
         assert!(collection.remove("deck-a"));
-        assert_eq!(collection.active_id, None, "empty collection has no active deck");
-        assert!(!collection.remove("deck-a"), "second remove reports nothing removed");
+        assert_eq!(
+            collection.active_id, None,
+            "empty collection has no active deck"
+        );
+        assert!(
+            !collection.remove("deck-a"),
+            "second remove reports nothing removed"
+        );
     }
 
     #[test]
@@ -374,7 +618,11 @@ mod tests {
         assert!(collection.rename(&a, "deck b").is_err());
         collection.rename(&a, "Deck C").unwrap();
         assert_eq!(collection.get(&a).unwrap().name, "Deck C");
-        assert_eq!(collection.get(&a).unwrap().id, a, "rename keeps the id stable");
+        assert_eq!(
+            collection.get(&a).unwrap().id,
+            a,
+            "rename keeps the id stable"
+        );
     }
 
     #[test]
@@ -383,7 +631,9 @@ mod tests {
         for i in 0..MAX_DECKS {
             add(&mut collection, &format!("Deck {i}"), "raw");
         }
-        let err = collection.upsert(None, "One too many", "raw", None, 50, NOW).unwrap_err();
+        let err = collection
+            .upsert(None, "One too many", "raw", None, 50, NOW)
+            .unwrap_err();
         assert!(err.contains("full"), "unexpected error: {err}");
         assert_eq!(collection.decks.len(), MAX_DECKS);
     }
@@ -442,7 +692,11 @@ mod tests {
 
         let loaded = DeckCollection::load(&path);
         assert_eq!(loaded.decks.len(), 1, "duplicate id dropped");
-        assert_eq!(loaded.active_id.as_deref(), Some("a"), "dangling active repaired");
+        assert_eq!(
+            loaded.active_id.as_deref(),
+            Some("a"),
+            "dangling active repaired"
+        );
 
         std::fs::remove_dir_all(&dir).ok();
     }

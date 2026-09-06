@@ -4,7 +4,9 @@ use crate::dto::{
 };
 use crate::runtime::{build_observation_status, RuntimeHandles};
 use crate::state::AppState;
-use optcg_rules::{CombatAnalysis, LegalAction, MctsResult, ScoredAction, StrategyRecommendation};
+use optcg_rules::{
+    CombatAnalysis, LegalAction, MctsResult, ScoredAction, Side, StrategyRecommendation,
+};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::{command, AppHandle, Emitter, Manager, State, WebviewWindow};
@@ -139,10 +141,38 @@ pub fn get_deck_collection(state: State<'_, AppState>) -> crate::dto::DeckCollec
     state.inner().deck_collection_dto()
 }
 
-/// Save a deck list under a name and make it active.
+/// Which side a deck command applies to, defaulting to your own.
+fn parse_side(side: Option<&str>) -> Result<Side, String> {
+    match side {
+        None | Some("you") => Ok(Side::You),
+        Some("opponent") => Ok(Side::Opponent),
+        Some(other) => Err(format!("Unknown side '{other}'")),
+    }
+}
+
+/// Choose where one side's deck list comes from.
+///
+/// Pass a saved deck's `deck_id` to attach that list to the side, or leave it
+/// out to read the side from play instead, which is how both sides start.
+#[command]
+pub fn set_deck_source(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    runtime: State<'_, RuntimeHandles>,
+    side: Option<String>,
+    deck_id: Option<String>,
+) -> Result<StateUpdatePayload, String> {
+    let side = parse_side(side.as_deref())?;
+    state.inner().set_deck_source(side, deck_id.as_deref())?;
+    Ok(broadcast_state(&app, state.inner(), runtime.inner()))
+}
+
+/// Save a deck list under a name and attach it to a side.
 ///
 /// Pass `id` to overwrite a specific saved deck; otherwise the deck is matched
-/// by name so re-saving the same deck updates it in place.
+/// by name so re-saving the same deck updates it in place. `side` defaults to
+/// your own; pass `opponent` to record the list across the table without
+/// changing what you are playing.
 #[command]
 pub fn save_deck(
     app: AppHandle,
@@ -151,10 +181,12 @@ pub fn save_deck(
     raw: String,
     name: Option<String>,
     id: Option<String>,
+    side: Option<String>,
 ) -> Result<StateUpdatePayload, String> {
+    let side = parse_side(side.as_deref())?;
     state
         .inner()
-        .save_deck(id.as_deref(), name.as_deref(), &raw)?;
+        .save_deck(side, id.as_deref(), name.as_deref(), &raw)?;
     Ok(broadcast_state(&app, state.inner(), runtime.inner()))
 }
 

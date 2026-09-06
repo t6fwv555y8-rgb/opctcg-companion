@@ -71,13 +71,23 @@ export interface PlayerStateDto {
   known_cards?: string[];
 }
 
+/// Where a side's deck list came from.
+///
+/// `observed` is the leader and revealed cards only, `presumed` is a saved list
+/// matched to the leader on the table, and `attached` is a list the user
+/// supplied for that side.
+export type DeckOrigin = "observed" | "presumed" | "attached";
+
+export type Side = "you" | "opponent";
+
 export interface DeckInfoDto {
   name: string;
   leader_id: string;
   leader_name: string;
   leader_color: string;
   known_cards: KnownCardDto[];
-  from_paste?: boolean;
+  origin: DeckOrigin;
+  deck_id?: string | null;
   list_entries?: DeckListEntryDto[];
   list_total_cards?: number;
   list_warnings?: string[];
@@ -119,6 +129,7 @@ export interface SavedDeckDto {
 export interface DeckCollectionDto {
   decks: SavedDeckDto[];
   active_id: string | null;
+  opponent_id?: string | null;
   max_decks: number;
 }
 
@@ -284,7 +295,9 @@ export interface CompanionBridge {
     raw: string;
     name?: string;
     id?: string;
+    side?: Side;
   }) => Promise<void>;
+  setDeckSource: (side: Side, deckId: string | null) => Promise<void>;
   activateDeck: (id: string) => Promise<void>;
   deleteDeck: (id: string) => Promise<void>;
   renameDeck: (id: string, name: string) => Promise<void>;

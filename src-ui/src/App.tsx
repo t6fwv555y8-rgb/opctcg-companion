@@ -73,6 +73,7 @@ export default function App() {
                 collection={bridge.snapshot?.deck_collection ?? null}
                 applying={bridge.refreshingStrategy}
                 onSaveDeck={bridge.saveDeck}
+                onSetDeckSource={bridge.setDeckSource}
                 onActivateDeck={bridge.activateDeck}
                 onDeleteDeck={bridge.deleteDeck}
                 onRenameDeck={bridge.renameDeck}

@@ -1,11 +1,16 @@
 import { useEffect, useState } from "react";
-import type { DeckCollectionDto, SavedDeckDto } from "../types/game";
+import type { DeckCollectionDto, SavedDeckDto, Side } from "../types/game";
 
 interface Props {
   collection: DeckCollectionDto | null;
   warnings?: string[];
   busy?: boolean;
-  onSave: (args: { raw: string; name?: string; id?: string }) => void | Promise<void>;
+  onSave: (args: {
+    raw: string;
+    name?: string;
+    id?: string;
+    side?: Side;
+  }) => void | Promise<void>;
   onActivate: (id: string) => void | Promise<void>;
   onDelete: (id: string) => void | Promise<void>;
   onRename: (id: string, name: string) => void | Promise<void>;
@@ -201,6 +206,10 @@ export function DeckCollectionPanel({
   const [draft, setDraft] = useState("");
   const [draftName, setDraftName] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
+  /// Which side the list being written is for. Saving the opponent's list is
+  /// the point of keeping their decks around, and it must not change what you
+  /// are playing.
+  const [target, setTarget] = useState<Side>("you");
 
   // Drop the editor target once that deck is gone from the collection.
   useEffect(() => {
@@ -253,15 +262,22 @@ export function DeckCollectionPanel({
       raw,
       name: name || undefined,
       id: mode === "update" ? editingId ?? undefined : undefined,
+      side: target,
     });
     if (mode === "new") resetEditor();
+  };
+
+  const saveLabel = () => {
+    if (busy) return "Saving…";
+    if (editingDeck) return nameChanged ? "Update & rename" : "Update deck";
+    return target === "opponent" ? "Save as theirs" : "Save & use";
   };
 
   return (
     <div className="space-y-2 border-t border-slate-700/50 pt-2">
       <div className="flex items-center justify-between gap-2">
         <div className="text-[9px] uppercase tracking-wide text-slate-500">
-          My decks {decks.length > 0 && `(${decks.length}${maxDecks ? `/${maxDecks}` : ""})`}
+          Saved decks {decks.length > 0 && `(${decks.length}${maxDecks ? `/${maxDecks}` : ""})`}
         </div>
         {onClearActive && collection?.active_id && (
           <button
@@ -293,7 +309,8 @@ export function DeckCollectionPanel({
         </ul>
       ) : (
         <p className="text-[10px] text-slate-500">
-          No saved decks yet. Paste a list below to build your collection.
+          No saved decks yet. Paste your list below, or an opponent's, and each
+          leader you record gets recognised the next time you face it.
         </p>
       )}
 
@@ -344,6 +361,36 @@ export function DeckCollectionPanel({
           </p>
         )}
 
+        <div className="flex items-center gap-1">
+          <span className="text-[9px] uppercase tracking-wide text-slate-500">
+            This list is
+          </span>
+          {(
+            [
+              ["you", "mine"],
+              ["opponent", "theirs"],
+            ] as const
+          ).map(([value, text]) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setTarget(value)}
+              className={`rounded border px-1.5 py-0.5 text-[9px] ${
+                target === value
+                  ? "border-hud-accent/50 bg-hud-accent/10 text-hud-accent"
+                  : "border-slate-700/60 text-slate-400 hover:bg-slate-800/60"
+              }`}
+              title={
+                value === "you"
+                  ? "Save to your side and play it"
+                  : "Record the opponent's list without changing your own deck"
+              }
+            >
+              {text}
+            </button>
+          ))}
+        </div>
+
         <div className="flex flex-wrap gap-1">
           <button
             type="button"
@@ -352,17 +399,13 @@ export function DeckCollectionPanel({
             className="rounded border border-hud-accent/40 bg-hud-accent/10 px-2 py-0.5 text-[10px] font-semibold text-hud-accent hover:bg-hud-accent/20 disabled:opacity-50"
             title={
               editingDeck
-                ? "Overwrite this saved deck and use it"
-                : "Save to your collection and use it"
+                ? "Overwrite this saved deck"
+                : target === "opponent"
+                  ? "Save this list and attach it to the opponent"
+                  : "Save to your collection and use it"
             }
           >
-            {busy
-              ? "Saving…"
-              : editingDeck
-                ? nameChanged
-                  ? "Update & rename"
-                  : "Update deck"
-                : "Save & use"}
+            {saveLabel()}
           </button>
           {editingDeck && (
             <button
