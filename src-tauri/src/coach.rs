@@ -566,11 +566,12 @@ pub fn poll_auto_trigger(app: &AppHandle) {
         return;
     };
 
-    let (position, at_decision_point, game_id) = {
+    let (position, at_decision_point, urgent, game_id) = {
         let game_state = state.game_state.read();
         (
             optcg_coach::fingerprint(&game_state),
             optcg_coach::is_decision_point(&game_state),
+            optcg_coach::is_urgent_decision(&game_state),
             game_state.game_id,
         )
     };
@@ -587,7 +588,7 @@ pub fn poll_auto_trigger(app: &AppHandle) {
     let decision = coach
         .auto
         .lock()
-        .observe(&position, at_decision_point, Instant::now());
+        .observe_at(&position, at_decision_point, urgent, Instant::now());
     if decision != AutoDecision::Fire {
         return;
     }

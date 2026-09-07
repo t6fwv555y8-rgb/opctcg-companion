@@ -1,7 +1,7 @@
-// OPTCG Companion page reader 0.3.0
+// OPTCG Companion page reader 0.3.1
 // Reads the OneSimulator board and hands it to background.js.
 
-const VERSION = "0.3.0";
+const VERSION = "0.3.1";
 const CARD_ID = /\b((?:OP|ST|EB|PRB|DP)\d{2}-\d{3}[A-Z]?|P-\d{3}[A-Z]?)\b/i;
 const CARD_SRC =
   /(?:\/cards\/(?:full|thumbnail)\/|\/card(?:s|[-_]?images)?\/)([^/.?#]+)\.(?:webp|png|jpe?g)/i;
@@ -542,17 +542,45 @@ function extensionGone(err) {
   return /invalidated|extension context/i.test(msg);
 }
 
+const FALLBACK_MS = 800;
+const HEARTBEAT_MS = 5000;
+const HOT_MS = 2000;
+const DEBOUNCE_MS = 80;
+const SETTLE_MS = 120;
+
 let tick = null;
+let observer = null;
+let debounceTimer = null;
+let settleTimer = null;
+let lastSendAt = 0;
+let lastMutationAt = 0;
+
+function observerHot() {
+  return lastMutationAt > 0 && Date.now() - lastMutationAt < HOT_MS;
+}
 
 function stop(reason) {
   if (tick !== null) {
     clearInterval(tick);
     tick = null;
   }
+  if (debounceTimer !== null) {
+    clearTimeout(debounceTimer);
+    debounceTimer = null;
+  }
+  if (settleTimer !== null) {
+    clearTimeout(settleTimer);
+    settleTimer = null;
+  }
+  if (observer) {
+    observer.disconnect();
+    observer = null;
+  }
   paintStatus(reason, false);
 }
 
 function send() {
+  lastSendAt = Date.now();
   try {
     if (typeof chrome === "undefined" || !chrome.runtime?.id) {
       stop("Companion extension was reloaded — refresh this tab");
@@ -599,10 +627,60 @@ function send() {
   }
 }
 
+function scheduleSend() {
+  lastMutationAt = Date.now();
+  if (debounceTimer !== null) clearTimeout(debounceTimer);
+  if (settleTimer !== null) clearTimeout(settleTimer);
+  debounceTimer = setTimeout(() => {
+    debounceTimer = null;
+    settleTimer = setTimeout(() => {
+      settleTimer = null;
+      send();
+    }, SETTLE_MS);
+  }, DEBOUNCE_MS);
+}
+
+function startWatching() {
+  const root = document.querySelector(".game-board-shell") || document.body;
+  if (!root || typeof MutationObserver !== "function") return false;
+  observer = new MutationObserver((mutations) => {
+    const relevant = mutations.some(
+      (m) =>
+        m.type === "childList" ||
+        (m.type === "attributes" &&
+          (String(m.attributeName || "").startsWith("data-card") ||
+            m.attributeName === "data-zone-anchor" ||
+            m.attributeName === "class")),
+    );
+    if (relevant) scheduleSend();
+  });
+  observer.observe(root, {
+    subtree: true,
+    childList: true,
+    attributes: true,
+    attributeFilter: [
+      "data-card-zone",
+      "data-card-player-id",
+      "data-card-slot",
+      "data-card-iid",
+      "data-zone-anchor",
+      "class",
+    ],
+  });
+  return true;
+}
+
 try {
   paintStatus(`Companion ${VERSION} starting…`, false);
   send();
-  tick = setInterval(send, 800);
+  const watching = startWatching();
+  tick = setInterval(() => {
+    if (watching && observerHot()) {
+      if (Date.now() - lastSendAt >= HEARTBEAT_MS) send();
+      return;
+    }
+    send();
+  }, watching ? HEARTBEAT_MS : FALLBACK_MS);
 } catch (err) {
   paintStatus(`Companion ${VERSION} failed to start: ${String(err?.message || err).slice(0, 60)}`, false);
 }

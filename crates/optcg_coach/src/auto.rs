@@ -20,12 +20,21 @@ pub const DEFAULT_SETTLE_MS: u64 = 1_500;
 /// case where changes keep arriving exactly as each settle window closes.
 pub const DEFAULT_MIN_INTERVAL_MS: u64 = 3_500;
 
+/// Settle window at DON, an open attack, or a blocker window.
+pub const URGENT_SETTLE_MS: u64 = 400;
+
+/// Floor between urgent reads. Tight enough to land on the swing, loose
+/// enough that a DON attach plus a swing is still one read.
+pub const URGENT_MIN_INTERVAL_MS: u64 = 1_200;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AutoTriggerConfig {
     /// On by default so the HUD keeps advising as the match moves.
     pub enabled: bool,
     pub settle: Duration,
     pub min_interval: Duration,
+    pub urgent_settle: Duration,
+    pub urgent_min_interval: Duration,
 }
 
 impl Default for AutoTriggerConfig {
@@ -34,6 +43,8 @@ impl Default for AutoTriggerConfig {
             enabled: true,
             settle: Duration::from_millis(DEFAULT_SETTLE_MS),
             min_interval: Duration::from_millis(DEFAULT_MIN_INTERVAL_MS),
+            urgent_settle: Duration::from_millis(URGENT_SETTLE_MS),
+            urgent_min_interval: Duration::from_millis(URGENT_MIN_INTERVAL_MS),
         }
     }
 }
@@ -104,6 +115,18 @@ impl AutoTrigger {
         at_decision_point: bool,
         now: Instant,
     ) -> AutoDecision {
+        self.observe_at(fingerprint, at_decision_point, false, now)
+    }
+
+    /// Same as [`observe`], with a shorter window when the player is at DON,
+    /// an open attack, or a blocker choice.
+    pub fn observe_at(
+        &mut self,
+        fingerprint: &StateFingerprint,
+        at_decision_point: bool,
+        urgent: bool,
+        now: Instant,
+    ) -> AutoDecision {
         if !self.config.enabled || !at_decision_point {
             self.settling = None;
             return AutoDecision::Idle;
@@ -113,6 +136,17 @@ impl AutoTrigger {
             self.settling = None;
             return AutoDecision::Idle;
         }
+
+        let settle = if urgent {
+            self.config.urgent_settle
+        } else {
+            self.config.settle
+        };
+        let min_interval = if urgent {
+            self.config.urgent_min_interval
+        } else {
+            self.config.min_interval
+        };
 
         // Restart the settle window whenever the position differs from the one
         // being waited on.
@@ -124,11 +158,11 @@ impl AutoTrigger {
             }
         };
 
-        if now.duration_since(first_seen) < self.config.settle {
+        if now.duration_since(first_seen) < settle {
             return AutoDecision::Settling;
         }
         if let Some(last) = self.last_fired {
-            if now.duration_since(last) < self.config.min_interval {
+            if now.duration_since(last) < min_interval {
                 return AutoDecision::Settling;
             }
         }
@@ -149,6 +183,8 @@ mod tests {
             enabled: true,
             settle: Duration::from_millis(1_000),
             min_interval: Duration::from_millis(5_000),
+            urgent_settle: Duration::from_millis(400),
+            urgent_min_interval: Duration::from_millis(1_200),
         }
     }
 
@@ -334,6 +370,27 @@ mod tests {
             trigger.observe(&position("a"), true, after + Duration::from_secs(1)),
             AutoDecision::Fire,
             "a new match should read the board again"
+        );
+    }
+
+    #[test]
+    fn an_urgent_decision_fires_on_the_short_window() {
+        let mut trigger = AutoTrigger::new(config());
+        let start = Instant::now();
+
+        assert_eq!(
+            trigger.observe_at(&position("swing"), true, true, start),
+            AutoDecision::Settling
+        );
+        assert_eq!(
+            trigger.observe_at(
+                &position("swing"),
+                true,
+                true,
+                start + Duration::from_millis(400)
+            ),
+            AutoDecision::Fire,
+            "DON / attack / blocker should not wait the main-phase settle"
         );
     }
 }

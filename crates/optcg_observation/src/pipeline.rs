@@ -223,15 +223,12 @@ impl ObservationPipeline {
             let outcome = {
                 let mut session_guard = session.lock();
                 if session_guard.source != envelope.source {
+                    let carry = session_guard.carry_match();
                     session_guard.reset_for_source(envelope.source);
+                    session_guard.restore_match(&carry);
                 }
-                if matches!(
-                    envelope.event,
-                    crate::types::ObservationEvent::GameDetected { .. }
-                ) {
-                    session_guard.reset_for_source(envelope.source);
-                    session_guard.state.combat.reset();
-                }
+                // A tab refresh re-emits GameDetected. Wiping the session here
+                // used to drop observed leaders and the swing count.
                 reconciler
                     .lock()
                     .reconcile(&mut session_guard, &envelope.event)
