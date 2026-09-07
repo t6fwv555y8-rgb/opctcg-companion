@@ -18,6 +18,22 @@ impl SnapshotDiffer {
         let mut events = Vec::new();
         let prev = self.last.as_ref();
 
+        if let Some(page_state) = snapshot
+            .page_state
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            let changed = prev.and_then(|p| p.page_state.as_deref()) != Some(page_state);
+            if changed || prev.is_none() {
+                events.push(ObservationEvent::StructuredRaw {
+                    raw: format!("PAGE_STATE|{page_state}"),
+                    source: ObservationSource::BrowserSimulator,
+                    confidence,
+                });
+            }
+        }
+
         if let Some(phase) = &snapshot.phase {
             let changed = prev.and_then(|p| p.phase.as_ref()) != Some(phase);
             if changed || prev.is_none() {
@@ -114,6 +130,21 @@ fn diff_player(
             events.push(ObservationEvent::LifeObserved {
                 player,
                 count: life,
+                confidence,
+            });
+        }
+    }
+
+    if let Some(player_name) = &side.player_name {
+        let prev_name = prev.and_then(|p| p.player_name.as_ref());
+        if prev_name != Some(player_name) && !player_name.trim().is_empty() {
+            let label = match player {
+                PlayerId::Player1 => "PLAYER_1",
+                PlayerId::Player2 => "PLAYER_2",
+            };
+            events.push(ObservationEvent::StructuredRaw {
+                raw: format!("PLAYER_NAME|{label}|{player_name}"),
+                source: ObservationSource::BrowserSimulator,
                 confidence,
             });
         }
@@ -366,5 +397,33 @@ mod tests {
                 .count(),
             2
         );
+    }
+
+    #[test]
+    fn queue_snapshot_emits_page_state_and_player_name() {
+        let mut differ = SnapshotDiffer::new(ConfidenceConfig::default());
+        let snap = BrowserGameSnapshot {
+            timestamp: 1,
+            page_state: Some("queue".into()),
+            self_player: Some(BrowserPlayerSnapshot {
+                player_name: Some("Jesus".into()),
+                leader_id: Some("OP01-001".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let events = differ.diff(&snap);
+        assert!(events.iter().any(|e| matches!(
+            e,
+            ObservationEvent::StructuredRaw { raw, .. } if raw == "PAGE_STATE|queue"
+        )));
+        assert!(events.iter().any(|e| matches!(
+            e,
+            ObservationEvent::StructuredRaw { raw, .. } if raw == "PLAYER_NAME|PLAYER_1|Jesus"
+        )));
+        assert!(events.iter().any(|e| matches!(
+            e,
+            ObservationEvent::CardObserved { card_id: Some(id), .. } if id == "OP01-001"
+        )));
     }
 }

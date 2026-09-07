@@ -19,6 +19,7 @@ interface Props {
   coachLine: string | null;
   coachBusy: boolean;
   coachError?: string | null;
+  pageState?: string;
 }
 
 /// What to do this second. Updates as the board does.
@@ -33,11 +34,18 @@ export function NowPanel({
   coachLine,
   coachBusy,
   coachError,
+  pageState,
 }: Props) {
+  const waiting =
+    pageState === "queue"
+      ? "In queue — the next line lands when the match starts."
+      : pageState === "lobby"
+        ? "In lobby — queue a match and this panel will follow."
+        : "Waiting for a readable position.";
   const line =
     strategy?.action.description?.trim() ||
     phaseCoach?.trim() ||
-    "Waiting for a readable position.";
+    waiting;
   const steps = deckStrategy?.this_turn.slice(0, 3) ?? [];
   const alts = options
     .filter((opt) => opt.action.description?.trim() !== line)

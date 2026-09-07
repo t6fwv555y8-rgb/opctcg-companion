@@ -105,19 +105,110 @@ function known(playerId, isSelf) {
   return [...ids];
 }
 
+function cleanName(raw) {
+  const n = String(raw || "").replace(/\s+/g, " ").trim();
+  if (n.length < 2 || n.length > 32) return null;
+  if (
+    /^(you|me|opponent|player\s*[12]?|life|hand|deck|don|phase|turn|vs|queue)$/i.test(
+      n,
+    )
+  ) {
+    return null;
+  }
+  if (CARD_ID.test(n)) return null;
+  return n;
+}
+
+function pageState() {
+  const inMatch = Boolean(
+    document.querySelector(".game-board-shell") &&
+      document.querySelector("[data-zone-anchor]"),
+  );
+  if (inMatch) return "match";
+
+  const href = String(location.href || "").toLowerCase();
+  const text = String(document.body?.innerText || "").slice(0, 12000);
+  const queued =
+    /queue|matchmaking/.test(href) ||
+    /\b(in queue|queued)\b/i.test(text) ||
+    /searching for (an? )?(opponent|match|player)/i.test(text) ||
+    /finding (an? )?(opponent|match|player)/i.test(text) ||
+    /looking for (an? )?(opponent|match)/i.test(text) ||
+    /waiting for (an? )?opponent/i.test(text) ||
+    /matchmaking/i.test(text);
+  return queued ? "queue" : "lobby";
+}
+
+function playerName(playerId, isSelf) {
+  const scoped = [
+    `[data-player-name][data-card-player-id="${playerId}"]`,
+    `[data-player-id="${playerId}"][data-player-name]`,
+    `[data-username][data-card-player-id="${playerId}"]`,
+    `[data-player-id="${playerId}"][data-username]`,
+    `[data-zone-anchor^="${playerId}:"] [data-player-name]`,
+    `[data-zone-anchor^="${playerId}:"] [data-username]`,
+  ];
+  for (const sel of scoped) {
+    const el = document.querySelector(sel);
+    const n = cleanName(
+      el?.getAttribute("data-player-name") ||
+        el?.getAttribute("data-username") ||
+        el?.textContent,
+    );
+    if (n) return n;
+  }
+
+  const zone = document.querySelector(`[data-zone-anchor^="${playerId}:"]`);
+  const cluster =
+    zone?.closest("section, article, [class*='player']") || zone?.parentElement;
+  const labeled = cluster?.querySelector(
+    "[data-player-name], [data-username], [class*='username'], [class*='player-name']",
+  );
+  const near = cleanName(
+    labeled?.getAttribute("data-player-name") ||
+      labeled?.getAttribute("data-username") ||
+      labeled?.textContent,
+  );
+  if (near) return near;
+
+  if (isSelf) {
+    const me = document.querySelector(
+      "[data-self-name], [data-own-name], header [data-username], nav [data-username]",
+    );
+    const n = cleanName(
+      me?.getAttribute("data-self-name") ||
+        me?.getAttribute("data-username") ||
+        me?.textContent,
+    );
+    if (n) return n;
+  }
+  return null;
+}
+
+function selectedLeaderId() {
+  return (
+    cardId(document.querySelector("[data-selected-leader]")) ||
+    cardId(
+      document.querySelector(
+        '[aria-pressed="true"] img[src*="/cards/"], [data-selected="true"] img[src*="/cards/"]',
+      )?.closest("[data-card-zone], div") || document.createElement("div"),
+    )
+  );
+}
+
 function player(playerId, isSelf) {
   const d = don(playerId);
   const cards = board(playerId);
+  const leaderEl = document.querySelector(
+    `[data-card-zone="leader"][data-card-player-id="${playerId}"]`,
+  );
   return {
     life: life(playerId),
     hand_count: handCount(playerId),
     active_don: d.active,
     rested_don: d.rested,
-    leader_id: cardId(
-      document.querySelector(
-        `[data-card-zone="leader"][data-card-player-id="${playerId}"]`,
-      ) || document.createElement("div"),
-    ),
+    leader_id: cardId(leaderEl || document.createElement("div")) || (isSelf ? selectedLeaderId() : null),
+    player_name: playerName(playerId, isSelf),
     known_cards: known(playerId, isSelf),
     board: cards,
   };
@@ -140,25 +231,41 @@ function phaseAndTurn() {
 }
 
 function readBoard() {
-  const shell = document.querySelector(".game-board-shell");
   const ids = playerIds();
   const you = selfId(ids);
   const them = ids.find((id) => id !== you) || (you === "0" ? "1" : "0");
-  const inMatch = Boolean(shell && document.querySelector("[data-zone-anchor]"));
+  const state = pageState();
+  const inMatch = state === "match";
   const { phase, turn } = phaseAndTurn();
+  const self = inMatch
+    ? player(you, true)
+    : {
+        player_name: playerName(you, true),
+        leader_id: selectedLeaderId(),
+        known_cards: [],
+        board: [],
+      };
+  const opponent = inMatch ? player(them, false) : { player_name: playerName(them, false) };
 
   return {
     timestamp: Date.now(),
     source: "onesimulator",
+    page_state: state,
     turn,
     phase,
-    self: inMatch ? player(you, true) : null,
-    opponent: inMatch ? player(them, false) : null,
+    self,
+    opponent: opponent.player_name || inMatch ? opponent : null,
     diagnostics: {
       site_detected: true,
       game_detected: inMatch,
       ui_recognized: inMatch,
-      message: inMatch ? "Game detected" : "Waiting for a match",
+      message:
+        state === "match"
+          ? "Game detected"
+          : state === "queue"
+            ? "In queue"
+            : "In lobby",
+      found: { queue: state === "queue", lobby: state === "lobby", match: inMatch },
     },
   };
 }
@@ -180,7 +287,7 @@ function paintStatus(text, ok) {
 
 function send() {
   const snapshot = readBoard();
-  const inMatch = Boolean(snapshot.diagnostics?.game_detected);
+  const state = snapshot.page_state;
 
   if (!chrome.runtime?.id) {
     paintStatus("Companion extension was reloaded — refresh this tab", false);
@@ -196,10 +303,13 @@ function send() {
       paintStatus("HUD is not open. Run ./start onesimulator", false);
       return;
     }
-    paintStatus(
-      inMatch ? "Companion is reading this match" : "Companion ready — enter a match",
-      true,
-    );
+    const label =
+      state === "match"
+        ? "Companion is reading this match"
+        : state === "queue"
+          ? "In queue — companion is reading"
+          : "Companion ready — in lobby";
+    paintStatus(label, true);
   });
 }
 

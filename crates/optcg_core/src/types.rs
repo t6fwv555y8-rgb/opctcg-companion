@@ -252,6 +252,9 @@ pub struct PlayerState {
     /// Optional deck label from simulator UI (when visible).
     #[serde(default)]
     pub deck_name: String,
+    /// Display name from the simulator, when the page shows one.
+    #[serde(default)]
+    pub player_name: String,
     /// Unique card IDs observed for this player this match (leader/board/self-hand/trash).
     #[serde(default)]
     pub known_cards: Vec<String>,
@@ -285,6 +288,7 @@ impl PlayerState {
             hand: Vec::new(),
             trash: Vec::new(),
             deck_name: String::new(),
+            player_name: String::new(),
             known_cards: Vec::new(),
             leader_id,
             leader_power: 5000,
@@ -416,6 +420,9 @@ pub struct GameState {
     pub event_log: Vec<String>,
     pub timestamp: DateTime<Utc>,
     pub last_processed_fingerprint: Option<String>,
+    /// `queue`, `lobby`, or `match` when the live page reports it.
+    #[serde(default)]
+    pub page_state: String,
 }
 
 impl Default for GameState {
@@ -442,6 +449,7 @@ impl GameState {
             event_log: Vec::new(),
             timestamp: Utc::now(),
             last_processed_fingerprint: None,
+            page_state: String::new(),
         }
     }
 

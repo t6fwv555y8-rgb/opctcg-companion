@@ -49,6 +49,27 @@ export default function App() {
     return (automatic ?? assistants[0])?.content ?? null;
   })();
 
+  const pageState = gs?.page_state ?? "";
+  const queued = pageState === "queue";
+  const yourPlayer = gs?.player_one.player_name?.trim() || "You";
+  const theirPlayer =
+    gs?.player_two.player_name?.trim() ||
+    (queued ? "Waiting for opponent" : "Opponent");
+  const yourLeader =
+    pageState === "match" ||
+    (gs?.player_one.known_cards?.length ?? 0) > 0 ||
+    bridge.snapshot?.your_deck?.origin === "attached" ||
+    bridge.snapshot?.your_deck?.origin === "presumed"
+      ? (bridge.snapshot?.your_deck?.leader_name ?? "")
+      : "";
+  const theirLeader =
+    pageState === "match" ||
+    (gs?.player_two.known_cards?.length ?? 0) > 0 ||
+    bridge.snapshot?.opponent_deck?.origin === "attached" ||
+    bridge.snapshot?.opponent_deck?.origin === "presumed"
+      ? (bridge.snapshot?.opponent_deck?.leader_name ?? "")
+      : "";
+
   return (
     <div
       className="flex h-full min-h-0 w-full flex-col bg-slate-950 text-base text-white"
@@ -56,8 +77,10 @@ export default function App() {
     >
       <MatchBar
         gameState={gs}
-        yourName={bridge.snapshot?.your_deck?.name ?? "You"}
-        theirName={bridge.snapshot?.opponent_deck?.name ?? "Opponent"}
+        yourName={yourPlayer}
+        theirName={theirPlayer}
+        yourLeader={yourLeader}
+        theirLeader={theirLeader}
         hudState={bridge.observation?.hud_state ?? null}
         sourceLabel={bridge.observation?.active_source ?? null}
       />
@@ -107,6 +130,7 @@ export default function App() {
                 coachLine={latestCoach}
                 coachBusy={coach.streaming}
                 coachError={coach.error}
+                pageState={pageState}
               />
             )}
 

@@ -70,7 +70,7 @@ A real OneSimulator match:
 ./start onesimulator
 ```
 
-Then in Chrome: remove every old Companion card, Load unpacked → the `browser-companion` folder (not `dist`). The card should say version 0.2.1. A label on the game page says whether it is reading the match.
+Then in Chrome: remove every old Companion card, Load unpacked → the `browser-companion` folder (not `dist`). The card should say version 0.2.2. A label on the game page says whether it is reading. The HUD says **In queue** while you wait, with your name and leader.
 
 Walkthrough, real-match setup, and what success looks like: **[docs/MAC_RUN.md](docs/MAC_RUN.md)**.
 

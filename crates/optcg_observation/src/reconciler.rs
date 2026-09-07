@@ -62,6 +62,28 @@ impl ObservationReconciler {
 
         // Deck metadata is applied directly (not a GameEvent).
         if let ObservationEvent::StructuredRaw { raw, .. } = obs {
+            if let Some(page_state) = parse_page_state_raw(raw) {
+                session.state.page_state = page_state;
+                return Ok(ReconcileOutcome {
+                    applied: true,
+                    game_events: vec![],
+                    corrected: false,
+                    rejection_reason: None,
+                    confidence,
+                });
+            }
+            if let Some((player_idx, name)) = parse_player_name_raw(raw) {
+                if let Some(p) = session.state.player_mut(player_idx) {
+                    p.player_name = name;
+                }
+                return Ok(ReconcileOutcome {
+                    applied: true,
+                    game_events: vec![],
+                    corrected: false,
+                    rejection_reason: None,
+                    confidence,
+                });
+            }
             if let Some((player_idx, name)) = parse_deck_name_raw(raw) {
                 if let Some(p) = session.state.player_mut(player_idx) {
                     p.deck_name = name;
@@ -499,6 +521,52 @@ mod tests {
             .iter()
             .any(|c| c == "ST01-002"));
     }
+
+    #[test]
+    fn page_state_and_player_name_from_queue_snapshot() {
+        let mut reconciler = ObservationReconciler::default();
+        let mut session = GameSession::new(ObservationSource::BrowserSimulator);
+        let page = ObservationEvent::StructuredRaw {
+            raw: "PAGE_STATE|queue".into(),
+            source: ObservationSource::BrowserSimulator,
+            confidence: 0.9,
+        };
+        let name = ObservationEvent::StructuredRaw {
+            raw: "PLAYER_NAME|PLAYER_1|Jesus".into(),
+            source: ObservationSource::BrowserSimulator,
+            confidence: 0.9,
+        };
+        assert!(reconciler.reconcile(&mut session, &page).unwrap().applied);
+        assert!(reconciler.reconcile(&mut session, &name).unwrap().applied);
+        assert_eq!(session.state.page_state, "queue");
+        assert_eq!(session.state.player_one().player_name, "Jesus");
+    }
+}
+
+fn parse_page_state_raw(raw: &str) -> Option<String> {
+    let parts: Vec<&str> = raw.splitn(2, '|').collect();
+    if parts.len() != 2 || parts[0] != "PAGE_STATE" {
+        return None;
+    }
+    let state = parts[1].trim().to_ascii_lowercase();
+    matches!(state.as_str(), "queue" | "lobby" | "match").then_some(state)
+}
+
+fn parse_player_name_raw(raw: &str) -> Option<(u8, String)> {
+    let parts: Vec<&str> = raw.splitn(3, '|').collect();
+    if parts.len() != 3 || parts[0] != "PLAYER_NAME" {
+        return None;
+    }
+    let idx = match parts[1] {
+        "PLAYER_1" | "P1" | "0" => 0u8,
+        "PLAYER_2" | "P2" | "1" => 1u8,
+        _ => return None,
+    };
+    let name = parts[2].trim();
+    if name.is_empty() {
+        return None;
+    }
+    Some((idx, name.to_string()))
 }
 
 fn parse_deck_name_raw(raw: &str) -> Option<(u8, String)> {

@@ -132,6 +132,12 @@ fn print_hud(payload: &StateUpdatePayload) {
 
 fn header(payload: &StateUpdatePayload) -> String {
     let gs = &payload.game_state;
+    if gs.page_state == "queue" {
+        return format!(
+            "OPTCG Companion   IN QUEUE   seq {}",
+            gs.event_sequence
+        );
+    }
     let who = if gs.active_player == 0 { "YOU" } else { "OPP" };
     format!(
         "OPTCG Companion   {who} · {} · T{}   seq {}",
@@ -141,12 +147,34 @@ fn header(payload: &StateUpdatePayload) -> String {
     )
 }
 
+fn side_label(player_name: &str, leader: &str, fallback: &str) -> String {
+    let name = if player_name.trim().is_empty() {
+        fallback
+    } else {
+        player_name.trim()
+    };
+    if leader.is_empty() || leader == "Unknown leader" {
+        name.to_string()
+    } else {
+        format!("{name} · {leader}")
+    }
+}
+
 fn matchup_line(payload: &StateUpdatePayload) -> String {
     let you = payload.game_state.player_one.life;
     let them = payload.game_state.player_two.life;
     format!(
         "{}  {you}♥   vs   {}  {them}♥",
-        payload.your_deck.name, payload.opponent_deck.name
+        side_label(
+            &payload.game_state.player_one.player_name,
+            &payload.your_deck.leader_name,
+            "You"
+        ),
+        side_label(
+            &payload.game_state.player_two.player_name,
+            &payload.opponent_deck.leader_name,
+            "Opponent"
+        )
     )
 }
 

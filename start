@@ -76,7 +76,7 @@ if [[ "$MODE" == "onesimulator" ]]; then
   say "  2. Developer mode ON → remove every old Companion / Bridge card"
   say "  3. Load unpacked → pick this folder (not dist):"
   say "       $ROOT/browser-companion"
-  say "  4. The card should say OPTCG Companion  0.2.1"
+  say "  4. The card should say OPTCG Companion  0.2.2"
   say "  5. Open a match:  https://onesimulator.slidingcodes.com"
   say ""
   say "A label in the bottom-right of the game says if it is working."

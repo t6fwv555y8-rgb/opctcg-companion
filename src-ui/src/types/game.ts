@@ -68,6 +68,7 @@ export interface PlayerStateDto {
   board_count: number;
   board?: BoardCardDto[];
   deck_name?: string;
+  player_name?: string;
   known_cards?: string[];
 }
 
@@ -207,6 +208,7 @@ export interface GameStateDto {
   event_sequence: number;
   last_event: LastEventInfo | null;
   timestamp: string;
+  page_state?: string;
 }
 
 export interface ConnectionStatusDto {

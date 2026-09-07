@@ -18,6 +18,8 @@ pub struct GameStateDto {
     pub event_sequence: u64,
     pub last_event: Option<LastEventInfo>,
     pub timestamp: String,
+    #[serde(default)]
+    pub page_state: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -176,6 +178,8 @@ pub struct PlayerStateDto {
     #[serde(default)]
     pub deck_name: String,
     #[serde(default)]
+    pub player_name: String,
+    #[serde(default)]
     pub known_cards: Vec<String>,
 }
 
@@ -213,6 +217,7 @@ impl From<&PlayerState> for PlayerStateDto {
                 })
                 .collect(),
             deck_name: p.deck_name.clone(),
+            player_name: p.player_name.clone(),
             known_cards: p.known_cards.clone(),
         }
     }
@@ -231,6 +236,7 @@ impl From<&GameState> for GameStateDto {
             event_sequence: state.event_sequence,
             last_event: state.last_event.clone(),
             timestamp: state.timestamp.to_rfc3339(),
+            page_state: state.page_state.clone(),
         }
     }
 }
