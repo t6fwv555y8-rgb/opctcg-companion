@@ -44,7 +44,9 @@ Wait for a window titled **OPTCG Companion**. The first launch compiles Rust and
 - The **Play** tab updates as the board does: what to do now, then a line after each play settles
 - Decks, Scouting, Matchup, and Coach panels filling in as the demo plays
 
-A tab at `localhost:1420` means the window never opened — quit that and run `./start` again.
+A tab at `localhost:1420` means the window never opened — quit that tab and run `./start` again. Chrome is not the app.
+
+If nothing appears, leave the Terminal open. The first compile can sit there for several minutes. If you already tried once, a leftover process on port 1420 will block the window — `./start` now clears that port.
 
 ## Play a OneSimulator match
 

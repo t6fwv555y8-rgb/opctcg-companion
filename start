@@ -56,6 +56,40 @@ rm -rf "$ROOT/browser-companion/dist"
 
 export OPTCG_SOURCE="$MODE"
 
+# A leftover Vite on :1420 makes Tauri refuse to start (strictPort).
+free_port() {
+  local port="$1"
+  local pids
+  pids="$(lsof -ti "tcp:${port}" 2>/dev/null || true)"
+  if [[ -n "$pids" ]]; then
+    say "Stopping the leftover process on port ${port} so the window can open…"
+    # shellcheck disable=SC2086
+    kill $pids 2>/dev/null || true
+    sleep 0.4
+  fi
+}
+
+ensure_hud_tools() {
+  if [[ ! -x "$ROOT/src-ui/node_modules/.bin/tauri" ]]; then
+    say "Installing the HUD tools…"
+    (cd "$ROOT/src-ui" && npm install)
+  fi
+}
+
+launch_hud() {
+  free_port 1420
+  free_port 1421
+  ensure_hud_tools
+  say ""
+  say "Leave this Terminal open. Compiling can take several minutes the first time."
+  say "The app is a small dark window titled  OPTCG Companion HUD"
+  say "Chrome is not the app. A tab at localhost:1420 means the window failed."
+  say "Ctrl-C stops everything."
+  say ""
+  cd "$ROOT"
+  exec npx --prefix src-ui tauri dev --config src-tauri/tauri.conf.json
+}
+
 say ""
 if [[ "$TERMINAL" -eq 1 ]]; then
   say "Printing the HUD in this terminal. Ctrl-C stops it."
@@ -64,35 +98,24 @@ if [[ "$TERMINAL" -eq 1 ]]; then
   exec cargo run -p optcg-companion -- --terminal
 fi
 
-say "A window named OPTCG Companion is about to open."
-say "The first launch compiles Rust and can take several minutes — leave this running."
-say "Ctrl-C stops everything."
-say ""
-
 if [[ "$MODE" == "onesimulator" ]]; then
-  say "OneSimulator — do these three things while the window compiles:"
+  say "After the HUD window appears, in Chrome:"
+  say "  1. chrome://extensions → Developer mode ON"
+  say "  2. Load unpacked → $ROOT/browser-companion   (not dist)"
+  say "  3. Card should say OPTCG Companion  0.2.4"
+  say "  4. Refresh the OneSimulator tab"
   say ""
-  say "  1. Chrome → chrome://extensions"
-  say "  2. Developer mode ON → remove every old Companion / Bridge card"
-  say "  3. Load unpacked → pick this folder (not dist):"
-  say "       $ROOT/browser-companion"
-  say "  4. The card should say OPTCG Companion  0.2.4"
-  say "  5. Open a match:  https://onesimulator.slidingcodes.com"
-  say ""
-  say "A label in the bottom-right of the game says if it is working."
-  say "If Chrome shows dist/bridge.js or ws://127.0.0.1:9003, that is the old extension."
-  say ""
-  if command -v open >/dev/null 2>&1; then
-    open "https://onesimulator.slidingcodes.com" 2>/dev/null || true
-    open "chrome://extensions" 2>/dev/null || true
-  fi
-  exec npm run dev:tauri
+  launch_hud
 fi
 
 say "Demo cards will start moving once the window is up."
 say "For a real match instead:  ./start onesimulator"
 say ""
 
+free_port 1420
+free_port 1421
+ensure_hud_tools
+cd "$ROOT"
 exec npx --yes concurrently -k -n hud,demo -c blue,green \
-  "npm run dev:tauri" \
+  "npx --prefix src-ui tauri dev --config src-tauri/tauri.conf.json" \
   "python3 scripts/mock_stream.py --interval 2"
