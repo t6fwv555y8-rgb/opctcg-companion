@@ -9,6 +9,7 @@ test("the page reader can see a queue and a match", () => {
   assert.match(src, /player_name/);
   assert.match(src, /In queue — companion is reading/);
   assert.match(src, /searching/);
+  assert.match(src, /Companion \$\{VERSION\} starting/);
 });
 
 test("a reloaded extension stops the old reader instead of throwing", () => {

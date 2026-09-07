@@ -1,18 +1,31 @@
+// OPTCG Companion page reader 0.2.5
 // Reads the OneSimulator board and hands it to background.js.
-// Runs in the page, so `window` is fine here.
 
+const VERSION = "0.2.5";
 const CARD_ID = /\b((?:OP|ST|EB|PRB|P)-\d{2}-\d{3}[A-Z]?)\b/i;
 const CARD_SRC = /\/cards\/(?:full|thumbnail)\/([^/.]+)\.webp/i;
 
 function cardId(el) {
-  if (!el) return null;
-  const img = el.tagName === "IMG" ? el : el.querySelector?.("img");
-  const fromSrc = img?.src?.match(CARD_SRC);
-  if (fromSrc) return fromSrc[1].replace(/_/g, "-").toUpperCase();
-  const fromAlt = img?.alt?.match(CARD_ID);
-  if (fromAlt) return fromAlt[1].toUpperCase();
-  const fromText = (el.textContent || "").match(CARD_ID);
-  return fromText ? fromText[1].toUpperCase() : null;
+  try {
+    if (!el || typeof el !== "object") return null;
+    const img =
+      typeof el.tagName === "string" && el.tagName.toUpperCase() === "IMG"
+        ? el
+        : typeof el.querySelector === "function"
+          ? el.querySelector("img")
+          : null;
+    const src = img && img.src ? String(img.src) : "";
+    const fromSrc = src.match(CARD_SRC);
+    if (fromSrc) return fromSrc[1].replace(/_/g, "-").toUpperCase();
+    const alt = img && img.alt ? String(img.alt) : "";
+    const fromAlt = alt.match(CARD_ID);
+    if (fromAlt) return fromAlt[1].toUpperCase();
+    const text = el.textContent ? String(el.textContent) : "";
+    const fromText = text.match(CARD_ID);
+    return fromText ? fromText[1].toUpperCase() : null;
+  } catch {
+    return null;
+  }
 }
 
 function playerIds() {
@@ -82,7 +95,7 @@ function board(playerId) {
       .forEach((el) => {
         cards.push({
           card_id: cardId(el),
-          name: el.querySelector("img")?.alt || null,
+          name: (typeof el.querySelector === "function" && el.querySelector("img")?.alt) || null,
           rested: `${el.className || ""}`.includes("rotate-90"),
         });
       });
@@ -360,6 +373,10 @@ function send() {
   }
 }
 
-paintStatus("Companion starting…", false);
-send();
-tick = setInterval(send, 800);
+try {
+  paintStatus(`Companion ${VERSION} starting…`, false);
+  send();
+  tick = setInterval(send, 800);
+} catch (err) {
+  paintStatus(`Companion ${VERSION} failed to start: ${String(err?.message || err).slice(0, 60)}`, false);
+}
