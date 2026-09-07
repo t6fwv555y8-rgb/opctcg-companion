@@ -35,7 +35,7 @@ const Bubble = memo(function Bubble({
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
       <div
-        className={`max-w-[88%] rounded px-2 py-1 text-[10px] leading-snug ${
+        className={`max-w-[88%] rounded px-3 py-2 text-sm leading-relaxed ${
           isUser
             ? "bg-hud-accent/15 text-slate-100"
             : "bg-slate-800/60 text-slate-200"
@@ -196,7 +196,7 @@ function ToolChips({ tools }: { tools: ToolRun[] }) {
 export function CoachChatPanel() {
   const coach = useCoachStream();
   const [draft, setDraft] = useState("");
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);
   const scroller = useRef<HTMLDivElement | null>(null);
 
   // Follow the stream as text arrives.
@@ -256,11 +256,11 @@ export function CoachChatPanel() {
         <div className="mt-2 space-y-1.5">
           <div
             ref={scroller}
-            className="max-h-48 space-y-1 overflow-y-auto pr-0.5"
+            className="max-h-64 space-y-2 overflow-y-auto pr-0.5"
           >
             {coach.messages.length === 0 ? (
               <div className="space-y-1">
-                <p className="text-[10px] text-slate-500">
+                <p className="text-sm text-slate-400">
                   Ask about the live board. The coach reads your game state,
                   deck list, and the rules engine before answering.
                 </p>
@@ -270,7 +270,7 @@ export function CoachChatPanel() {
                       key={suggestion}
                       type="button"
                       onClick={() => submit(suggestion)}
-                      className="rounded border border-slate-700/60 px-1.5 py-0.5 text-left text-[9px] text-slate-400 hover:border-hud-accent/40 hover:text-hud-accent"
+                      className="rounded border border-slate-700/60 px-2 py-1 text-left text-sm text-slate-300 hover:border-hud-accent/40 hover:text-hud-accent"
                     >
                       {suggestion}
                     </button>
@@ -320,7 +320,7 @@ export function CoachChatPanel() {
               }}
               placeholder="Ask about this board…"
               rows={2}
-              className="min-w-0 flex-1 resize-none rounded border border-slate-700 bg-slate-950/80 px-2 py-1 text-[10px] leading-snug text-slate-200 placeholder:text-slate-600 focus:border-hud-accent/50 focus:outline-none"
+              className="min-w-0 flex-1 resize-none rounded border border-slate-700 bg-slate-950/80 px-3 py-2 text-sm leading-snug text-slate-200 placeholder:text-slate-600 focus:border-hud-accent/50 focus:outline-none"
             />
             <div className="flex shrink-0 flex-col gap-1">
               {coach.streaming && (
@@ -337,7 +337,7 @@ export function CoachChatPanel() {
                   type="button"
                   disabled={!draft.trim()}
                   onClick={() => submit(draft)}
-                  className="rounded border border-hud-accent/40 bg-hud-accent/10 px-2 py-0.5 text-[10px] font-semibold text-hud-accent hover:bg-hud-accent/20 disabled:opacity-50"
+                  className="rounded border border-hud-accent/40 bg-hud-accent/10 px-3 py-1.5 text-sm font-semibold text-hud-accent hover:bg-hud-accent/20 disabled:opacity-50"
                 >
                   Ask
                 </button>

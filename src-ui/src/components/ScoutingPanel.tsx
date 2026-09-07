@@ -30,19 +30,19 @@ function CardRow({ card, games }: { card: ScoutedCardDto; games: number }) {
       className="flex items-center gap-1.5"
       title={`Seen in ${card.games_seen} of ${games} games · first appeared turn ${card.earliest_turn}`}
     >
-      <span className="w-6 shrink-0 font-mono text-[10px] text-hud-accent">
+      <span className="w-8 shrink-0 font-mono text-sm text-hud-accent">
         {card.likely_copies}×
       </span>
-      <span className="min-w-0 flex-1 truncate text-[10px] text-slate-200">
+      <span className="min-w-0 flex-1 truncate text-sm text-slate-200">
         {card.name}
       </span>
-      <span className="h-1 w-10 shrink-0 overflow-hidden rounded bg-slate-800">
+      <span className="h-1.5 w-14 shrink-0 overflow-hidden rounded bg-slate-800">
         <span
           className={`block h-full ${staple ? "bg-hud-accent" : "bg-slate-600"}`}
           style={{ width: `${percent}%` }}
         />
       </span>
-      <span className="w-7 shrink-0 text-right font-mono text-[9px] text-slate-500">
+      <span className="w-10 shrink-0 text-right font-mono text-xs text-slate-400">
         {percent}%
       </span>
     </li>
@@ -57,7 +57,7 @@ export function ScoutingPanel({ report, listAttached }: Props) {
     return (
       <div className="hud-panel p-3">
         <div className="hud-title">Scouting</div>
-        <p className="mt-1 text-[10px] leading-snug text-slate-500">
+        <p className="mt-2 text-sm leading-relaxed text-slate-400">
           {listAttached
             ? "Their list is attached, so there is nothing left to infer. Games are still recorded either way."
             : "Nothing on this leader yet. Every game you play is recorded, and the cards they show build up into a picture of their deck."}
@@ -73,7 +73,7 @@ export function ScoutingPanel({ report, listAttached }: Props) {
     <div className="hud-panel p-3">
       <div className="flex items-center justify-between gap-2">
         <div className="hud-title">Scouting</div>
-        <span className="text-[9px] text-slate-500">
+        <span className="text-xs text-slate-400">
           {report.games} game{report.games === 1 ? "" : "s"} ·{" "}
           <span className={reliabilityTone(report.reliability)}>
             {report.reliability}
@@ -81,10 +81,10 @@ export function ScoutingPanel({ report, listAttached }: Props) {
         </span>
       </div>
 
-      <div className="mt-1 text-[10px] text-slate-300">
+      <div className="mt-2 text-sm text-slate-200">
         Plays <span className="text-hud-accent">{report.pace}</span>
       </div>
-      <div className="text-[9px] text-slate-500">
+      <div className="text-xs text-slate-400">
         {report.mapped_copies} of their 50 cards mapped
       </div>
 
@@ -100,7 +100,7 @@ export function ScoutingPanel({ report, listAttached }: Props) {
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
-          className="mt-1 text-[9px] text-slate-500 hover:text-slate-300"
+          className="mt-2 text-sm text-slate-400 hover:text-slate-200"
         >
           {expanded ? "Show less" : `Show ${hidden} more`}
         </button>
@@ -109,14 +109,14 @@ export function ScoutingPanel({ report, listAttached }: Props) {
       {report.notes.length > 0 && (
         <ul className="mt-1.5 space-y-0.5 border-t border-slate-700/50 pt-1.5">
           {report.notes.map((note) => (
-            <li key={note} className="text-[9px] leading-snug text-slate-400">
+            <li key={note} className="text-sm leading-snug text-slate-300">
               {note}
             </li>
           ))}
         </ul>
       )}
 
-      <p className="mt-1.5 text-[9px] leading-snug text-slate-500">
+      <p className="mt-2 text-xs leading-snug text-slate-500">
         Inferred from cards they have played, never a confirmed list.
       </p>
     </div>

@@ -47,7 +47,7 @@ body {
 }
 
 .hud-title {
-  @apply text-xs font-semibold uppercase tracking-wider text-hud-accent;
+  @apply text-sm font-semibold uppercase tracking-wide text-hud-accent;
 }
 
 .stat-value {
