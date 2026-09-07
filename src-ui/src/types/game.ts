@@ -154,6 +154,19 @@ export interface MatchupReportDto {
   notes: string[];
 }
 
+export interface MatchReviewDto {
+  game_id: string;
+  outcome?: string | null;
+  headline: string;
+  your_leader: string;
+  their_leader: string;
+  last_turn: number;
+  your_life: number;
+  their_life: number;
+  notes: string[];
+  you_played: string[];
+}
+
 export interface ScoutedCardDto {
   card_id: string;
   name: string;
@@ -320,6 +333,7 @@ export interface StateUpdatePayload {
   deck_collection?: DeckCollectionDto;
   scouting?: ScoutingReportDto | null;
   matchup?: MatchupReportDto | null;
+  review?: MatchReviewDto | null;
   latency_ms: number;
   observation: ObservationStatusDto | null;
 }

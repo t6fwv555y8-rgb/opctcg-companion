@@ -4,8 +4,8 @@ use optcg_coach::{
     key_hint, key_source, provider_from_config, resolve_config, AutoDecision, AutoTrigger,
     CancelReason, CancelToken, ChatMessage, ChatProvider, CoachError, CoachEvent, CoachSession,
     CoachStreamEvent, CoalescingSink, ContextScope, DeckContext, EventSink, FlushTicker,
-    ListStanding, LlmKeySource, LlmSettings, OfflineProvider, StateFingerprint, TurnKind,
-    TurnSummary, DEFAULT_FLUSH_INTERVAL_MS, SYSTEM_PROMPT,
+    ListStanding, LlmKeySource, LlmSettings, OfflineProvider, ReviewBrief, StateFingerprint,
+    TurnKind, TurnSummary, DEFAULT_FLUSH_INTERVAL_MS, SYSTEM_PROMPT,
 };
 use optcg_scouting::{DeckMap, StrategyRead};
 use parking_lot::Mutex;
@@ -190,6 +190,7 @@ fn deck_context(state: &AppState) -> DeckContext {
         opponent_list_standing: standing(&opponent),
         opponent_scouting: scouting_brief(state, &opponent),
         matchup: matchup_brief(state, &yours, &opponent),
+        last_review: review_brief(state),
         plan: strategy.as_ref().map(|brief| brief.your_plan.clone()),
         vs_opponent: strategy.as_ref().map(|brief| brief.vs_opponent.clone()),
     }
@@ -263,6 +264,16 @@ fn matchup_brief(
         losses: report.losses,
         standing: report.standing,
         notes: report.notes,
+    })
+}
+
+fn review_brief(state: &AppState) -> Option<ReviewBrief> {
+    let review = state.latest_review()?;
+    Some(ReviewBrief {
+        headline: review.headline,
+        outcome: review.outcome.unwrap_or_default(),
+        notes: review.notes,
+        you_played: review.you_played,
     })
 }
 
@@ -792,6 +803,10 @@ mod tests {
             .expect("a finished game should reach the coach");
         assert_eq!((matchup.wins, matchup.losses), (1, 0));
         assert_eq!(matchup.standing, "too early to call");
+        let review = deck_context(&state)
+            .last_review
+            .expect("the last game should reach the coach");
+        assert!(review.headline.contains("Won"));
     }
 
     #[test]

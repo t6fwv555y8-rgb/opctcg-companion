@@ -25,27 +25,33 @@ function Side({
   name,
   leader,
   don,
-  align,
+  you,
 }: {
   life: string | number;
   name: string;
   leader: string;
   don: number | null;
-  align: "left" | "right";
+  you?: boolean;
 }) {
   return (
-    <div className={`min-w-0 ${align === "right" ? "text-right" : ""}`}>
-      <div className={`flex items-baseline gap-2 ${align === "right" ? "justify-end" : ""}`}>
-        <span className="text-[28px] font-semibold tabular-nums leading-none text-white">
-          {life}
-        </span>
-        {don != null && (
-          <span className="text-[11px] tabular-nums text-slate-500">{don} DON</span>
+    <div className={`flex items-baseline gap-2 ${you ? "" : "opacity-80"}`}>
+      <span
+        className={`shrink-0 font-semibold tabular-nums leading-none ${
+          you ? "text-[26px] text-white" : "text-[22px] text-slate-200"
+        }`}
+      >
+        {life}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className={`truncate text-[13px] ${you ? "text-slate-200" : "text-slate-400"}`}>
+          {name}
+        </div>
+        {leader && (
+          <div className="truncate text-[11px] text-slate-500">{leader}</div>
         )}
       </div>
-      <div className="mt-1 truncate text-[13px] text-slate-200">{name}</div>
-      {leader && (
-        <div className="truncate text-[11px] text-slate-500">{leader}</div>
+      {don != null && (
+        <span className="shrink-0 text-[11px] tabular-nums text-slate-500">{don} DON</span>
       )}
     </div>
   );
@@ -67,17 +73,19 @@ export function MatchBar({
   const them = queued ? "–" : (gameState?.player_two.life ?? "–");
   const youLeader = cleanLeader(yourLeader);
   const themLeader = cleanLeader(theirLeader);
-  const inMatch = page === "match" && !queued;
+  const inMatch = (page === "match" || page === "ended") && !queued;
 
   const status = queued
     ? "In queue"
     : page === "lobby"
       ? "In lobby"
-      : page === "match" && hudState === "live"
-        ? "Live"
-        : hudState && hudState !== "live"
-          ? hudState
-          : null;
+      : page === "ended"
+        ? "Game over"
+        : page === "match" && hudState === "live"
+          ? "Live"
+          : hudState && hudState !== "live"
+            ? hudState
+            : null;
 
   return (
     <header className="shrink-0 border-b border-white/[0.06] px-3 py-2">
@@ -92,27 +100,26 @@ export function MatchBar({
             {whoseTurn(gameState)} · {gameState.phase}
           </span>
         )}
+        {page === "ended" && (
+          <span className="font-medium text-slate-300">Match finished</span>
+        )}
         {queued && (
           <span className="font-medium text-hud-accent">Waiting for a match</span>
         )}
       </div>
-      <div className="mt-1.5 grid grid-cols-[1fr_auto_1fr] items-end gap-2">
-        <Side
-          life={you}
-          name={yourName || "You"}
-          leader={youLeader}
-          don={inMatch ? (gameState?.player_one.active_don ?? 0) : null}
-          align="left"
-        />
-        <div className="pb-1 text-[10px] uppercase tracking-[0.18em] text-slate-600">
-          vs
-        </div>
+      <div className="mt-1.5 flex flex-col gap-1.5">
         <Side
           life={them}
           name={theirName || "Opponent"}
           leader={themLeader}
           don={inMatch ? (gameState?.player_two.active_don ?? 0) : null}
-          align="right"
+        />
+        <Side
+          life={you}
+          name={yourName || "You"}
+          leader={youLeader}
+          don={inMatch ? (gameState?.player_one.active_don ?? 0) : null}
+          you
         />
       </div>
     </header>

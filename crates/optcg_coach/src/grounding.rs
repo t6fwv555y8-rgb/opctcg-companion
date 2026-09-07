@@ -22,6 +22,8 @@ pub struct DeckContext {
     pub opponent_scouting: Option<ScoutingBrief>,
     /// Your own deck's record in this matchup, when it has played it.
     pub matchup: Option<MatchupBrief>,
+    /// How the last finished game went, when one has.
+    pub last_review: Option<ReviewBrief>,
     pub plan: Option<String>,
     pub vs_opponent: Option<String>,
 }
@@ -60,6 +62,16 @@ pub struct MatchupBrief {
     pub standing: String,
     /// Plain statements of what was measured.
     pub notes: Vec<String>,
+}
+
+/// How the last finished game actually went.
+#[derive(Debug, Clone, Default)]
+pub struct ReviewBrief {
+    pub headline: String,
+    /// `won`, `lost`, or empty when the result was not readable.
+    pub outcome: String,
+    pub notes: Vec<String>,
+    pub you_played: Vec<String>,
 }
 
 /// How far a side's deck list can be trusted.
@@ -507,6 +519,11 @@ pub fn build_context(
             ));
             context.push("Matchup record", matchup_readout(matchup));
         }
+
+        if let Some(review) = decks.last_review.as_ref() {
+            sink(CoachEvent::tool("last_game", review.headline.clone()));
+            context.push("Last game", review_readout(review));
+        }
     }
 
     // Name what was held back, or the model fills the gap by inventing a board.
@@ -597,6 +614,30 @@ fn matchup_readout(matchup: &MatchupBrief) -> String {
             .to_string(),
     );
 
+    lines.join("\n")
+}
+
+/// The last finished game, framed as how they played rather than the score.
+fn review_readout(review: &ReviewBrief) -> String {
+    let mut lines = vec![review.headline.clone()];
+    if !review.outcome.is_empty() {
+        lines.push(format!("Result: {}.", review.outcome));
+    }
+    if !review.notes.is_empty() {
+        lines.push(review.notes.join(" "));
+    }
+    if !review.you_played.is_empty() {
+        lines.push(format!(
+            "Cards you showed: {}.",
+            review.you_played.join(", ")
+        ));
+    }
+    lines.push(
+        "This is how the last game actually went. When they ask how they \
+         played, talk about these readings — leftover DON, when life moved, \
+         how close it was — not a generic pep talk."
+            .to_string(),
+    );
     lines.join("\n")
 }
 
@@ -1391,6 +1432,24 @@ mod tests {
             prompt.contains("Never tell the player they are likely to lose"),
             "a losing record must not become a prediction: {prompt}"
         );
+    }
+
+    #[test]
+    fn a_last_game_recap_reaches_the_briefing() {
+        let prompt = prompt_for(&DeckContext {
+            last_review: Some(ReviewBrief {
+                headline: "Won on turn 8 — 2 life left".into(),
+                outcome: "won".into(),
+                notes: vec!["Ended with 3 DON still up.".into()],
+                you_played: vec!["Usopp (ST01-002)".into()],
+            }),
+            ..Default::default()
+        });
+
+        assert!(prompt.contains("## Last game"));
+        assert!(prompt.contains("Won on turn 8"));
+        assert!(prompt.contains("3 DON still up"));
+        assert!(prompt.contains("Usopp (ST01-002)"));
     }
 
     #[test]

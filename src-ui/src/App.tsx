@@ -6,6 +6,7 @@ import { ConnectionStatus } from "./components/ConnectionStatus";
 import { DebugPanel } from "./components/DebugPanel";
 import { DeckPanel } from "./components/DeckPanel";
 import { MatchBar } from "./components/MatchBar";
+import { MatchReviewPanel } from "./components/MatchReviewPanel";
 import { MatchupPanel } from "./components/MatchupPanel";
 import { NowPanel } from "./components/NowPanel";
 import { ScoutingPanel } from "./components/ScoutingPanel";
@@ -51,6 +52,9 @@ export default function App() {
   })();
 
   const pageState = gs?.page_state ?? "";
+  const recap = bridge.snapshot?.review ?? null;
+  const thisGame = Boolean(recap && gs?.game_id && recap.game_id === gs.game_id);
+  const showRecap = Boolean(recap && (pageState !== "match" || thisGame));
   const queued = pageState === "queue";
   const yourPlayer = gs?.player_one.player_name?.trim() || "You";
   const theirPlayer =
@@ -119,27 +123,32 @@ export default function App() {
         ) : (
           <>
             {tab === "play" && (
-              <NowPanel
-                phaseCoach={bridge.snapshot?.phase_coach ?? null}
-                strategy={bridge.snapshot?.strategy ?? null}
-                options={bridge.snapshot?.options ?? []}
-                deckStrategy={bridge.snapshot?.deck_strategy ?? null}
-                combat={combat}
-                analysis={bridge.snapshot?.combat_analysis ?? null}
-                combatCoach={bridge.snapshot?.combat_coach ?? null}
-                paused={
-                  bridge.observation?.analysis?.mode === "paused" ||
-                  bridge.observation?.hud_state === "lost"
-                }
-                coachLine={latestCoach}
-                coachBusy={coach.streaming}
-                coachError={coach.error}
-                pageState={pageState}
-              />
+              showRecap && recap ? (
+                <MatchReviewPanel review={recap} />
+              ) : (
+                <NowPanel
+                  phaseCoach={bridge.snapshot?.phase_coach ?? null}
+                  strategy={bridge.snapshot?.strategy ?? null}
+                  options={bridge.snapshot?.options ?? []}
+                  deckStrategy={bridge.snapshot?.deck_strategy ?? null}
+                  combat={combat}
+                  analysis={bridge.snapshot?.combat_analysis ?? null}
+                  combatCoach={bridge.snapshot?.combat_coach ?? null}
+                  paused={
+                    bridge.observation?.analysis?.mode === "paused" ||
+                    bridge.observation?.hud_state === "lost"
+                  }
+                  coachLine={latestCoach}
+                  coachBusy={coach.streaming}
+                  coachError={coach.error}
+                  pageState={pageState}
+                />
+              )
             )}
 
             {tab === "opp" && (
               <div className="flex flex-col gap-3">
+                {recap && <MatchReviewPanel review={recap} />}
                 <MatchupPanel report={bridge.snapshot?.matchup ?? null} />
                 <ScoutingPanel
                   report={bridge.snapshot?.scouting ?? null}

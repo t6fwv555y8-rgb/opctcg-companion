@@ -66,16 +66,29 @@ impl Scout {
             self.ledger.record_card(&card_id, copies, state.turn_number);
         }
         self.record_tempo(state);
+        self.record_your_play(state);
+
+        // Life hitting zero, or the page leaving the match, is the moment the
+        // recap has to be written. Waiting for the next game would hide it
+        // until the player queued again.
+        if self.should_finish(state) {
+            self.ledger.close_open_game(now);
+        }
 
         // Tempo alone moves on every update, idle or not, because the turn
         // counter is part of it. Only a game that has shown a card, or reached
         // a result, counts as having taught us something worth saving.
-        self.fingerprint() != before
+        let after = self.fingerprint();
+        let wrote_review = after.4 != before.4;
+        let wrote_matchup = after.5 != before.5;
+        (after != before
             && self
                 .ledger
                 .open
                 .as_ref()
-                .is_some_and(|game| game.counts_as_played())
+                .is_some_and(|game| game.counts_as_played()))
+            || wrote_review
+            || wrote_matchup
     }
 
     /// Fold the game being watched into its profile.
@@ -85,6 +98,30 @@ impl Scout {
     pub fn close(&mut self, now: &str) {
         self.ledger.close_open_game(now);
         self.watching = None;
+    }
+
+    /// Whether the open game has ended and should be folded now.
+    fn should_finish(&self, state: &GameState) -> bool {
+        let Some(open) = self.ledger.open.as_ref() else {
+            return false;
+        };
+        if !open.counts_as_played() {
+            return false;
+        }
+        open.outcome().is_some() || matches!(state.page_state.as_str(), "ended" | "lobby" | "queue")
+    }
+
+    fn record_your_play(&mut self, state: &GameState) {
+        let you = &state.players[YOU];
+        for (card_id, copies) in your_visible_copies(state) {
+            self.ledger
+                .record_your_card(&card_id, copies, state.turn_number);
+        }
+        self.ledger
+            .record_your_end(you.don_active, you.hand_count, you.characters.len() as u32);
+        let life = self.life_track();
+        let dealt = life.their_high.saturating_sub(life.their_last);
+        self.ledger.record_your_strike(dealt, state.turn_number);
     }
 
     fn record_tempo(&mut self, state: &GameState) {
@@ -129,13 +166,23 @@ impl Scout {
     /// Life belongs here in its own right: their life falling is what decides a
     /// win, and it moves nothing in tempo, which only measures damage done to
     /// you.
-    fn fingerprint(&self) -> (usize, u32, Tempo, LifeTrack) {
+    fn fingerprint(&self) -> (usize, u32, Tempo, LifeTrack, usize, (u32, u32, u32)) {
         let open = self.ledger.open.as_ref();
+        let matchup = self
+            .ledger
+            .matchups
+            .records
+            .iter()
+            .fold((0, 0, 0), |acc, r| {
+                (acc.0 + r.wins, acc.1 + r.losses, acc.2 + r.unfinished)
+            });
         (
             open.map_or(0, |g| g.sightings.len()),
             open.map_or(0, |g| g.sightings.iter().map(|s| s.copies).sum()),
             open.map(|g| g.tempo.clone()).unwrap_or_default(),
             self.life_track(),
+            self.ledger.reviews.len(),
+            matchup,
         )
     }
 }
@@ -166,6 +213,36 @@ fn visible_copies(state: &GameState) -> Vec<(String, u32)> {
     for id in &opponent.known_cards {
         let id = id.trim();
         if !id.is_empty() && id != opponent.leader.card_id {
+            counts.entry(id).or_insert(1);
+        }
+    }
+
+    counts
+        .into_iter()
+        .map(|(id, copies)| (id.to_string(), copies))
+        .collect()
+}
+
+/// Cards you showed this game, counted the same way as theirs.
+fn your_visible_copies(state: &GameState) -> Vec<(String, u32)> {
+    let you = &state.players[YOU];
+    let mut counts: HashMap<&str, u32> = HashMap::new();
+
+    for card in you
+        .characters
+        .iter()
+        .chain(you.trash.iter())
+        .chain(you.hand.iter().filter(|card| card.known))
+    {
+        let id = card.card_id.trim();
+        if !id.is_empty() && id != you.leader.card_id {
+            *counts.entry(id).or_insert(0) += 1;
+        }
+    }
+
+    for id in &you.known_cards {
+        let id = id.trim();
+        if !id.is_empty() && id != you.leader.card_id {
             counts.entry(id).or_insert(1);
         }
     }
@@ -496,5 +573,46 @@ mod tests {
             "the leader is not one of the fifty: {:?}",
             profile.cards
         );
+    }
+
+    #[test]
+    fn a_finished_game_writes_a_recap_without_waiting_to_close() {
+        let mut scout = scout();
+        scout.observe(&position(3, &["OP17-080"]), NOW);
+
+        let mut lethal = position(8, &["OP17-080"]);
+        lethal.players[YOU].characters = vec![CardInstance::new("ST01-002", 0, Zone::Character)];
+        lethal.players[YOU].don_active = 3;
+        lethal.players[YOU].hand_count = 4;
+        lethal.players[OPPONENT].life = 0;
+        assert!(scout.observe(&lethal, NOW));
+
+        let review = scout
+            .ledger()
+            .latest_review()
+            .expect("the recap belongs on the game-over screen, not the next queue");
+        assert_eq!(review.outcome, Some(crate::matchup::Outcome::Won));
+        assert_eq!(review.last_turn, 8);
+        assert_eq!(review.leftover_don, 3);
+        assert!(review.you_played.contains(&"ST01-002".to_string()));
+        assert!(
+            scout.ledger().open.is_none(),
+            "a decided game is folded as soon as life hits zero"
+        );
+    }
+
+    #[test]
+    fn leaving_the_match_writes_an_unfinished_recap() {
+        let mut scout = scout();
+        let mut mid = position(4, &["OP17-080"]);
+        mid.page_state = "match".into();
+        scout.observe(&mid, NOW);
+
+        mid.page_state = "lobby".into();
+        scout.observe(&mid, NOW);
+
+        let review = scout.ledger().latest_review().expect("left mid-game");
+        assert_eq!(review.outcome, None);
+        assert!(review.headline().starts_with("Game stopped"));
     }
 }

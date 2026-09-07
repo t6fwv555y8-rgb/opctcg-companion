@@ -1,7 +1,7 @@
 use crate::dto::ObservationStatusDto;
 use crate::dto::{
     ConnectionStatusDto, DeckCollectionDto, DeckInfoDto, DeckOrigin, GameStateDto, KnownCardDto,
-    MatchupReportDto, OverlaySettings, PastedDeckDto, SavedDeckDto, ScoutedCardDto,
+    MatchReviewDto, MatchupReportDto, OverlaySettings, PastedDeckDto, SavedDeckDto, ScoutedCardDto,
     ScoutingReportDto, StateUpdatePayload,
 };
 use optcg_database::Database;
@@ -345,6 +345,58 @@ impl AppState {
             standing: read.standing.label().to_string(),
             win_rate: read.win_rate,
             notes: read.notes,
+        })
+    }
+
+    /// How the last finished game went, named for the HUD.
+    pub fn latest_review(&self) -> Option<MatchReviewDto> {
+        let (review, standing) = {
+            let scout = self.scout.read();
+            let review = scout.ledger().latest_review()?.clone();
+            let standing = scout
+                .ledger()
+                .matchups
+                .record(&review.your_leader, &review.their_leader)
+                .filter(|r| r.finished() > 0)
+                .map(|r| (r.wins, r.losses));
+            Some((review, standing))
+        }?;
+        let repo = self.repo();
+        let name = |id: &str, stored: &str| {
+            if !stored.trim().is_empty() {
+                return stored.to_string();
+            }
+            repo.get_by_id(id)
+                .map(|def| def.name)
+                .unwrap_or_else(|_| id.to_string())
+        };
+        let you_played = review
+            .you_played
+            .iter()
+            .map(|id| {
+                repo.get_by_id(id)
+                    .map(|def| format!("{} ({id})", def.name))
+                    .unwrap_or_else(|_| id.clone())
+            })
+            .collect();
+        let mut notes = review.notes();
+        if let Some((wins, losses)) = standing {
+            notes.push(format!("That's {wins}-{losses} against this leader."));
+        }
+        Some(MatchReviewDto {
+            game_id: review.game_id.clone(),
+            outcome: review.outcome.map(|o| match o {
+                optcg_scouting::Outcome::Won => "won".into(),
+                optcg_scouting::Outcome::Lost => "lost".into(),
+            }),
+            headline: review.headline(),
+            your_leader: name(&review.your_leader, &review.your_leader_name),
+            their_leader: name(&review.their_leader, &review.their_leader_name),
+            last_turn: review.last_turn,
+            your_life: review.your_life,
+            their_life: review.their_life,
+            notes,
+            you_played,
         })
     }
 
@@ -908,6 +960,7 @@ impl AppState {
         // Shown whatever the deck sources say: knowing their list does not tell
         // you how your own deck has gone against it.
         let matchup = self.matchup_report(&your_deck.leader_id, &opponent_deck.leader_id);
+        let review = self.latest_review();
 
         StateUpdatePayload {
             game_state: GameStateDto::from(&*gs),
@@ -924,6 +977,7 @@ impl AppState {
             deck_collection,
             scouting,
             matchup,
+            review,
             latency_ms,
             observation,
         }
@@ -1308,6 +1362,12 @@ mod tests {
         assert_eq!((report.wins, report.losses), (1, 0));
         assert_eq!(report.standing, "too early to call");
         assert!(state.build_update_payload(None).matchup.is_some());
+        let review = state
+            .build_update_payload(None)
+            .review
+            .expect("a finished game has a recap");
+        assert_eq!(review.outcome.as_deref(), Some("won"));
+        assert!(review.headline.contains("Won on turn"));
 
         std::fs::remove_dir_all(&dir).ok();
     }

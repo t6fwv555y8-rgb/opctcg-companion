@@ -604,6 +604,19 @@ mod tests {
     }
 
     #[test]
+    fn game_over_page_state_is_ended() {
+        let mut reconciler = ObservationReconciler::default();
+        let mut session = GameSession::new(ObservationSource::BrowserSimulator);
+        let page = ObservationEvent::StructuredRaw {
+            raw: "PAGE_STATE|ended".into(),
+            source: ObservationSource::BrowserSimulator,
+            confidence: 0.9,
+        };
+        assert!(reconciler.reconcile(&mut session, &page).unwrap().applied);
+        assert_eq!(session.state.page_state, "ended");
+    }
+
+    #[test]
     fn opponent_attack_sets_combat_on_your_leader() {
         let mut reconciler = ObservationReconciler::default();
         let mut session = GameSession::new(ObservationSource::BrowserSimulator);
@@ -649,7 +662,7 @@ fn parse_page_state_raw(raw: &str) -> Option<String> {
         return None;
     }
     let state = parts[1].trim().to_ascii_lowercase();
-    matches!(state.as_str(), "queue" | "lobby" | "match").then_some(state)
+    matches!(state.as_str(), "queue" | "lobby" | "match" | "ended").then_some(state)
 }
 
 fn parse_player_name_raw(raw: &str) -> Option<(u8, String)> {

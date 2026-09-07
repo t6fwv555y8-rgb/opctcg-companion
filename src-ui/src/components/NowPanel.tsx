@@ -75,14 +75,12 @@ function CombatStrip({ analysis }: { analysis: CombatAnalysis }) {
 function RosterColumn({
   title,
   rows,
-  align = "left",
 }: {
   title: string;
   rows: string[];
-  align?: "left" | "right";
 }) {
   return (
-    <div className={align === "right" ? "text-right" : ""}>
+    <div>
       <div className="text-[10px] font-medium uppercase tracking-[0.16em] text-slate-500">
         {title}
       </div>
@@ -133,7 +131,9 @@ export function NowPanel({
       ? "In queue — the next line lands when the match starts."
       : pageState === "lobby"
         ? "In lobby — queue a match and this panel will follow."
-        : "Waiting for a readable position.";
+        : pageState === "ended"
+          ? "Game over — the recap lands as soon as the result is readable."
+          : "Waiting for a readable position.";
   const table = combatCoach ?? battleDoThis(combat, analysis);
   const fighting = Boolean(combat?.active || analysis);
   const line =
@@ -194,9 +194,9 @@ export function NowPanel({
       </section>
 
       {(you.length > 0 || them.length > 0) && (
-        <div className="grid grid-cols-2 gap-4 px-0.5">
+        <div className="flex flex-col gap-3 px-0.5">
+          <RosterColumn title="Them" rows={them} />
           <RosterColumn title="You" rows={you} />
-          <RosterColumn title="Them" rows={them} align="right" />
         </div>
       )}
 

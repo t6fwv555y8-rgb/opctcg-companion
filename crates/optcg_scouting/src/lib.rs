@@ -15,11 +15,14 @@
 //! cards an opponent runs is worth knowing; what happens when your fifty meet
 //! theirs is worth more, and no amount of reasoning about a matchup beats
 //! having played it ten times. So results are recorded too, per pairing of
-//! leaders, with the same refusal to overstate a small sample.
+//! leaders, with the same refusal to overstate a small sample. Each finished
+//! game also leaves a recap of how you played it — leftover DON, when life
+//! moved, how close it was — so the next game is not started cold.
 
 pub mod ledger;
 pub mod matchup;
 pub mod report;
+pub mod review;
 pub mod scout;
 
 pub use ledger::{
@@ -31,4 +34,5 @@ pub use report::{
     DeckMap, MappedCard, MatchupRead, Pace, Reliability, Standing, StrategyRead,
     MIN_GAMES_FOR_PACE, MIN_GAMES_FOR_STANDING, STAPLE_CONFIDENCE,
 };
+pub use review::{MatchReview, PlayTrack, MAX_REVIEWS};
 pub use scout::Scout;

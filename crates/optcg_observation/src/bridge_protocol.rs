@@ -10,7 +10,7 @@ pub struct BrowserGameSnapshot {
     pub turn: Option<u32>,
     pub phase: Option<String>,
     pub active_player: Option<String>,
-    /// `queue`, `lobby`, or `match` when the page can say where the player is.
+    /// `queue`, `lobby`, `match`, or `ended` when the page can say where the player is.
     #[serde(default)]
     pub page_state: Option<String>,
     #[serde(rename = "self")]

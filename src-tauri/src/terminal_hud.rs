@@ -118,6 +118,9 @@ fn print_hud(payload: &StateUpdatePayload) {
     out.push_str(&section("MATCHUP"));
     out.push_str(&matchup_block(payload.matchup.as_ref()));
     out.push_str(&rule('├', '─', '┤'));
+    out.push_str(&section("LAST GAME"));
+    out.push_str(&review_block(payload.review.as_ref()));
+    out.push_str(&rule('├', '─', '┤'));
     out.push_str(&section("COMBAT"));
     out.push_str(&combat_block(payload));
     out.push_str(&rule('├', '─', '┤'));
@@ -133,10 +136,10 @@ fn print_hud(payload: &StateUpdatePayload) {
 fn header(payload: &StateUpdatePayload) -> String {
     let gs = &payload.game_state;
     if gs.page_state == "queue" {
-        return format!(
-            "OPTCG Companion   IN QUEUE   seq {}",
-            gs.event_sequence
-        );
+        return format!("OPTCG Companion   IN QUEUE   seq {}", gs.event_sequence);
+    }
+    if gs.page_state == "ended" {
+        return format!("OPTCG Companion   GAME OVER   seq {}", gs.event_sequence);
     }
     let who = if gs.active_player == 0 { "YOU" } else { "OPP" };
     format!(
@@ -240,6 +243,17 @@ fn card_row(card: &ScoutedCardDto) -> String {
         truncate(&card.name, 16),
         (card.confidence * 100.0).round() as u32
     )
+}
+
+fn review_block(review: Option<&crate::dto::MatchReviewDto>) -> String {
+    let Some(review) = review else {
+        return line("No finished game to recap yet.");
+    };
+    let mut block = line(&review.headline);
+    for note in review.notes.iter().take(4) {
+        block.push_str(&line(note));
+    }
+    block
 }
 
 fn matchup_block(report: Option<&MatchupReportDto>) -> String {
