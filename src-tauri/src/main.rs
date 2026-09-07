@@ -5,6 +5,7 @@ mod commands;
 mod dto;
 mod runtime;
 mod state;
+mod terminal_hud;
 
 use optcg_database::{AssetParser, Database};
 use optcg_observation::{ObservationPipeline, SourceSelection};
@@ -17,6 +18,14 @@ use tauri::Manager;
 use tracing_subscriber::EnvFilter;
 
 fn main() {
+    if std::env::args()
+        .skip(1)
+        .any(|arg| matches!(arg.as_str(), "--terminal" | "--hud" | "hud"))
+    {
+        terminal_hud::run();
+        return;
+    }
+
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env().add_directive("info".parse().unwrap()))
         .init();
