@@ -133,7 +133,9 @@ export function NowPanel({
       ? "In queue — the next line lands when the match starts."
       : pageState === "lobby"
         ? "In lobby — queue a match and this panel will follow."
-        : "Waiting for a readable position.";
+        : pageState === "ended"
+          ? "Game over — the recap lands as soon as the result is readable."
+          : "Waiting for a readable position.";
   const table = combatCoach ?? battleDoThis(combat, analysis);
   const fighting = Boolean(combat?.active || analysis);
   const line =

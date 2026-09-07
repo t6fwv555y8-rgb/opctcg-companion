@@ -6,6 +6,7 @@
 //! evidence instead of nothing.
 
 use crate::matchup::{FinishedGame, LifeTrack, MatchupLedger, Outcome};
+use crate::review::{MatchReview, PlayTrack, MAX_REVIEWS};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -74,6 +75,9 @@ pub struct OpenGame {
     /// Life on both sides, from which the result is inferred.
     #[serde(default)]
     pub life: LifeTrack,
+    /// Your own play this game: cards shown, leftover DON, when you first hit.
+    #[serde(default)]
+    pub play: PlayTrack,
 }
 
 impl OpenGame {
@@ -88,6 +92,7 @@ impl OpenGame {
             your_leader_id: String::new(),
             your_leader_name: String::new(),
             life: LifeTrack::default(),
+            play: PlayTrack::default(),
         }
     }
 
@@ -265,6 +270,9 @@ pub struct ScoutingLedger {
     /// written before this existed still load.
     #[serde(default)]
     pub matchups: MatchupLedger,
+    /// Recaps of finished games, newest last. Defaulted so older files load.
+    #[serde(default)]
+    pub reviews: Vec<MatchReview>,
 }
 
 impl Default for ScoutingLedger {
@@ -274,6 +282,7 @@ impl Default for ScoutingLedger {
             profiles: Vec::new(),
             open: None,
             matchups: MatchupLedger::default(),
+            reviews: Vec::new(),
         }
     }
 }
@@ -341,11 +350,14 @@ impl ScoutingLedger {
         self.open = Some(OpenGame::new(game_id, leader_id, leader_name, now));
     }
 
-    /// Fold the open game into its profile and its matchup record.
+    /// Fold the open game into its profile, its matchup record, and a recap.
     pub fn close_open_game(&mut self, now: &str) {
         let Some(game) = self.open.take() else {
             return;
         };
+        if game.counts_as_played() {
+            self.push_review_from(&game, now);
+        }
         if game.counts_as_played() && !game.leader_id.is_empty() {
             self.matchups.fold_in(
                 &FinishedGame {
@@ -450,6 +462,50 @@ impl ScoutingLedger {
         }
     }
 
+    /// Note one of your own cards visible on `turn`.
+    pub fn record_your_card(&mut self, card_id: &str, copies: u32, turn: u32) {
+        if let Some(open) = self.open.as_mut() {
+            open.play.record_card(card_id, copies, turn);
+        }
+    }
+
+    /// Snapshot your leftover resources and the current board width.
+    pub fn record_your_end(&mut self, don: u32, hand: u32, board: u32) {
+        if let Some(open) = self.open.as_mut() {
+            open.play.observe_end(don, hand, board);
+        }
+    }
+
+    /// Life they have lost since their high-water mark.
+    pub fn record_your_strike(&mut self, dealt: u32, turn: u32) {
+        if let Some(open) = self.open.as_mut() {
+            open.play.observe_strike(dealt, turn);
+        }
+    }
+
+    /// The most recent recap, if any game has finished.
+    pub fn latest_review(&self) -> Option<&MatchReview> {
+        self.reviews.last()
+    }
+
+    fn has_review(&self, game_id: &str) -> bool {
+        self.reviews.iter().any(|r| r.game_id == game_id)
+    }
+
+    fn push_review_from(&mut self, game: &OpenGame, now: &str) {
+        if self.has_review(&game.game_id) {
+            return;
+        }
+        let Some(review) = MatchReview::from_open(game, now) else {
+            return;
+        };
+        self.reviews.push(review);
+        if self.reviews.len() > MAX_REVIEWS {
+            let extra = self.reviews.len() - MAX_REVIEWS;
+            self.reviews.drain(0..extra);
+        }
+    }
+
     pub fn open_tempo(&self) -> Tempo {
         self.open
             .as_ref()
@@ -494,6 +550,10 @@ impl ScoutingLedger {
             profile.cards.truncate(MAX_CARDS_PER_PROFILE);
         }
         self.matchups.prune();
+        if self.reviews.len() > MAX_REVIEWS {
+            let extra = self.reviews.len() - MAX_REVIEWS;
+            self.reviews.drain(0..extra);
+        }
     }
 }
 

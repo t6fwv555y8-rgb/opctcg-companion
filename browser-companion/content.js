@@ -1,7 +1,7 @@
-// OPTCG Companion page reader 0.2.7
+// OPTCG Companion page reader 0.2.8
 // Reads the OneSimulator board and hands it to background.js.
 
-const VERSION = "0.2.7";
+const VERSION = "0.2.8";
 const CARD_ID = /\b((?:OP|ST|EB|PRB|P)-\d{2}-\d{3}[A-Z]?)\b/i;
 const CARD_SRC = /\/cards\/(?:full|thumbnail)\/([^/.]+)\.webp/i;
 
@@ -146,11 +146,13 @@ function cleanName(raw) {
 }
 
 function pageState() {
-  const inMatch = Boolean(
-    document.querySelector(".game-board-shell") &&
-      document.querySelector("[data-zone-anchor]"),
-  );
-  if (inMatch) return "match";
+  const board = document.querySelector(".game-board-shell");
+  const inMatch = Boolean(board && document.querySelector("[data-zone-anchor]"));
+  if (inMatch) {
+    const text = board?.textContent ?? "";
+    if (/game over|winner|defeat|victory/i.test(text)) return "ended";
+    return "match";
+  }
 
   const href = String(location.href || "").toLowerCase();
   const text = String(document.body?.innerText || "").slice(0, 12000);
@@ -364,7 +366,7 @@ function readBoard() {
   const you = selfId(ids);
   const them = ids.find((id) => id !== you) || (you === "0" ? "1" : "0");
   const state = pageState();
-  const inMatch = state === "match";
+  const inMatch = state === "match" || state === "ended";
   const { phase, turn } = phaseAndTurn();
   const self = inMatch
     ? player(you, true)
@@ -394,10 +396,17 @@ function readBoard() {
       message:
         state === "match"
           ? "Game detected"
-          : state === "queue"
-            ? "In queue"
-            : "In lobby",
-      found: { queue: state === "queue", lobby: state === "lobby", match: inMatch },
+          : state === "ended"
+            ? "Game over"
+            : state === "queue"
+              ? "In queue"
+              : "In lobby",
+      found: {
+        queue: state === "queue",
+        lobby: state === "lobby",
+        match: state === "match",
+        ended: state === "ended",
+      },
     },
   };
 }
@@ -461,9 +470,11 @@ function send() {
             ? snapshot.combat
               ? "Companion is reading this battle"
               : "Companion is reading this match"
-            : state === "queue"
-              ? "In queue — companion is reading"
-              : "Companion ready — in lobby";
+            : state === "ended"
+              ? "Companion is writing the recap"
+              : state === "queue"
+                ? "In queue — companion is reading"
+                : "Companion ready — in lobby";
         paintStatus(label, true);
       } catch (err) {
         if (extensionGone(err)) {

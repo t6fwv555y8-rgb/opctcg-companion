@@ -127,6 +127,23 @@ pub struct MatchupReportDto {
     pub notes: Vec<String>,
 }
 
+/// How the last finished game went, for the HUD recap.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MatchReviewDto {
+    pub game_id: String,
+    /// `won`, `lost`, or absent when the result was not readable.
+    pub outcome: Option<String>,
+    pub headline: String,
+    pub your_leader: String,
+    pub their_leader: String,
+    pub last_turn: u32,
+    pub your_life: u32,
+    pub their_life: u32,
+    pub notes: Vec<String>,
+    /// Cards you showed, already named when the catalog knows them.
+    pub you_played: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScoutedCardDto {
     pub card_id: String,
@@ -311,6 +328,9 @@ pub struct StateUpdatePayload {
     /// How your deck has gone against this leader before, when it has.
     #[serde(default)]
     pub matchup: Option<MatchupReportDto>,
+    /// Recap of the last finished game, shown after the table goes quiet.
+    #[serde(default)]
+    pub review: Option<MatchReviewDto>,
     pub latency_ms: u64,
     pub observation: Option<ObservationStatusDto>,
 }

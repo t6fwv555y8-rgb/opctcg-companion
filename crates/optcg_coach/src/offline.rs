@@ -89,7 +89,8 @@ fn compose_answer(briefing: &str, question: &str) -> String {
 
     if let Some(options) = sections.get("Ranked options") {
         if let Some(best) = options.lines().next() {
-            let line = best.trim_start_matches(|c: char| c.is_ascii_digit() || c == '.' || c == ' ');
+            let line =
+                best.trim_start_matches(|c: char| c.is_ascii_digit() || c == '.' || c == ' ');
             parts.push(format!("Best line right now: {line}"));
         }
     }
@@ -104,6 +105,12 @@ fn compose_answer(briefing: &str, question: &str) -> String {
     if mentions_deck_strategy(question) {
         if let Some(decks) = sections.get("Decks") {
             parts.push(decks.trim().to_string());
+        }
+    }
+
+    if mentions_last_game(question) {
+        if let Some(review) = sections.get("Last game") {
+            parts.push(review.trim().to_string());
         }
     }
 
@@ -127,6 +134,19 @@ fn mentions_deck_strategy(question: &str) -> bool {
     ["deck", "matchup", "plan", "strategy", "against", "list"]
         .iter()
         .any(|needle| q.contains(needle))
+}
+
+fn mentions_last_game(question: &str) -> bool {
+    let q = question.to_ascii_lowercase();
+    [
+        "how did i play",
+        "last game",
+        "that game",
+        "recap",
+        "summary",
+    ]
+    .iter()
+    .any(|needle| q.contains(needle))
 }
 
 /// Split a briefing rendered by [`crate::grounding::GroundedContext::to_prompt`].
@@ -174,10 +194,7 @@ Play a character and attack the leader.
 Your deck: Red Luffy Aggro (leader ST01-001)";
 
     fn messages(question: &str) -> Vec<ChatMessage> {
-        vec![
-            ChatMessage::system(BRIEFING),
-            ChatMessage::user(question),
-        ]
+        vec![ChatMessage::system(BRIEFING), ChatMessage::user(question)]
     }
 
     #[tokio::test]
@@ -200,7 +217,10 @@ Your deck: Red Luffy Aggro (leader ST01-001)";
             .iter()
             .filter(|e| matches!(e, CoachEvent::TextDelta(_)))
             .count();
-        assert!(delta_count > 5, "expected incremental deltas, got {delta_count}");
+        assert!(
+            delta_count > 5,
+            "expected incremental deltas, got {delta_count}"
+        );
     }
 
     #[tokio::test]
@@ -236,6 +256,24 @@ Your deck: Red Luffy Aggro (leader ST01-001)";
             .await
             .unwrap();
         assert!(strategic.contains("Red Luffy Aggro"), "got: {strategic}");
+    }
+
+    #[tokio::test]
+    async fn a_last_game_question_gets_the_recap() {
+        let briefing = format!(
+            "{BRIEFING}\n\n## Last game\nWon on turn 8 — 2 life left\nEnded with 3 DON still up."
+        );
+        let messages = vec![
+            ChatMessage::system(briefing),
+            ChatMessage::user("How did I play that last game?"),
+        ];
+        let (sink, _r) = recording_sink();
+        let answer = OfflineProvider::instant()
+            .stream_chat(&messages, &sink, &CancelToken::new())
+            .await
+            .unwrap();
+        assert!(answer.contains("Won on turn 8"), "got: {answer}");
+        assert!(answer.contains("3 DON still up"), "got: {answer}");
     }
 
     #[tokio::test]

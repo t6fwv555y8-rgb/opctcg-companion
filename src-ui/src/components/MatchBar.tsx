@@ -67,17 +67,19 @@ export function MatchBar({
   const them = queued ? "–" : (gameState?.player_two.life ?? "–");
   const youLeader = cleanLeader(yourLeader);
   const themLeader = cleanLeader(theirLeader);
-  const inMatch = page === "match" && !queued;
+  const inMatch = (page === "match" || page === "ended") && !queued;
 
   const status = queued
     ? "In queue"
     : page === "lobby"
       ? "In lobby"
-      : page === "match" && hudState === "live"
-        ? "Live"
-        : hudState && hudState !== "live"
-          ? hudState
-          : null;
+      : page === "ended"
+        ? "Game over"
+        : page === "match" && hudState === "live"
+          ? "Live"
+          : hudState && hudState !== "live"
+            ? hudState
+            : null;
 
   return (
     <header className="shrink-0 border-b border-white/[0.06] px-3 py-2">
@@ -91,6 +93,9 @@ export function MatchBar({
           <span className="font-medium text-slate-300">
             {whoseTurn(gameState)} · {gameState.phase}
           </span>
+        )}
+        {page === "ended" && (
+          <span className="font-medium text-slate-300">Match finished</span>
         )}
         {queued && (
           <span className="font-medium text-hud-accent">Waiting for a match</span>

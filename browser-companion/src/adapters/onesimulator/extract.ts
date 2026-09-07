@@ -292,6 +292,14 @@ export function extractOneSimulatorSnapshot(
   return {
     timestamp: Date.now(),
     source: "onesimulator",
+    page_state:
+      session.phase === "ended"
+        ? "ended"
+        : session.phase === "active"
+          ? "match"
+          : session.phase === "lobby"
+            ? "lobby"
+            : null,
     turn: extractTurn(doc),
     phase: extractPhase(doc),
     active_player: null,

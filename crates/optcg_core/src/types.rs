@@ -420,7 +420,7 @@ pub struct GameState {
     pub event_log: Vec<String>,
     pub timestamp: DateTime<Utc>,
     pub last_processed_fingerprint: Option<String>,
-    /// `queue`, `lobby`, or `match` when the live page reports it.
+    /// `queue`, `lobby`, `match`, or `ended` when the live page reports it.
     #[serde(default)]
     pub page_state: String,
 }

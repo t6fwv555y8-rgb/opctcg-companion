@@ -11,6 +11,7 @@ const SUGGESTIONS = [
   "What should I do this turn?",
   "Can I survive this attack?",
   "How does this matchup play out?",
+  "How did I play that last game?",
 ];
 
 const ENDING_NOTE: Record<Exclude<FinishReason, "complete">, string> = {
