@@ -65,23 +65,67 @@ function isRested(el: Element): boolean | null {
   return false;
 }
 
-function resolveSelfPlayerId(doc: Document): string | null {
-  const handAnchors = doc.querySelectorAll(`[data-zone-anchor$=":${ZONES.hand}"]`);
-  let selfId: string | null = null;
-  let maxTop = -1;
-  for (const anchor of handAnchors) {
-    const pid = anchor.getAttribute("data-zone-anchor")?.split(":")[0];
-    if (!pid) continue;
-    const parent = anchor.closest('[class*="items-end"], [class*="items-start"]');
-    const isSelf =
-      parent?.className?.toString().includes("items-end") ?? false;
-    const top = anchor.getBoundingClientRect().top;
-    if (isSelf || top > maxTop) {
-      maxTop = top;
-      selfId = pid;
+function midY(el: Element): number | null {
+  const r = el.getBoundingClientRect();
+  if (r.width <= 2 && r.height <= 2) return null;
+  return (r.top + r.bottom) / 2;
+}
+
+/** Visual midpoint of one seat. Larger Y is lower on the screen. */
+function seatY(playerId: string, doc: Document): number | null {
+  const prefer = [
+    `[data-card-zone="${ZONES.leader}"][data-card-player-id="${playerId}"]`,
+    `[data-card-zone="${ZONES.character}"][data-card-player-id="${playerId}"]`,
+    `[data-card-zone="${ZONES.life}"][data-card-player-id="${playerId}"]`,
+    `[data-card-zone="${ZONES.hand}"][data-card-player-id="${playerId}"]`,
+    `[data-zone-anchor^="${playerId}:"]`,
+  ];
+  for (const sel of prefer) {
+    let sum = 0;
+    let n = 0;
+    doc.querySelectorAll(sel).forEach((el) => {
+      const y = midY(el);
+      if (y != null) {
+        sum += y;
+        n += 1;
+      }
+    });
+    if (n) return sum / n;
+  }
+  return null;
+}
+
+/** You sit at the bottom of the board. They sit at the top. */
+export function resolveSelfPlayerId(
+  doc: Document,
+  ids: string[] = [],
+): string | null {
+  const known = ids.length
+    ? ids
+    : [...doc.querySelectorAll(SELECTORS.cardPlayer)]
+        .map((el) => el.getAttribute("data-card-player-id"))
+        .filter((id): id is string => Boolean(id));
+  const unique = [...new Set(known)];
+  if (!unique.length) return null;
+  const placed = unique
+    .map((id) => ({ id, y: seatY(id, doc) }))
+    .filter((s): s is { id: string; y: number } => s.y != null)
+    .sort((a, b) => b.y - a.y);
+  if (placed.length >= 2 && placed[0].y - placed[1].y > 4) return placed[0].id;
+  if (placed.length === 1) return placed[0].id;
+
+  let best: string | null = null;
+  let max = 0;
+  for (const id of unique) {
+    const n = doc.querySelectorAll(
+      `[data-card-zone="${ZONES.hand}"][data-card-player-id="${id}"] img[src*="/cards/"]`,
+    ).length;
+    if (n > max) {
+      max = n;
+      best = id;
     }
   }
-  return selfId;
+  return max > 0 ? best : unique[0] ?? null;
 }
 
 function countLife(playerId: string, doc: Document): number | null {
@@ -273,7 +317,6 @@ export function extractOneSimulatorSnapshot(
 ): BrowserGameSnapshot {
   const diag = diagnosticsWithHealth(doc);
   const session = detectGameSession(doc);
-  const selfPid = resolveSelfPlayerId(doc);
   const playerIds = new Set<string>();
   doc.querySelectorAll(SELECTORS.cardPlayer).forEach((el) => {
     const pid = el.getAttribute("data-card-player-id");
@@ -286,7 +329,7 @@ export function extractOneSimulatorSnapshot(
   });
 
   const ids = [...playerIds].sort();
-  const selfId = selfPid ?? ids[0] ?? "0";
+  const selfId = resolveSelfPlayerId(doc, ids) ?? ids[0] ?? "0";
   const oppId = ids.find((id) => id !== selfId) ?? (selfId === "0" ? "1" : "0");
 
   return {

@@ -1,7 +1,7 @@
-// OPTCG Companion page reader 0.2.8
+// OPTCG Companion page reader 0.2.9
 // Reads the OneSimulator board and hands it to background.js.
 
-const VERSION = "0.2.8";
+const VERSION = "0.2.9";
 const CARD_ID = /\b((?:OP|ST|EB|PRB|P)-\d{2}-\d{3}[A-Z]?)\b/i;
 const CARD_SRC = /\/cards\/(?:full|thumbnail)\/([^/.]+)\.webp/i;
 
@@ -41,18 +41,64 @@ function playerIds() {
   return [...ids].sort();
 }
 
-function selfId(ids) {
-  let best = ids[0] || "0";
-  let maxTop = -1;
-  document.querySelectorAll('[data-zone-anchor$=":hand"]').forEach((el) => {
-    const id = el.getAttribute("data-zone-anchor")?.split(":")[0];
-    const top = el.getBoundingClientRect().top;
-    if (id && top >= maxTop) {
-      maxTop = top;
+function midY(el) {
+  const r =
+    typeof el.getBoundingClientRect === "function"
+      ? el.getBoundingClientRect()
+      : { width: 0, height: 0, top: 0, bottom: 0 };
+  if (r.width <= 2 && r.height <= 2) return null;
+  return (r.top + r.bottom) / 2;
+}
+
+// Visual midpoint of one seat. Larger Y is lower on the screen.
+function seatY(playerId) {
+  const prefer = [
+    `[data-card-zone="leader"][data-card-player-id="${playerId}"]`,
+    `[data-card-zone="character"][data-card-player-id="${playerId}"]`,
+    `[data-card-zone="life"][data-card-player-id="${playerId}"]`,
+    `[data-card-zone="hand"][data-card-player-id="${playerId}"]`,
+    `[data-zone-anchor^="${playerId}:"]`,
+  ];
+  for (const sel of prefer) {
+    let sum = 0;
+    let n = 0;
+    document.querySelectorAll(sel).forEach((el) => {
+      const y = midY(el);
+      if (y != null) {
+        sum += y;
+        n += 1;
+      }
+    });
+    if (n) return sum / n;
+  }
+  return null;
+}
+
+function faceUpHandId(ids) {
+  let best = null;
+  let max = 0;
+  for (const id of ids) {
+    const n = document.querySelectorAll(
+      `[data-card-zone="hand"][data-card-player-id="${id}"] img[src*="/cards/"]`,
+    ).length;
+    if (n > max) {
+      max = n;
       best = id;
     }
-  });
-  return best;
+  }
+  return max > 0 ? best : null;
+}
+
+// You sit at the bottom of the board. They sit at the top.
+function selfId(ids) {
+  if (!ids.length) return "0";
+  const placed = ids
+    .map((id) => ({ id, y: seatY(id) }))
+    .filter((s) => s.y != null)
+    .sort((a, b) => b.y - a.y);
+  if (placed.length >= 2 && placed[0].y - placed[1].y > 4) return placed[0].id;
+  if (placed.length === 1) return placed[0].id;
+  return faceUpHandId(ids) || ids[0] || "0";
 }
 
 function life(playerId) {
