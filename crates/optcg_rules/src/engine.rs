@@ -123,7 +123,7 @@ impl RulesEngine {
             }
             Phase::Main => {
                 if state.combat.active {
-                    CombatMath::do_this(state, None)
+                    CombatMath::do_this(state, None, None)
                         .map(|battle| battle.line)
                         .unwrap_or_else(|| {
                             "Combat in Main — resolve attack/block, then continue developing."
@@ -138,7 +138,7 @@ impl RulesEngine {
                         .into()
                 }
             }
-            Phase::Combat => CombatMath::do_this(state, None)
+            Phase::Combat => CombatMath::do_this(state, None, None)
                 .map(|battle| battle.line)
                 .unwrap_or_else(|| {
                     if state.combat.blocker_offered {
@@ -403,6 +403,9 @@ mod tests {
         };
         let line = RulesEngine::phase_coach(&state);
         assert!(line.to_lowercase().contains("swinging"));
-        assert!(line.to_lowercase().contains("your leader"));
+        assert!(
+            line.contains("ST01-012") || line.contains("ST01-001"),
+            "expected the cards on the table, got {line}"
+        );
     }
 }

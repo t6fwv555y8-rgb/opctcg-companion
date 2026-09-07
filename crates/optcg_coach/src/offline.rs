@@ -110,13 +110,13 @@ fn compose_answer(briefing: &str, question: &str) -> String {
     if parts.is_empty() {
         return "No live board state is available yet, so there is nothing to coach from. \
 Connect the simulator and the coach will read the board automatically. \
-Set OPTCG_LLM_API_KEY to get conversational answers."
+Set a model key on the Setup tab (or OPTCG_LLM_API_KEY) for conversational answers."
             .to_string();
     }
 
     parts.push(
-        "(Offline coach: answering from the rules engine. Set OPTCG_LLM_API_KEY for \
-conversational answers.)"
+        "(Offline coach: answering from the rules engine. Set a model key on the Setup tab \
+or OPTCG_LLM_API_KEY for conversational answers.)"
             .to_string(),
     );
     parts.join("\n\n")

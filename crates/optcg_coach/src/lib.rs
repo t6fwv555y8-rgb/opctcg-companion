@@ -20,6 +20,7 @@
 
 pub mod auto;
 pub mod grounding;
+pub mod llm_settings;
 pub mod offline;
 pub mod openai;
 pub mod provider;
@@ -32,6 +33,9 @@ pub use grounding::{
     build_context, estimate_counters, fingerprint, is_decision_point, ContextScope,
     CounterEstimate, DeckContext, GroundedContext, ListStanding, MatchupBrief, ScoutingBrief,
     SYSTEM_PROMPT,
+};
+pub use llm_settings::{
+    key_hint, key_source, resolve_config, LlmKeySource, LlmSettings,
 };
 pub use offline::OfflineProvider;
 pub use openai::{OpenAiConfig, OpenAiProvider, DEFAULT_BASE_URL, DEFAULT_MODEL};
@@ -48,7 +52,11 @@ pub use types::{
 /// Returning the offline provider rather than an error means the HUD always has
 /// a working coach; the UI shows which one is active.
 pub fn provider_from_env() -> std::sync::Arc<dyn ChatProvider> {
-    let config = OpenAiConfig::from_env();
+    provider_from_config(OpenAiConfig::from_env())
+}
+
+/// Build a provider from an already-resolved config, falling back to offline.
+pub fn provider_from_config(config: OpenAiConfig) -> std::sync::Arc<dyn ChatProvider> {
     if config.is_configured() {
         match OpenAiProvider::new(config) {
             Ok(provider) => return std::sync::Arc::new(provider),

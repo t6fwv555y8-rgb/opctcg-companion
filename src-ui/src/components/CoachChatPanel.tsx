@@ -224,7 +224,7 @@ export function CoachChatPanel() {
             title={
               coach.status?.live
                 ? `Answers from ${provider}`
-                : "No model API key set — answering from the rules engine. Set OPTCG_LLM_API_KEY for conversational answers."
+                : "No model key set — answering from the rules engine. Add a key on the Setup tab for conversational answers."
             }
             className={`rounded px-1.5 py-0.5 font-mono text-[8px] ${
               coach.status?.live

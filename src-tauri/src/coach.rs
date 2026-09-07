@@ -1,14 +1,16 @@
 use crate::dto::DeckOrigin;
 use crate::state::AppState;
 use optcg_coach::{
-    AutoDecision, AutoTrigger, CancelReason, CancelToken, ChatMessage, ChatProvider, CoachError,
-    CoachEvent, CoachSession, CoachStreamEvent, CoalescingSink, ContextScope, DeckContext,
-    EventSink, FlushTicker, ListStanding, StateFingerprint, TurnKind, TurnSummary,
+    key_hint, key_source, provider_from_config, resolve_config, AutoDecision, AutoTrigger,
+    CancelReason, CancelToken, ChatMessage, ChatProvider, CoachError, CoachEvent, CoachSession,
+    CoachStreamEvent, CoalescingSink, ContextScope, DeckContext, EventSink, FlushTicker,
+    ListStanding, LlmKeySource, LlmSettings, StateFingerprint, TurnKind, TurnSummary,
     DEFAULT_FLUSH_INTERVAL_MS, SYSTEM_PROMPT,
 };
 use optcg_scouting::{DeckMap, StrategyRead};
 use parking_lot::Mutex;
 use serde::Serialize;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
@@ -24,36 +26,96 @@ pub const COACH_EVENT: &str = "coach://event";
 /// Provider plus conversation state, managed separately from [`AppState`] so a
 /// streaming turn can own everything it needs without borrowing app state.
 pub struct CoachRuntime {
-    provider: Arc<dyn ChatProvider>,
+    provider: Mutex<Arc<dyn ChatProvider>>,
+    settings: Mutex<LlmSettings>,
+    data_dir: PathBuf,
     session: Arc<Mutex<CoachSession>>,
     auto: Arc<Mutex<AutoTrigger>>,
     scope: Arc<Mutex<ContextScope>>,
 }
 
 impl CoachRuntime {
-    pub fn from_env() -> Self {
-        let provider = optcg_coach::provider_from_env();
+    pub fn new(data_dir: PathBuf) -> Self {
+        let settings = LlmSettings::load(&data_dir);
+        let provider = provider_from_config(resolve_config(&settings));
         tracing::info!(
             provider = %provider.label(),
             live = provider.is_live(),
+            source = ?key_source(&settings),
             "coach provider selected"
         );
         Self {
-            provider,
+            provider: Mutex::new(provider),
+            settings: Mutex::new(settings),
+            data_dir,
             session: Arc::new(Mutex::new(CoachSession::new())),
             auto: Arc::new(Mutex::new(AutoTrigger::default())),
             scope: Arc::new(Mutex::new(ContextScope::default())),
         }
     }
 
+    fn current_provider(&self) -> Arc<dyn ChatProvider> {
+        self.provider.lock().clone()
+    }
+
+    fn reload_provider(&self) {
+        let settings = self.settings.lock().clone();
+        let provider = provider_from_config(resolve_config(&settings));
+        tracing::info!(
+            provider = %provider.label(),
+            live = provider.is_live(),
+            source = ?key_source(&settings),
+            "coach provider updated"
+        );
+        *self.provider.lock() = provider;
+    }
+
+    pub fn llm_status(&self) -> CoachLlmDto {
+        let settings = self.settings.lock().clone();
+        let config = resolve_config(&settings);
+        let provider = self.current_provider();
+        let source = key_source(&settings);
+        CoachLlmDto {
+            configured: config.is_configured(),
+            live: provider.is_live(),
+            source,
+            provider: provider.label(),
+            model: config.model,
+            base_url: config.base_url,
+            key_hint: key_hint(&config.api_key),
+        }
+    }
+
+    pub fn save_llm(
+        &self,
+        api_key: Option<String>,
+        model: String,
+        base_url: String,
+    ) -> Result<CoachLlmDto, String> {
+        let mut settings = self.settings.lock().clone();
+        settings.apply_update(api_key, model, base_url);
+        settings.save(&self.data_dir)?;
+        *self.settings.lock() = settings;
+        self.reload_provider();
+        Ok(self.llm_status())
+    }
+
+    pub fn clear_llm(&self) -> Result<CoachLlmDto, String> {
+        LlmSettings::clear(&self.data_dir)?;
+        *self.settings.lock() = LlmSettings::default();
+        self.reload_provider();
+        Ok(self.llm_status())
+    }
+
     pub fn status(&self) -> CoachStatusDto {
         // Each bound before taking the session lock; none are held together.
+        let provider = self.current_provider();
         let auto_enabled = self.auto.lock().is_enabled();
         let context = *self.scope.lock();
         let session = self.session.lock();
         CoachStatusDto {
-            provider: self.provider.label(),
-            live: self.provider.is_live(),
+            provider: provider.label(),
+            live: provider.is_live(),
             busy: session.is_busy(),
             active_turn: session.active_turn(),
             automatic: session.active_kind() == Some(TurnKind::Auto),
@@ -76,8 +138,20 @@ pub struct CoachStatusDto {
     pub automatic: bool,
     /// True when board changes trigger reads on their own.
     pub auto_enabled: bool,
-    /// What the next turn will send to the model.
+        /// What the next turn will send to the model.
     pub context: ContextScope,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CoachLlmDto {
+    pub configured: bool,
+    pub live: bool,
+    pub source: LlmKeySource,
+    pub provider: String,
+    pub model: String,
+    pub base_url: String,
+    /// Last four characters of the effective key, never the secret itself.
+    pub key_hint: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -363,7 +437,7 @@ fn spawn_turn(app: AppHandle, coach: &CoachRuntime, turn_id: u64, cancel: Cancel
     // Captured at turn start, so toggling sharing mid-answer cannot change
     // what was already sent.
     let scope = *coach.scope.lock();
-    let provider = Arc::clone(&coach.provider);
+    let provider = coach.current_provider();
     let session = Arc::clone(&coach.session);
     tauri::async_runtime::spawn(async move {
         run_turn(
@@ -534,6 +608,27 @@ pub fn coach_status(coach: tauri::State<'_, CoachRuntime>) -> CoachStatusDto {
     coach.status()
 }
 
+#[tauri::command]
+pub fn coach_llm_settings(coach: tauri::State<'_, CoachRuntime>) -> CoachLlmDto {
+    coach.llm_status()
+}
+
+/// Save a model key. An empty `api_key` keeps the one already stored.
+#[tauri::command]
+pub fn coach_set_llm(
+    coach: tauri::State<'_, CoachRuntime>,
+    api_key: Option<String>,
+    model: String,
+    base_url: String,
+) -> Result<CoachLlmDto, String> {
+    coach.save_llm(api_key, model, base_url)
+}
+
+#[tauri::command]
+pub fn coach_clear_llm(coach: tauri::State<'_, CoachRuntime>) -> Result<CoachLlmDto, String> {
+    coach.clear_llm()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -663,6 +758,32 @@ mod tests {
             .expect("a finished game should reach the coach");
         assert_eq!((matchup.wins, matchup.losses), (1, 0));
         assert_eq!(matchup.standing, "too early to call");
+    }
+
+    #[test]
+    fn a_saved_key_switches_the_coach_on() {
+        let dir = isolated_data_dir();
+        let coach = CoachRuntime::new(dir.clone());
+        if optcg_coach::key_source(&optcg_coach::LlmSettings::default())
+            == optcg_coach::LlmKeySource::None
+        {
+            assert!(!coach.status().live);
+            assert!(!coach.llm_status().configured);
+        }
+
+        let status = coach
+            .save_llm(
+                Some("sk-test-key".into()),
+                "gpt-4o-mini".into(),
+                "https://api.openai.com/v1".into(),
+            )
+            .unwrap();
+        assert!(status.live);
+        assert!(status.configured);
+        assert_eq!(status.key_hint.as_deref(), Some("…-key"));
+        assert!(LlmSettings::path(&dir).exists());
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// A directory of its own per call. Tests in a crate share one process and
