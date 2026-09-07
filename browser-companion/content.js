@@ -282,7 +282,15 @@ function observeCombat(you, them) {
   if (yours.length && theirs.length) {
     const yourChar = yours.find((el) => el.getAttribute("data-card-zone") === "character");
     const theirChar = theirs.find((el) => el.getAttribute("data-card-zone") === "character");
-    if (yourChar && !theirChar) {
+    const yourRested = yours.find((el) => `${el.className || ""}`.includes("rotate-90"));
+    const theirRested = theirs.find((el) => `${el.className || ""}`.includes("rotate-90"));
+    if (theirRested && !yourRested) {
+      attackerEl = theirRested;
+      targetEl = yours[0];
+    } else if (yourRested && !theirRested) {
+      attackerEl = yourRested;
+      targetEl = theirs[0];
+    } else if (yourChar && !theirChar) {
       attackerEl = yourChar;
       targetEl = theirs[0];
     } else if (theirChar && !yourChar) {
