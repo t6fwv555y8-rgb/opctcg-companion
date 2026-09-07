@@ -465,7 +465,7 @@ fn matchup_plan(you: &DeckProfile, opp: &DeckProfile) -> String {
 
 fn turn_priorities(state: &GameState, you: &DeckProfile, _opp: &DeckProfile) -> Vec<String> {
     if state.combat.active {
-        if let Some(battle) = crate::combat_math::CombatMath::do_this(state, None) {
+        if let Some(battle) = crate::combat_math::CombatMath::do_this(state, None, None) {
             return battle.steps;
         }
     }

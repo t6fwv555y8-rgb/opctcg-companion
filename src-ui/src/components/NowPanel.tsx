@@ -46,17 +46,17 @@ export function NowPanel({
       : pageState === "lobby"
         ? "In lobby — queue a match and this panel will follow."
         : "Waiting for a readable position.";
-  const battle = combatCoach ?? battleDoThis(combat, analysis);
-  const fighting = Boolean(battle || combat?.active || analysis);
-  const line = fighting
-    ? battle?.line || phaseCoach?.trim() || waiting
-    : strategy?.action.description?.trim() ||
-      phaseCoach?.trim() ||
-      waiting;
-  const steps = fighting
-    ? (battle?.steps?.length ? battle.steps : []).slice(0, 3)
-    : (deckStrategy?.this_turn.slice(0, 3) ?? []);
-  const alts = fighting
+  const table = combatCoach ?? battleDoThis(combat, analysis);
+  const fighting = Boolean(combat?.active || analysis);
+  const line =
+    table?.line?.trim() ||
+    (!fighting && strategy?.action.description?.trim()) ||
+    phaseCoach?.trim() ||
+    waiting;
+  const steps = (
+    table?.steps?.length ? table.steps : (deckStrategy?.this_turn ?? [])
+  ).slice(0, 6);
+  const alts = table
     ? []
     : options
         .filter((opt) => opt.action.description?.trim() !== line)
