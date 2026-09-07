@@ -54,7 +54,7 @@ export interface ContextScope {
 }
 
 export interface CoachStatus {
-  /** Model name, or `Offline coach` when no API key is configured. */
+  /** Model name, or `Rayleigh` when no API key is configured. */
   provider: string;
   live: boolean;
   busy: boolean;

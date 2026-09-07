@@ -6,6 +6,10 @@ interface Props {
   theirName: string;
   yourLeader: string;
   theirLeader: string;
+  yourLeaderId?: string;
+  theirLeaderId?: string;
+  yourLeaderText?: string;
+  theirLeaderText?: string;
   hudState: HudOperatingStateKind | null;
   sourceLabel: string | null;
 }
@@ -14,22 +18,29 @@ function whoseTurn(gs: GameStateDto): string {
   return gs.active_player === 0 ? "Your turn" : "Their turn";
 }
 
-function cleanLeader(name: string | null | undefined): string {
+function formatLeader(
+  name: string | null | undefined,
+  id: string | null | undefined,
+): string {
   const n = name?.trim() ?? "";
-  if (!n || n === "Unknown leader") return "";
-  return n;
+  const card = id?.trim() ?? "";
+  if (n && n !== "Unknown leader" && card && n !== card) return `${n} · ${card}`;
+  if (n && n !== "Unknown leader") return n;
+  return card;
 }
 
 function Side({
   life,
   name,
   leader,
+  text,
   don,
   you,
 }: {
   life: string | number;
   name: string;
   leader: string;
+  text?: string;
   don: number | null;
   you?: boolean;
 }) {
@@ -47,7 +58,12 @@ function Side({
           {name}
         </div>
         {leader && (
-          <div className="truncate text-[11px] text-slate-500">{leader}</div>
+          <div className="truncate text-[11px] text-amber-100/80">{leader}</div>
+        )}
+        {text && (
+          <div className="mt-0.5 line-clamp-2 text-[10px] leading-snug text-slate-500">
+            {text}
+          </div>
         )}
       </div>
       {don != null && (
@@ -63,6 +79,10 @@ export function MatchBar({
   theirName,
   yourLeader,
   theirLeader,
+  yourLeaderId,
+  theirLeaderId,
+  yourLeaderText,
+  theirLeaderText,
   hudState,
   sourceLabel,
 }: Props) {
@@ -71,8 +91,8 @@ export function MatchBar({
   const live = hudState === "live" || queued;
   const you = queued ? "–" : (gameState?.player_one.life ?? "–");
   const them = queued ? "–" : (gameState?.player_two.life ?? "–");
-  const youLeader = cleanLeader(yourLeader);
-  const themLeader = cleanLeader(theirLeader);
+  const youLeader = formatLeader(yourLeader, yourLeaderId);
+  const themLeader = formatLeader(theirLeader, theirLeaderId);
   const inMatch = (page === "match" || page === "ended") && !queued;
 
   const status = queued
@@ -112,12 +132,14 @@ export function MatchBar({
           life={them}
           name={theirName || "Opponent"}
           leader={themLeader}
+          text={inMatch ? theirLeaderText : undefined}
           don={inMatch ? (gameState?.player_two.active_don ?? 0) : null}
         />
         <Side
           life={you}
           name={yourName || "You"}
           leader={youLeader}
+          text={inMatch ? yourLeaderText : undefined}
           don={inMatch ? (gameState?.player_one.active_don ?? 0) : null}
           you
         />

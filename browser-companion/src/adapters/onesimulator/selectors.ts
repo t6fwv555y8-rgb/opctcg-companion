@@ -48,7 +48,8 @@ export const REQUIRED_FOR_GAME = [
 
 /** Card ID pattern: OP01-001, ST01-001, EB01-001, P-001, DON, etc. */
 export const CARD_ID_RE =
-  /\b((?:OP|ST|EB|P|PRB|DP|UC|CP|L|SEC|SR|R|UC|C|P)-?\d{2,3}-?\d{3}[a-zA-Z]?|DON-?\d*)\b/i;
+  /\b((?:OP|ST|EB|PRB|DP)\d{2}-\d{3}[A-Z]?|P-\d{3}[A-Z]?)\b/i;
 
 /** Extract card id from image src like /cards/full/OP01-001.webp */
-export const CARD_SRC_RE = /\/cards\/(?:full|thumbnail)\/([^/.]+)\.webp/i;
+export const CARD_SRC_RE =
+  /(?:\/cards\/(?:full|thumbnail)\/|\/card(?:s|[-_]?images)?\/)([^/.?#]+)\.(?:webp|png|jpe?g)/i;

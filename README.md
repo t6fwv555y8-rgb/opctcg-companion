@@ -291,13 +291,13 @@ Real play has natural pauses; a synthetic stream does not.
 
 ### Configuration
 
-Without an API key the panel still works: the **Offline coach** answers from
+Without an API key the panel still works: **Rayleigh** answers from
 the rules engine and streams the same way, so nothing needs configuring to try
 it.
 
 To get conversational answers, open **Setup** and paste an OpenAI API key
 (platform.openai.com → API keys), then **Save and use**. The key stays in the
-app data folder on this machine. Ask’s badge should switch from `Offline coach`
+app data folder on this machine. Ask’s badge should switch from `Rayleigh`
 to the model name (`gpt-4o-mini` by default).
 
 You can also put the key in a gitignored `.env` / `.env.local` next to

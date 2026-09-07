@@ -219,7 +219,7 @@ export function CoachChatPanel() {
   return (
     <div className="hud-panel p-3">
       <div className="flex items-center justify-between gap-2">
-        <div className="hud-title">Ask the Coach</div>
+        <div className="hud-title">Ask Rayleigh</div>
         <div className="flex items-center gap-1">
           <span
             title={
@@ -319,7 +319,7 @@ export function CoachChatPanel() {
                   submit(draft);
                 }
               }}
-              placeholder="Ask about this board…"
+              placeholder="Ask Rayleigh about this board…"
               rows={2}
               className="min-w-0 flex-1 resize-none rounded border border-slate-700 bg-slate-950/80 px-3 py-2 text-sm leading-snug text-slate-200 placeholder:text-slate-600 focus:border-hud-accent/50 focus:outline-none"
             />

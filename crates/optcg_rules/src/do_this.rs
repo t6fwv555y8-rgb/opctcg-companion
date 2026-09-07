@@ -144,6 +144,7 @@ struct SideView {
     hand_count: u32,
     leader_id: String,
     leader_name: String,
+    leader_text: String,
     leader_power: i32,
 }
 
@@ -266,17 +267,23 @@ impl<'a> Table<'a> {
 
     fn side_roster(&self, player: usize) -> Vec<String> {
         let side = if player == 0 { &self.you } else { &self.them };
-        if side.leader_id.is_empty() && self.state.players[player].characters.is_empty() {
+        if side.leader_id.is_empty()
+            && side.leader_name.is_empty()
+            && self.state.players[player].characters.is_empty()
+        {
             return Vec::new();
         }
         let mut rows = Vec::new();
-        if !side.leader_id.is_empty() {
+        if !side.leader_id.is_empty() || !side.leader_name.is_empty() {
             rows.push(format!(
                 "{} · {} · {} life",
                 named(&side.leader_name, &side.leader_id),
                 fmt_power(side.leader_power),
                 side.life
             ));
+            if !side.leader_text.is_empty() {
+                rows.push(clip_text(&side.leader_text, 140));
+            }
         }
         if side.don_active > 0 || side.don_rested > 0 || (player == 0 && side.hand_count > 0) {
             let mut meta = format!("{} DON · {} rest", side.don_active, side.don_rested);
@@ -542,7 +549,7 @@ impl<'a> Table<'a> {
 
 fn side_view(player: &PlayerState, repo: Option<&CardRepository<'_>>) -> SideView {
     let leader_id = player.leader.card_id.clone();
-    let leader_name = lookup(repo, &leader_id);
+    let (leader_name, leader_text) = resolve_leader(repo, &leader_id, &player.leader_name);
     SideView {
         life: player.life,
         don_active: player.don_active,
@@ -550,18 +557,66 @@ fn side_view(player: &PlayerState, repo: Option<&CardRepository<'_>>) -> SideVie
         hand_count: player.hand_count,
         leader_name,
         leader_id,
+        leader_text,
         leader_power: player.leader.effective_power() as i32,
     }
 }
 
-fn lookup(repo: Option<&CardRepository<'_>>, id: &str) -> String {
-    if id.is_empty() || id.eq_ignore_ascii_case("leader") {
-        return "leader".into();
+fn resolve_leader(
+    repo: Option<&CardRepository<'_>>,
+    id: &str,
+    observed: &str,
+) -> (String, String) {
+    if let Some(def) = repo.and_then(|r| {
+        if id.is_empty() || id.eq_ignore_ascii_case("leader") {
+            None
+        } else {
+            r.get_by_id(id).ok()
+        }
+    }) {
+        let name = if def.name.is_empty() {
+            if !observed.is_empty() {
+                observed.to_string()
+            } else {
+                id.to_string()
+            }
+        } else {
+            def.name
+        };
+        return (name, def.rules_text);
     }
-    repo.and_then(|r| r.get_by_id(id).ok())
-        .map(|d| d.name)
-        .filter(|n| !n.is_empty())
-        .unwrap_or_else(|| id.to_string())
+    if !observed.is_empty() {
+        if let Some(def) = repo.and_then(|r| {
+            r.search_by_name(observed, 6).ok().and_then(|hits| {
+                hits.into_iter().find(|d| {
+                    d.card_type == optcg_core::CardType::Leader
+                        && d.name.eq_ignore_ascii_case(observed)
+                })
+            })
+        }) {
+            return (def.name, def.rules_text);
+        }
+        return (observed.to_string(), String::new());
+    }
+    if id.is_empty() || id.eq_ignore_ascii_case("leader") {
+        ("leader".into(), String::new())
+    } else {
+        (id.to_string(), String::new())
+    }
+}
+
+fn lookup(repo: Option<&CardRepository<'_>>, id: &str) -> String {
+    resolve_leader(repo, id, "").0
+}
+
+fn clip_text(text: &str, max: usize) -> String {
+    let one = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if one.chars().count() <= max {
+        return one;
+    }
+    let mut clipped: String = one.chars().take(max.saturating_sub(1)).collect();
+    clipped.push('…');
+    clipped
 }
 
 fn named(name: &str, id: &str) -> String {
@@ -692,6 +747,25 @@ mod tests {
             .them
             .iter()
             .any(|s| s.contains("Usopp") || s.contains("ST01-002")));
+    }
+
+    #[test]
+    fn roster_keeps_an_observed_leader_name_when_the_id_is_unknown() {
+        let db = Database::open_in_memory().unwrap();
+        AssetParser::seed_defaults(&db).unwrap();
+        let repo = CardRepository::new(&db);
+        let mut state = GameState::new();
+        state.phase = Phase::Main;
+        state.player_two_mut().set_leader_id("OP13-001");
+        state.player_two_mut().set_leader_name("Silvers Rayleigh");
+        let plan = table_do_this(&state, &repo).unwrap();
+        assert!(
+            plan.them
+                .iter()
+                .any(|s| s.contains("Silvers Rayleigh") && s.contains("OP13-001")),
+            "{:?}",
+            plan.them
+        );
     }
 
     #[test]

@@ -95,6 +95,18 @@ impl ObservationReconciler {
                     confidence,
                 });
             }
+            if let Some((player_idx, name)) = parse_leader_name_raw(raw) {
+                if let Some(p) = session.state.player_mut(player_idx) {
+                    p.set_leader_name(name);
+                }
+                return Ok(ReconcileOutcome {
+                    applied: true,
+                    game_events: vec![],
+                    corrected: false,
+                    rejection_reason: None,
+                    confidence,
+                });
+            }
             if let Some((player_idx, name)) = parse_deck_name_raw(raw) {
                 if let Some(p) = session.state.player_mut(player_idx) {
                     p.deck_name = name;
@@ -547,6 +559,20 @@ mod tests {
     }
 
     #[test]
+    fn leader_name_structured_raw_applied() {
+        let mut reconciler = ObservationReconciler::default();
+        let mut session = GameSession::new(ObservationSource::BrowserSimulator);
+        let obs = ObservationEvent::StructuredRaw {
+            raw: "LEADER_NAME|PLAYER_2|Silvers Rayleigh".into(),
+            source: ObservationSource::BrowserSimulator,
+            confidence: 0.95,
+        };
+        let outcome = reconciler.reconcile(&mut session, &obs).unwrap();
+        assert!(outcome.applied);
+        assert_eq!(session.state.player_two().leader_name, "Silvers Rayleigh");
+    }
+
+    #[test]
     fn hand_structured_raw_replaces_the_current_hand() {
         let mut reconciler = ObservationReconciler::default();
         let mut session = GameSession::new(ObservationSource::BrowserSimulator);
@@ -668,6 +694,23 @@ fn parse_page_state_raw(raw: &str) -> Option<String> {
 fn parse_player_name_raw(raw: &str) -> Option<(u8, String)> {
     let parts: Vec<&str> = raw.splitn(3, '|').collect();
     if parts.len() != 3 || parts[0] != "PLAYER_NAME" {
+        return None;
+    }
+    let idx = match parts[1] {
+        "PLAYER_1" | "P1" | "0" => 0u8,
+        "PLAYER_2" | "P2" | "1" => 1u8,
+        _ => return None,
+    };
+    let name = parts[2].trim();
+    if name.is_empty() {
+        return None;
+    }
+    Some((idx, name.to_string()))
+}
+
+fn parse_leader_name_raw(raw: &str) -> Option<(u8, String)> {
+    let parts: Vec<&str> = raw.splitn(3, '|').collect();
+    if parts.len() != 3 || parts[0] != "LEADER_NAME" {
         return None;
     }
     let idx = match parts[1] {

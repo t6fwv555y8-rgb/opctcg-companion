@@ -26,10 +26,10 @@ export function CoachLlmPanel() {
 
   return (
     <section className="hud-panel p-3">
-      <div className="hud-title">Coach model</div>
+      <div className="hud-title">Rayleigh’s model</div>
       <p className="mt-2 text-xs leading-relaxed text-slate-300">
-        Paste an OpenAI API key so Ask can talk like a coach. It stays on this
-        machine. Without a key, Ask still answers from the rules engine.
+        Paste an OpenAI API key so Rayleigh can talk like a coach. It stays on this
+        machine. Without a key, he still answers from the rules engine.
       </p>
 
       <div className="mt-2 flex items-center gap-2 text-xs">

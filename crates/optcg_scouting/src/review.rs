@@ -139,7 +139,7 @@ impl MatchReview {
     pub fn headline(&self) -> String {
         match self.outcome {
             Some(Outcome::Won) => format!(
-                "Won on turn {} — {} life left",
+                "You won on turn {} — {} life left. Rayleigh is proud of that one.",
                 self.last_turn.max(1),
                 self.your_life
             ),
@@ -163,13 +163,13 @@ impl MatchReview {
 
         match self.outcome {
             Some(Outcome::Won) if self.your_life <= 1 => notes.push(
-                "One life from a loss. Next game, keep a counter for the last swing.".into(),
+                "One life from a loss. Next game, keep a counter for the last swing. Rayleigh still calls that a win.".into(),
             ),
             Some(Outcome::Won) if self.your_life >= 4 => {
-                notes.push("Comfortable win — they never got the race going.".into());
+                notes.push("Comfortable win — they never got the race going. That's how Rayleigh likes it.".into());
             }
             Some(Outcome::Won) => notes.push(format!(
-                "Finished on {} life. Not a steal, not a blowout.",
+                "Finished on {} life. Not a steal, not a blowout. Rayleigh says you earned it.",
                 self.your_life
             )),
             Some(Outcome::Lost) if self.their_life <= 1 => {
@@ -290,7 +290,16 @@ mod tests {
     #[test]
     fn a_win_leads_with_the_turn_and_life_left() {
         let review = MatchReview::from_open(&open(Outcome::Won), NOW).expect("played");
-        assert_eq!(review.headline(), "Won on turn 7 — 2 life left");
+        assert!(
+            review.headline().contains("You won on turn 7"),
+            "{}",
+            review.headline()
+        );
+        assert!(
+            review.headline().contains("Rayleigh is proud"),
+            "{}",
+            review.headline()
+        );
         assert_eq!(review.outcome, Some(Outcome::Won));
         assert!(review.you_played.contains(&"ST01-002".into()));
     }

@@ -730,13 +730,36 @@ impl AppState {
             }
         }
 
-        let (leader_name, leader_color) = match repo.get_by_id(&leader_id) {
-            Ok(def) => (def.name, def.color),
-            Err(_) => {
-                if leader_id.is_empty() {
-                    ("Unknown leader".into(), String::new())
+        let observed = player.leader_name.trim();
+        let (leader_name, leader_color, leader_text) = match repo.get_by_id(&leader_id) {
+            Ok(def) => {
+                let name = if def.name.is_empty() && !observed.is_empty() {
+                    observed.to_string()
+                } else if def.name.is_empty() {
+                    leader_id.clone()
                 } else {
-                    (leader_id.clone(), String::new())
+                    def.name
+                };
+                (name, def.color, def.rules_text)
+            }
+            Err(_) => {
+                if let Some(def) = (!observed.is_empty())
+                    .then(|| repo.search_by_name(observed, 6).ok())
+                    .flatten()
+                    .and_then(|hits| {
+                        hits.into_iter().find(|d| {
+                            d.card_type == optcg_core::CardType::Leader
+                                && d.name.eq_ignore_ascii_case(observed)
+                        })
+                    })
+                {
+                    (def.name, def.color, def.rules_text)
+                } else if !observed.is_empty() {
+                    (observed.to_string(), String::new(), String::new())
+                } else if leader_id.is_empty() {
+                    ("Unknown leader".into(), String::new(), String::new())
+                } else {
+                    (leader_id.clone(), String::new(), String::new())
                 }
             }
         };
@@ -811,6 +834,7 @@ impl AppState {
             leader_id,
             leader_name,
             leader_color,
+            leader_text,
             known_cards,
             origin,
             deck_id,
@@ -1367,7 +1391,11 @@ mod tests {
             .review
             .expect("a finished game has a recap");
         assert_eq!(review.outcome.as_deref(), Some("won"));
-        assert!(review.headline.contains("Won on turn"));
+        assert!(
+            review.headline.to_ascii_lowercase().contains("won on turn"),
+            "{}",
+            review.headline
+        );
 
         std::fs::remove_dir_all(&dir).ok();
     }

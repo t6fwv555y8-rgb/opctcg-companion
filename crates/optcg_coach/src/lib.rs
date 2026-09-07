@@ -77,6 +77,6 @@ mod tests {
         }
         let provider = provider_from_env();
         assert!(!provider.is_live());
-        assert_eq!(provider.label(), "Offline coach");
+        assert_eq!(provider.label(), "Rayleigh");
     }
 }

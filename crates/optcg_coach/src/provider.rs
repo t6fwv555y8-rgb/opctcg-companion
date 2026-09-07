@@ -151,7 +151,7 @@ pub type CoachResult<T> = Result<T, CoachError>;
 /// A backend that can answer a chat turn, streaming text as it is produced.
 #[async_trait::async_trait]
 pub trait ChatProvider: Send + Sync {
-    /// Short name for the HUD, e.g. `gpt-4o-mini` or `Offline coach`.
+    /// Short name for the HUD, e.g. `gpt-4o-mini` or `Rayleigh`.
     fn label(&self) -> String;
 
     /// True when this provider talks to a real model API.

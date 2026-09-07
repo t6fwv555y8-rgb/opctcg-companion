@@ -18,7 +18,7 @@ pub const DEFAULT_SETTLE_MS: u64 = 1_500;
 ///
 /// A backstop on token spend and on how often the panel can churn, for the
 /// case where changes keep arriving exactly as each settle window closes.
-pub const DEFAULT_MIN_INTERVAL_MS: u64 = 8_000;
+pub const DEFAULT_MIN_INTERVAL_MS: u64 = 3_500;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AutoTriggerConfig {

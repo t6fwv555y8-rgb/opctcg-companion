@@ -31,6 +31,9 @@ pub struct BrowserPlayerSnapshot {
     pub rested_don: Option<u8>,
     /// Leader card ID when visible.
     pub leader_id: Option<String>,
+    /// Leader name from the card art alt text, when the page shows one.
+    #[serde(default)]
+    pub leader_name: Option<String>,
     /// Simulator display name for this player, when the page shows one.
     #[serde(default)]
     pub player_name: Option<String>,

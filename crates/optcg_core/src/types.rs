@@ -255,6 +255,9 @@ pub struct PlayerState {
     /// Display name from the simulator, when the page shows one.
     #[serde(default)]
     pub player_name: String,
+    /// Leader name read off the table (img alt) when the page shows one.
+    #[serde(default)]
+    pub leader_name: String,
     /// Unique card IDs observed for this player this match (leader/board/self-hand/trash).
     #[serde(default)]
     pub known_cards: Vec<String>,
@@ -289,6 +292,7 @@ impl PlayerState {
             trash: Vec::new(),
             deck_name: String::new(),
             player_name: String::new(),
+            leader_name: String::new(),
             known_cards: Vec::new(),
             leader_id,
             leader_power: 5000,
@@ -310,9 +314,20 @@ impl PlayerState {
         if id.is_empty() {
             return;
         }
+        if !self.leader.card_id.is_empty() && self.leader.card_id != id {
+            self.leader_name.clear();
+        }
         self.leader.card_id = id.clone();
         self.note_card(&id);
         self.sync_leader_fields();
+    }
+
+    pub fn set_leader_name(&mut self, name: impl Into<String>) {
+        let name = name.into();
+        if name.trim().is_empty() {
+            return;
+        }
+        self.leader_name = name;
     }
 
     pub fn sync_leader_fields(&mut self) {

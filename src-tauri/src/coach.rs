@@ -32,6 +32,8 @@ pub struct CoachRuntime {
     session: Arc<Mutex<CoachSession>>,
     auto: Arc<Mutex<AutoTrigger>>,
     scope: Arc<Mutex<ContextScope>>,
+    /// Last match Rayleigh already started reading, so a new game_id resets.
+    last_game: Mutex<Option<uuid::Uuid>>,
 }
 
 impl CoachRuntime {
@@ -51,6 +53,7 @@ impl CoachRuntime {
             session: Arc::new(Mutex::new(CoachSession::new())),
             auto: Arc::new(Mutex::new(AutoTrigger::default())),
             scope: Arc::new(Mutex::new(ContextScope::default())),
+            last_game: Mutex::new(None),
         }
     }
 
@@ -127,7 +130,7 @@ impl CoachRuntime {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CoachStatusDto {
-    /// Model name, or `Offline coach` when no API key is configured.
+    /// Model name, or `Rayleigh` when no API key is configured.
     pub provider: String,
     /// True when answers come from a real model API.
     pub live: bool,
@@ -563,13 +566,23 @@ pub fn poll_auto_trigger(app: &AppHandle) {
         return;
     };
 
-    let (position, at_decision_point) = {
+    let (position, at_decision_point, game_id) = {
         let game_state = state.game_state.read();
         (
             optcg_coach::fingerprint(&game_state),
             optcg_coach::is_decision_point(&game_state),
+            game_state.game_id,
         )
     };
+
+    let new_match = {
+        let last = coach.last_game.lock();
+        *last != Some(game_id)
+    };
+    if new_match {
+        *coach.last_game.lock() = Some(game_id);
+        coach.auto.lock().reset();
+    }
 
     let decision = coach
         .auto
@@ -806,7 +819,11 @@ mod tests {
         let review = deck_context(&state)
             .last_review
             .expect("the last game should reach the coach");
-        assert!(review.headline.contains("Won"));
+        assert!(
+            review.headline.to_ascii_lowercase().contains("won"),
+            "{}",
+            review.headline
+        );
     }
 
     #[test]
@@ -881,7 +898,7 @@ mod tests {
 
         let briefing = build_briefing(&state, ContextScope::default(), &sink);
 
-        assert!(briefing.prompt.starts_with("You are the in-game coach"));
+        assert!(briefing.prompt.starts_with("You are Silvers Rayleigh"));
         assert!(briefing.prompt.contains("# MATCH BRIEFING"));
         assert!(briefing.prompt.contains("## Board"));
         assert!(briefing.prompt.contains("## Opponent counter range"));

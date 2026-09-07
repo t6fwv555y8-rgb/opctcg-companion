@@ -36,7 +36,7 @@ impl OfflineProvider {
 #[async_trait::async_trait]
 impl ChatProvider for OfflineProvider {
     fn label(&self) -> String {
-        "Offline coach".to_string()
+        "Rayleigh".to_string()
     }
 
     fn is_live(&self) -> bool {
