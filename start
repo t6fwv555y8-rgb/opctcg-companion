@@ -102,7 +102,7 @@ if [[ "$MODE" == "onesimulator" ]]; then
   say "After the HUD window appears, in Chrome:"
   say "  1. chrome://extensions → Developer mode ON"
   say "  2. Load unpacked → $ROOT/browser-companion   (not dist)"
-  say "  3. Card should say OPTCG Companion  0.2.5"
+  say "  3. Card should say OPTCG Companion  0.2.6"
   say "  4. Refresh the OneSimulator tab"
   say ""
   launch_hud

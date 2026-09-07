@@ -1,7 +1,7 @@
-// OPTCG Companion page reader 0.2.5
+// OPTCG Companion page reader 0.2.6
 // Reads the OneSimulator board and hands it to background.js.
 
-const VERSION = "0.2.5";
+const VERSION = "0.2.6";
 const CARD_ID = /\b((?:OP|ST|EB|PRB|P)-\d{2}-\d{3}[A-Z]?)\b/i;
 const CARD_SRC = /\/cards\/(?:full|thumbnail)\/([^/.]+)\.webp/i;
 
@@ -240,6 +240,88 @@ function player(playerId, isSelf) {
   };
 }
 
+function hasCombatRing(el) {
+  const cls = `${el.className || ""}`;
+  return /ring-|border-yellow|border-red|border-orange|attacking|targeted|selected|combat/i.test(
+    cls,
+  );
+}
+
+function combatCard(el) {
+  if (!el) return null;
+  const img = typeof el.querySelector === "function" ? el.querySelector("img") : null;
+  return {
+    card_id: cardId(el),
+    name: (img && img.alt) || null,
+    rested: `${el.className || ""}`.includes("rotate-90"),
+  };
+}
+
+function observeCombat(you, them) {
+  const shell = document.querySelector(".game-board-shell");
+  if (!shell) return null;
+  const text = shell.textContent || "";
+  const banner = shell.querySelector(
+    '[class*="battle"], [class*="attack"], [data-combat-active="true"]',
+  );
+  const fightingText =
+    /(?:battle|attacking|declare attack|counter|blocker|block this)/i.test(text);
+  const cards = [
+    ...document.querySelectorAll(
+      '[data-card-zone="character"], [data-card-zone="leader"]',
+    ),
+  ];
+  const ringed = cards.filter(hasCombatRing);
+  const yours = ringed.filter((el) => el.getAttribute("data-card-player-id") === you);
+  const theirs = ringed.filter((el) => el.getAttribute("data-card-player-id") === them);
+
+  if (!ringed.length && !banner && !fightingText) return null;
+
+  let attackerEl = null;
+  let targetEl = null;
+  if (yours.length && theirs.length) {
+    const yourChar = yours.find((el) => el.getAttribute("data-card-zone") === "character");
+    const theirChar = theirs.find((el) => el.getAttribute("data-card-zone") === "character");
+    if (yourChar && !theirChar) {
+      attackerEl = yourChar;
+      targetEl = theirs[0];
+    } else if (theirChar && !yourChar) {
+      attackerEl = theirChar;
+      targetEl = yours[0];
+    } else {
+      attackerEl = yours[0];
+      targetEl = theirs[0];
+    }
+  } else if (yours.length) {
+    attackerEl = yours[0];
+    targetEl = document.querySelector(
+      `[data-card-zone="leader"][data-card-player-id="${them}"]`,
+    );
+  } else if (theirs.length) {
+    attackerEl = theirs[0];
+    targetEl = document.querySelector(
+      `[data-card-zone="leader"][data-card-player-id="${you}"]`,
+    );
+  }
+
+  const powers = [...text.matchAll(/(\d{4,5})\s*(?:→|->|power)/gi)];
+  const attackerPid = attackerEl?.getAttribute("data-card-player-id");
+  const targetPid = targetEl?.getAttribute("data-card-player-id");
+  const targetZone = targetEl?.getAttribute("data-card-zone");
+
+  return {
+    attacker: combatCard(attackerEl),
+    target: combatCard(targetEl),
+    displayed_power: powers[0] ? Number(powers[0][1]) : null,
+    attacker_player:
+      attackerPid === you ? "self" : attackerPid === them ? "opponent" : null,
+    target_player: targetPid === you ? "self" : targetPid === them ? "opponent" : null,
+    target_is_leader: targetZone === "leader",
+    blocker_offered: /block/i.test(text),
+    active: true,
+  };
+}
+
 function phaseAndTurn() {
   const text = document.querySelector(".game-board-shell")?.textContent || "";
   const phaseM = text.match(/Phase:\s*([^\n]+)/i);
@@ -273,14 +355,17 @@ function readBoard() {
       };
   const opponent = inMatch ? player(them, false) : { player_name: playerName(them, false) };
 
+  const combat = inMatch ? observeCombat(you, them) : null;
+
   return {
     timestamp: Date.now(),
     source: "onesimulator",
     page_state: state,
     turn,
-    phase,
+    phase: combat ? "Combat" : phase,
     self,
     opponent: opponent.player_name || inMatch ? opponent : null,
+    combat,
     diagnostics: {
       site_detected: true,
       game_detected: inMatch,
@@ -352,7 +437,9 @@ function send() {
         }
         const label =
           state === "match"
-            ? "Companion is reading this match"
+            ? snapshot.combat
+              ? "Companion is reading this battle"
+              : "Companion is reading this match"
             : state === "queue"
               ? "In queue — companion is reading"
               : "Companion ready — in lobby";

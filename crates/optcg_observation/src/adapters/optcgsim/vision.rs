@@ -100,6 +100,7 @@ impl VisionObservation {
             events.push(ObservationEvent::AttackObserved {
                 attacker: None,
                 attacker_card_id: self.combat_attacker.clone(),
+                attacker_player: None,
                 target: self
                     .combat_target
                     .as_ref()

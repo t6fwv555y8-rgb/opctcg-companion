@@ -62,6 +62,17 @@ impl ObservationReconciler {
 
         // Deck metadata is applied directly (not a GameEvent).
         if let ObservationEvent::StructuredRaw { raw, .. } = obs {
+            if raw == "COMBAT_ACTIVE" {
+                session.state.combat.active = true;
+                session.state.phase = optcg_core::Phase::Combat;
+                return Ok(ReconcileOutcome {
+                    applied: true,
+                    game_events: vec![],
+                    corrected: false,
+                    rejection_reason: None,
+                    confidence,
+                });
+            }
             if let Some(page_state) = parse_page_state_raw(raw) {
                 session.state.page_state = page_state;
                 return Ok(ReconcileOutcome {
@@ -303,15 +314,20 @@ impl ObservationReconciler {
             }
             ObservationEvent::AttackObserved {
                 attacker_card_id,
+                attacker_player,
                 target,
                 observed_power,
                 ..
             } => {
-                if let (Some(atk), Some(tgt)) = (attacker_card_id, target) {
+                if let Some(atk) = attacker_card_id {
+                    let attacker_player = attacker_player.unwrap_or(PlayerId::Player1);
+                    let tgt = target.clone().unwrap_or(optcg_core::AttackTarget::Leader {
+                        player: attacker_player.opponent(),
+                    });
                     vec![GameEvent::AttackDeclared {
                         attacker: atk.clone(),
-                        attacker_player: PlayerId::Player1,
-                        target: tgt.clone(),
+                        attacker_player,
+                        target: tgt,
                         power: observed_power.unwrap_or(0),
                     }]
                 } else {
@@ -540,6 +556,42 @@ mod tests {
         assert!(reconciler.reconcile(&mut session, &name).unwrap().applied);
         assert_eq!(session.state.page_state, "queue");
         assert_eq!(session.state.player_one().player_name, "Jesus");
+    }
+
+    #[test]
+    fn opponent_attack_sets_combat_on_your_leader() {
+        let mut reconciler = ObservationReconciler::default();
+        let mut session = GameSession::new(ObservationSource::BrowserSimulator);
+        let obs = ObservationEvent::AttackObserved {
+            attacker: None,
+            attacker_card_id: Some("ST01-012".into()),
+            attacker_player: Some(PlayerId::Player2),
+            target: Some(optcg_core::AttackTarget::Leader {
+                player: PlayerId::Player1,
+            }),
+            observed_power: Some(6000),
+            confidence: 0.9,
+        };
+        assert!(reconciler.reconcile(&mut session, &obs).unwrap().applied);
+        assert!(session.state.combat.active);
+        assert_eq!(session.state.combat.attacker_id.as_deref(), Some("ST01-012"));
+        assert_eq!(session.state.combat.attacker_player, Some(1));
+        assert_eq!(session.state.combat.target_player, Some(0));
+        assert!(session.state.combat.target_is_leader);
+    }
+
+    #[test]
+    fn combat_active_without_ids_still_marks_a_fight() {
+        let mut reconciler = ObservationReconciler::default();
+        let mut session = GameSession::new(ObservationSource::BrowserSimulator);
+        let obs = ObservationEvent::StructuredRaw {
+            raw: "COMBAT_ACTIVE".into(),
+            source: ObservationSource::BrowserSimulator,
+            confidence: 0.9,
+        };
+        assert!(reconciler.reconcile(&mut session, &obs).unwrap().applied);
+        assert!(session.state.combat.active);
+        assert_eq!(session.state.phase, Phase::Combat);
     }
 }
 

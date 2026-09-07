@@ -123,7 +123,12 @@ impl RulesEngine {
             }
             Phase::Main => {
                 if state.combat.active {
-                    "Combat in Main — resolve attack/block, then continue developing.".into()
+                    CombatMath::do_this(state, None)
+                        .map(|battle| battle.line)
+                        .unwrap_or_else(|| {
+                            "Combat in Main — resolve attack/block, then continue developing."
+                                .into()
+                        })
                 } else if you.characters.is_empty() {
                     "Main phase — develop board (play characters) before attacking.".into()
                 } else if opp.life <= 2 {
@@ -133,13 +138,15 @@ impl RulesEngine {
                         .into()
                 }
             }
-            Phase::Combat => {
-                if state.combat.blocker_offered {
-                    "Combat — decide blocker vs take life / counter.".into()
-                } else {
-                    "Combat — compare powers; counter if needed to survive.".into()
-                }
-            }
+            Phase::Combat => CombatMath::do_this(state, None)
+                .map(|battle| battle.line)
+                .unwrap_or_else(|| {
+                    if state.combat.blocker_offered {
+                        "Combat — decide blocker vs take life / counter.".into()
+                    } else {
+                        "Combat — compare powers; counter if needed to survive.".into()
+                    }
+                }),
             Phase::End => "End phase — clean up, then end turn.".into(),
         };
         format!("{you_tag}{line}")
@@ -379,5 +386,23 @@ mod tests {
         let rec = RulesEngine::recommend(&state, &repo).unwrap();
         assert!(rec.is_some());
         assert!(!rec.unwrap().reasoning.is_empty());
+    }
+
+    #[test]
+    fn phase_coach_follows_the_open_swing() {
+        let mut state = GameState::new();
+        state.phase = Phase::Main;
+        state.combat = optcg_core::CombatState {
+            active: true,
+            attacker_id: Some("ST01-012".into()),
+            attacker_player: Some(1),
+            target_id: Some("leader".into()),
+            target_player: Some(0),
+            target_is_leader: true,
+            ..optcg_core::CombatState::default()
+        };
+        let line = RulesEngine::phase_coach(&state);
+        assert!(line.to_lowercase().contains("swinging"));
+        assert!(line.to_lowercase().contains("your leader"));
     }
 }

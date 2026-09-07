@@ -1,7 +1,9 @@
-use crate::bridge_protocol::BrowserGameSnapshot;
+use crate::bridge_protocol::{
+    BrowserCombatSnapshot, BrowserGameSnapshot, BrowserPlayerSnapshot,
+};
 use crate::confidence::ConfidenceConfig;
 use crate::types::{ObservationEvent, ObservationSource};
-use optcg_core::{Phase, PlayerId, Zone};
+use optcg_core::{AttackTarget, Phase, PlayerId, Zone};
 
 /// Diff two browser snapshots into observation events.
 pub struct SnapshotDiffer {
@@ -74,30 +76,67 @@ impl SnapshotDiffer {
             ));
         }
 
+        let prev_combat = prev.and_then(|p| p.combat.as_ref());
+        let now_fighting = snapshot.combat.as_ref().is_some_and(combat_signal);
+        let was_fighting = prev_combat.is_some_and(combat_signal);
+
         if let Some(combat) = &snapshot.combat {
-            let prev_combat = prev.and_then(|p| p.combat.as_ref());
-            let changed = prev_combat.map(|c| c.displayed_power) != Some(combat.displayed_power)
-                || prev_combat.and_then(|c| c.attacker.as_ref().and_then(|a| a.card_id.clone()))
-                    != combat.attacker.as_ref().and_then(|a| a.card_id.clone());
-            if changed || prev.is_none() {
-                if combat.attacker.is_some()
-                    || combat.target.is_some()
-                    || combat.displayed_power.is_some()
-                {
-                    events.push(ObservationEvent::AttackObserved {
-                        attacker: None,
-                        attacker_card_id: combat.attacker.as_ref().and_then(|c| c.card_id.clone()),
-                        target: combat
-                            .target
-                            .as_ref()
-                            .map(|_| optcg_core::AttackTarget::Leader {
-                                player: PlayerId::Player2,
-                            }),
-                        observed_power: combat.displayed_power,
-                        confidence,
-                    });
+            if combat_signal(combat) {
+                let changed = prev_combat.map(combat_fingerprint) != Some(combat_fingerprint(combat));
+                if changed || prev.is_none() {
+                    if let Some(attacker_card_id) =
+                        combat.attacker.as_ref().and_then(|c| c.card_id.clone())
+                    {
+                        let attacker_player = combat_side_player(
+                            combat.attacker_player.as_deref(),
+                            snapshot,
+                            combat.attacker.as_ref().and_then(|c| c.card_id.as_deref()),
+                        );
+                        events.push(ObservationEvent::AttackObserved {
+                            attacker: None,
+                            attacker_card_id: Some(attacker_card_id),
+                            attacker_player,
+                            target: Some(combat_target(snapshot, combat, attacker_player)),
+                            // Displayed power is the printed total, not a modifier.
+                            // AttackDeclared treats power as a bonus, so omit it here.
+                            observed_power: None,
+                            confidence,
+                        });
+                    } else {
+                        events.push(ObservationEvent::StructuredRaw {
+                            raw: "COMBAT_ACTIVE".into(),
+                            source: ObservationSource::BrowserSimulator,
+                            confidence,
+                        });
+                    }
+                    if combat.blocker_offered == Some(true) {
+                        let blocker = combat.blocker_id.as_deref().unwrap_or("blocker");
+                        let defender = combat_side_player(
+                            combat.target_player.as_deref(),
+                            snapshot,
+                            combat.target.as_ref().and_then(|c| c.card_id.as_deref()),
+                        )
+                        .unwrap_or(PlayerId::Player1);
+                        let label = match defender {
+                            PlayerId::Player1 => "PLAYER_1",
+                            PlayerId::Player2 => "PLAYER_2",
+                        };
+                        events.push(ObservationEvent::StructuredRaw {
+                            raw: format!("BLOCKER_OFFERED|{label}|{blocker}"),
+                            source: ObservationSource::BrowserSimulator,
+                            confidence,
+                        });
+                    }
                 }
             }
+        }
+
+        if was_fighting && !now_fighting {
+            events.push(ObservationEvent::StructuredRaw {
+                raw: "COMBAT_RESOLVED".into(),
+                source: ObservationSource::BrowserSimulator,
+                confidence,
+            });
         }
 
         if snapshot
@@ -268,6 +307,104 @@ fn diff_player(
     events
 }
 
+fn combat_signal(combat: &BrowserCombatSnapshot) -> bool {
+    combat.active == Some(true)
+        || combat.attacker.as_ref().and_then(|c| c.card_id.as_ref()).is_some()
+        || combat.target.as_ref().and_then(|c| c.card_id.as_ref()).is_some()
+        || combat.displayed_power.is_some()
+        || combat.blocker_offered == Some(true)
+}
+
+fn combat_fingerprint(combat: &BrowserCombatSnapshot) -> String {
+    format!(
+        "{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}",
+        combat.attacker.as_ref().and_then(|c| c.card_id.as_ref()),
+        combat.target.as_ref().and_then(|c| c.card_id.as_ref()),
+        combat.displayed_power,
+        combat.attacker_player,
+        combat.target_player,
+        combat.target_is_leader,
+        combat.blocker_offered
+    )
+}
+
+fn owns_card(player: &BrowserPlayerSnapshot, card_id: &str) -> bool {
+    player.leader_id.as_deref() == Some(card_id)
+        || player
+            .board
+            .iter()
+            .any(|c| c.card_id.as_deref() == Some(card_id))
+}
+
+fn combat_side_player(
+    side: Option<&str>,
+    snapshot: &BrowserGameSnapshot,
+    card_id: Option<&str>,
+) -> Option<PlayerId> {
+    match side.map(|s| s.trim().to_ascii_lowercase()).as_deref() {
+        Some("self" | "you" | "0" | "player_1" | "player1" | "p1") => Some(PlayerId::Player1),
+        Some("opponent" | "them" | "1" | "player_2" | "player2" | "p2") => Some(PlayerId::Player2),
+        _ => {
+            let id = card_id?;
+            if snapshot
+                .self_player
+                .as_ref()
+                .is_some_and(|p| owns_card(p, id))
+            {
+                Some(PlayerId::Player1)
+            } else if snapshot.opponent.as_ref().is_some_and(|p| owns_card(p, id)) {
+                Some(PlayerId::Player2)
+            } else {
+                None
+            }
+        }
+    }
+}
+
+fn combat_target(
+    snapshot: &BrowserGameSnapshot,
+    combat: &BrowserCombatSnapshot,
+    attacker_player: Option<PlayerId>,
+) -> AttackTarget {
+    let target_player = combat_side_player(
+        combat.target_player.as_deref(),
+        snapshot,
+        combat.target.as_ref().and_then(|c| c.card_id.as_deref()),
+    )
+    .or_else(|| attacker_player.map(PlayerId::opponent))
+    .unwrap_or(PlayerId::Player2);
+
+    let target_id = combat
+        .target
+        .as_ref()
+        .and_then(|c| c.card_id.as_deref())
+        .unwrap_or("leader");
+    let target_is_leader = combat.target_is_leader.unwrap_or_else(|| {
+        target_id.eq_ignore_ascii_case("leader")
+            || snapshot
+                .self_player
+                .as_ref()
+                .and_then(|p| p.leader_id.as_deref())
+                == Some(target_id)
+            || snapshot
+                .opponent
+                .as_ref()
+                .and_then(|p| p.leader_id.as_deref())
+                == Some(target_id)
+    });
+
+    if target_is_leader {
+        AttackTarget::Leader {
+            player: target_player,
+        }
+    } else {
+        AttackTarget::Character {
+            player: target_player,
+            card_id: target_id.to_string(),
+        }
+    }
+}
+
 fn zone_from_instance_key(key: Option<&str>) -> Zone {
     let Some(key) = key else {
         return Zone::Character;
@@ -287,7 +424,7 @@ fn zone_from_instance_key(key: Option<&str>) -> Zone {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bridge_protocol::{BrowserPlayerSnapshot, ObservedCard};
+    use crate::bridge_protocol::{BrowserCombatSnapshot, BrowserPlayerSnapshot, ObservedCard};
 
     #[test]
     fn diff_detects_life_change() {
@@ -424,6 +561,80 @@ mod tests {
         assert!(events.iter().any(|e| matches!(
             e,
             ObservationEvent::CardObserved { card_id: Some(id), .. } if id == "OP01-001"
+        )));
+    }
+
+    #[test]
+    fn combat_snapshot_emits_attack_with_sides() {
+        let mut differ = SnapshotDiffer::new(ConfidenceConfig::default());
+        let snap = BrowserGameSnapshot {
+            timestamp: 1,
+            self_player: Some(BrowserPlayerSnapshot {
+                leader_id: Some("ST01-001".into()),
+                ..Default::default()
+            }),
+            opponent: Some(BrowserPlayerSnapshot {
+                leader_id: Some("OP01-001".into()),
+                board: vec![ObservedCard {
+                    card_id: Some("ST01-012".into()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
+            combat: Some(BrowserCombatSnapshot {
+                attacker: Some(ObservedCard {
+                    card_id: Some("ST01-012".into()),
+                    ..Default::default()
+                }),
+                target: Some(ObservedCard {
+                    card_id: Some("ST01-001".into()),
+                    ..Default::default()
+                }),
+                attacker_player: Some("opponent".into()),
+                target_player: Some("self".into()),
+                target_is_leader: Some(true),
+                displayed_power: Some(6000),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let events = differ.diff(&snap);
+        assert!(events.iter().any(|e| matches!(
+            e,
+            ObservationEvent::AttackObserved {
+                attacker_card_id: Some(id),
+                attacker_player: Some(PlayerId::Player2),
+                target: Some(optcg_core::AttackTarget::Leader { player: PlayerId::Player1 }),
+                ..
+            } if id == "ST01-012"
+        )));
+    }
+
+    #[test]
+    fn combat_clearing_emits_resolve() {
+        let mut differ = SnapshotDiffer::new(ConfidenceConfig::default());
+        let fighting = BrowserGameSnapshot {
+            timestamp: 1,
+            combat: Some(BrowserCombatSnapshot {
+                attacker: Some(ObservedCard {
+                    card_id: Some("ST01-012".into()),
+                    ..Default::default()
+                }),
+                displayed_power: Some(6000),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        differ.diff(&fighting);
+        let quiet = BrowserGameSnapshot {
+            timestamp: 2,
+            combat: None,
+            ..Default::default()
+        };
+        let events = differ.diff(&quiet);
+        assert!(events.iter().any(|e| matches!(
+            e,
+            ObservationEvent::StructuredRaw { raw, .. } if raw == "COMBAT_RESOLVED"
         )));
     }
 }

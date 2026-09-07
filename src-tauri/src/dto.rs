@@ -1,7 +1,8 @@
 use optcg_core::{CombatState, ConnectionStatus, GameState, LastEventInfo, Phase, PlayerState};
 use optcg_observation::{AdapterInfo, AdapterStatus, LatencySnapshot};
 use optcg_rules::{
-    CombatAnalysis, DeckListEntry, DeckStrategyBrief, PastedDeckList, StrategyRecommendation,
+    CombatAnalysis, CombatDoThis, DeckListEntry, DeckStrategyBrief, PastedDeckList,
+    StrategyRecommendation,
 };
 use serde::{Deserialize, Serialize};
 
@@ -284,6 +285,9 @@ pub struct StateUpdatePayload {
     pub game_state: GameStateDto,
     pub connection: ConnectionStatusDto,
     pub combat_analysis: Option<CombatAnalysis>,
+    /// What to do in the open battle, when one is happening.
+    #[serde(default)]
+    pub combat_coach: Option<CombatDoThis>,
     pub strategy: Option<StrategyRecommendation>,
     /// Ranked options for the current step (best first).
     pub options: Vec<StrategyRecommendation>,

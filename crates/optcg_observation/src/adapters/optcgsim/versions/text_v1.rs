@@ -59,6 +59,7 @@ pub fn parse_text_line(line: &str, confidence: f32) -> Result<Vec<ObservationEve
             return Ok(vec![ObservationEvent::AttackObserved {
                 attacker: None,
                 attacker_card_id: Some(card_id),
+                attacker_player: None,
                 target: Some(optcg_core::AttackTarget::Leader {
                     player: PlayerId::Player2,
                 }),

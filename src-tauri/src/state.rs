@@ -775,12 +775,17 @@ impl AppState {
         let gs = self.game_state.read();
         let repo = self.repo();
         let combat_analysis = CombatMath::analyze_current_combat(&gs, &repo);
+        let combat_coach = CombatMath::do_this(&gs, combat_analysis.as_ref());
         let your_deck = self.deck_info_for(gs.player_one(), Side::You);
         let opponent_deck = self.deck_info_for(gs.player_two(), Side::Opponent);
         let deck_strategy = self.ensure_deck_strategy(&your_deck, &opponent_deck, &gs);
-        let mut phase_coach = RulesEngine::phase_coach(&gs);
-        // Make coaching deck-specific when we know the matchup.
-        if your_deck.leader_id != "" || opponent_deck.leader_id != "" {
+        let mut phase_coach = if let Some(ref battle) = combat_coach {
+            battle.line.clone()
+        } else {
+            RulesEngine::phase_coach(&gs)
+        };
+        // Make coaching deck-specific when we know the matchup — not during a swing.
+        if combat_coach.is_none() && (your_deck.leader_id != "" || opponent_deck.leader_id != "") {
             let you = if your_deck.name != "Deck unknown" {
                 your_deck.name.as_str()
             } else {
@@ -902,6 +907,7 @@ impl AppState {
             game_state: GameStateDto::from(&*gs),
             connection,
             combat_analysis,
+            combat_coach,
             strategy,
             options,
             phase_coach,
@@ -1642,6 +1648,41 @@ mod tests {
             "the legacy clear path should deselect, not delete"
         );
 
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn do_this_on_the_payload_follows_the_open_swing() {
+        let dir = temp_data_dir("combat-do-this");
+        let (state, board) = app_state_with_board(&dir);
+        {
+            let mut gs = board.write();
+            let mut sanji =
+                optcg_core::CardInstance::new("ST01-012", 1, optcg_core::Zone::Character);
+            sanji.attached_don = 3;
+            gs.players[1].characters.push(sanji);
+            gs.players[0].hand_count = 0;
+            gs.combat = optcg_core::CombatState {
+                active: true,
+                attacker_id: Some("ST01-012".into()),
+                attacker_player: Some(1),
+                target_id: Some("leader".into()),
+                target_player: Some(0),
+                target_is_leader: true,
+                ..optcg_core::CombatState::default()
+            };
+        }
+        let payload = state.build_update_payload(None);
+        let battle = payload
+            .combat_coach
+            .expect("an open swing should produce a battle line");
+        assert!(
+            battle.line.to_lowercase().contains("lethal"),
+            "expected lethal instruction, got {}",
+            battle.line
+        );
+        assert_eq!(payload.phase_coach, battle.line);
+        assert!(!battle.steps.is_empty());
         std::fs::remove_dir_all(&dir).ok();
     }
 }
