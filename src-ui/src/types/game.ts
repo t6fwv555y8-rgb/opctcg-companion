@@ -262,6 +262,8 @@ export interface CombatCalculation {
 export interface CombatDoThis {
   line: string;
   steps: string[];
+  you?: string[];
+  them?: string[];
 }
 
 export interface CombatAnalysis {

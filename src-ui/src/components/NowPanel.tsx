@@ -6,8 +6,6 @@ import type {
   DeckStrategyBrief,
   StrategyRecommendation,
 } from "../types/game";
-import { BlockerWarning } from "./BlockerWarning";
-import { CombatPanel } from "./CombatPanel";
 
 interface Props {
   phaseCoach: string | null;
@@ -23,6 +21,96 @@ interface Props {
   coachBusy: boolean;
   coachError?: string | null;
   pageState?: string;
+}
+
+function fmtPower(n: number): string {
+  return n >= 1000 && n % 1000 === 0 ? `${n / 1000}k` : String(n);
+}
+
+function CombatStrip({ analysis }: { analysis: CombatAnalysis }) {
+  const lethal =
+    analysis.lethal_to_leader || analysis.survival_status === "LETHAL";
+  const holds =
+    analysis.survives_without_counter || analysis.survival_status === "SURVIVES";
+  const tone = lethal
+    ? "bg-rose-500/12 text-rose-100"
+    : holds && analysis.required_counter <= 0
+      ? "bg-emerald-500/10 text-slate-200"
+      : "bg-amber-500/10 text-amber-50";
+  const tag = lethal
+    ? "Lethal"
+    : analysis.survival_status === "COUNTER_REQUIRED"
+      ? "Counter"
+      : holds
+        ? "Holds"
+        : null;
+
+  return (
+    <div
+      className={`mt-2 flex items-center justify-between gap-3 rounded-lg px-2.5 py-1.5 text-[13px] ${tone}`}
+    >
+      <p className="min-w-0 tabular-nums">
+        <span className="font-semibold text-sky-300">
+          {fmtPower(analysis.attacker_power)}
+        </span>
+        <span className="mx-1.5 text-slate-500">→</span>
+        <span className="font-semibold">
+          {fmtPower(analysis.defender_power)}
+        </span>
+        {analysis.required_counter > 0 && (
+          <span className="ml-2 text-slate-400">
+            need {fmtPower(analysis.required_counter)}
+          </span>
+        )}
+      </p>
+      {tag && (
+        <span className="shrink-0 text-[11px] font-medium text-current/80">
+          {tag}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function RosterColumn({
+  title,
+  rows,
+  align = "left",
+}: {
+  title: string;
+  rows: string[];
+  align?: "left" | "right";
+}) {
+  return (
+    <div className={align === "right" ? "text-right" : ""}>
+      <div className="text-[10px] font-medium uppercase tracking-[0.16em] text-slate-500">
+        {title}
+      </div>
+      {rows.length === 0 ? (
+        <p className="mt-1.5 text-[12px] text-slate-600">Empty</p>
+      ) : (
+        <ul className="mt-1.5 space-y-1">
+          {rows.map((row, i) => {
+            const meta = /\bDON\b|\bin hand\b|\brest\b/.test(row) && !/\(ST/i.test(row);
+            return (
+              <li
+                key={`${i}-${row}`}
+                className={`text-[12px] leading-snug ${
+                  meta
+                    ? "text-slate-500"
+                    : i === 0
+                      ? "font-medium text-slate-200"
+                      : "text-slate-400"
+                }`}
+              >
+                {row}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
 }
 
 /// What to do this second. Updates as the board does.
@@ -55,37 +143,49 @@ export function NowPanel({
     waiting;
   const steps = (
     table?.steps?.length ? table.steps : (deckStrategy?.this_turn ?? [])
-  ).slice(0, 6);
+  ).slice(0, 3);
+  const you = table?.you ?? [];
+  const them = table?.them ?? [];
   const alts = table
     ? []
     : options
         .filter((opt) => opt.action.description?.trim() !== line)
         .slice(0, 3);
+  const blockerOpen = Boolean(combat?.blocker_offered);
+  const notes = Boolean(coachLine || coachBusy || coachError);
 
   return (
-    <div className="flex flex-col gap-3">
-      <BlockerWarning combat={combat} analysis={analysis} />
-      {fighting && <CombatPanel combat={combat} analysis={analysis} />}
-
-      <section className="hud-panel p-4">
-        <div className="text-xs font-semibold uppercase tracking-wide text-hud-accent">
-          Do this
+    <div className="flex flex-col gap-4">
+      <section className="hud-panel px-3.5 py-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="hud-title text-hud-accent">Do this</div>
+          {blockerOpen && (
+            <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-100">
+              Blocker window
+            </span>
+          )}
         </div>
-        <p className="mt-2 text-base leading-relaxed text-white">{line}</p>
+        {analysis && <CombatStrip analysis={analysis} />}
+        <p className="mt-2 text-[15px] leading-snug text-white">{line}</p>
         {paused && (
-          <p className="mt-2 text-sm text-hud-warn">
+          <p className="mt-2 text-[12px] text-hud-warn">
             The read is shaky — treat this as provisional.
           </p>
         )}
         {steps.length > 0 && (
-          <ol className="mt-3 list-decimal space-y-1.5 pl-5 text-sm leading-snug text-slate-200">
+          <ul className="mt-3 space-y-2">
             {steps.map((step) => (
-              <li key={step}>{step}</li>
+              <li
+                key={step}
+                className="border-l border-sky-400/30 pl-3 text-[13px] leading-snug text-slate-300"
+              >
+                {step}
+              </li>
             ))}
-          </ol>
+          </ul>
         )}
         {alts.length > 0 && (
-          <ul className="mt-3 space-y-1 border-t border-slate-700/50 pt-3 text-sm text-slate-300">
+          <ul className="mt-3 space-y-1 border-t border-white/5 pt-3 text-[13px] text-slate-400">
             {alts.map((opt) => (
               <li key={opt.action.description}>{opt.action.description}</li>
             ))}
@@ -93,34 +193,36 @@ export function NowPanel({
         )}
       </section>
 
-      <section className="hud-panel p-4">
-        <div className="text-xs font-semibold uppercase tracking-wide text-hud-accent">
-          As you go
+      {(you.length > 0 || them.length > 0) && (
+        <div className="grid grid-cols-2 gap-4 px-0.5">
+          <RosterColumn title="You" rows={you} />
+          <RosterColumn title="Them" rows={them} align="right" />
         </div>
-        {coachBusy && !coachLine && (
-          <p className="mt-2 animate-pulse text-sm text-slate-400">
-            Reading the new position…
-          </p>
-        )}
-        {coachError && (
-          <p className="mt-2 text-sm text-hud-danger">{coachError}</p>
-        )}
-        {coachLine ? (
-          <p className="mt-2 text-base leading-relaxed text-slate-100">
-            {coachLine}
-            {coachBusy && (
-              <span className="ml-1 animate-pulse text-hud-accent">▌</span>
-            )}
-          </p>
-        ) : (
-          !coachBusy &&
-          !coachError && (
-            <p className="mt-2 text-sm text-slate-400">
-              After each play settles, the next line lands here.
+      )}
+
+      {notes && (
+        <section className="px-0.5">
+          <div className="text-[10px] font-medium uppercase tracking-[0.16em] text-slate-500">
+            As you go
+          </div>
+          {coachBusy && !coachLine && (
+            <p className="mt-1.5 animate-pulse text-[13px] text-slate-500">
+              Reading the new position…
             </p>
-          )
-        )}
-      </section>
+          )}
+          {coachError && (
+            <p className="mt-1.5 text-[13px] text-hud-danger">{coachError}</p>
+          )}
+          {coachLine && (
+            <p className="mt-1.5 text-[13px] leading-relaxed text-slate-400">
+              {coachLine}
+              {coachBusy && (
+                <span className="ml-1 animate-pulse text-hud-accent">▌</span>
+              )}
+            </p>
+          )}
+        </section>
+      )}
     </div>
   );
 }

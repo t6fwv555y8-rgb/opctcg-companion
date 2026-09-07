@@ -5,8 +5,8 @@ export default {
     extend: {
       colors: {
         hud: {
-          bg: "rgba(15, 23, 42, 0.85)",
-          border: "rgba(56, 189, 248, 0.4)",
+          bg: "rgba(15, 23, 42, 0.55)",
+          border: "rgba(148, 163, 184, 0.14)",
           accent: "#38bdf8",
           warn: "#fbbf24",
           danger: "#f87171",

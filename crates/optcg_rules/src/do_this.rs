@@ -18,27 +18,21 @@ pub fn battle_do_this(
 
     if let Some(a) = analysis {
         let need = fmt_power(a.required_counter);
-        let math = format!(
-            "{} vs {} (need {need} to hold)",
-            fmt_power(a.attacker_power),
-            fmt_power(a.defender_power)
-        );
         if defending {
             if a.lethal_to_leader {
-                let mut steps = vec![swing.clone(), format!("Math: {math}.")];
-                steps.extend(table.your_blocker_steps());
+                let mut steps = table.your_blocker_steps();
                 steps.extend(table.your_counter_steps(a.required_counter));
                 steps.push(format!(
                     "You are at {} life. If this hits, you lose.",
                     table.you.life
                 ));
                 let line = match table.your_blockers().first() {
-                    Some(blocker) => format!(
-                        "{swing} Block with {blocker} or counter {need} — this is lethal."
-                    ),
+                    Some(blocker) => {
+                        format!("{swing} Block with {blocker} or counter {need} — this is lethal.")
+                    }
                     None => format!("{swing} Counter {need} or you lose — this is lethal."),
                 };
-                return Some(CombatDoThis { line, steps });
+                return Some(table.plan(line, steps));
             }
             if a.recommended_block || (state.combat.blocker_offered && !a.survives_without_counter)
             {
@@ -47,85 +41,61 @@ pub fn battle_do_this(
                     .first()
                     .cloned()
                     .unwrap_or_else(|| "a ready Blocker".into());
-                let mut steps = vec![swing.clone(), format!("Math: {math}.")];
-                steps.push(format!("Block with {blocker}."));
+                let mut steps = vec![format!("Block with {blocker}.")];
                 if a.required_counter > 0 {
                     steps.extend(table.your_counter_steps(a.required_counter));
                 }
-                return Some(CombatDoThis {
-                    line: format!("{swing} Block with {blocker}."),
-                    steps,
-                });
+                return Some(table.plan(format!("{swing} Block with {blocker}."), steps));
             }
             if a.required_counter > 0 && !a.survives_without_counter {
-                let mut steps = vec![swing.clone(), format!("Math: {math}.")];
-                steps.extend(table.your_counter_steps(a.required_counter));
+                let mut steps = table.your_counter_steps(a.required_counter);
                 steps.push("If you keep the cards, take the hit.".into());
-                return Some(CombatDoThis {
-                    line: format!("{swing} Counter {need} or take the hit."),
-                    steps,
-                });
+                return Some(table.plan(format!("{swing} Counter {need} or take the hit."), steps));
             }
             if a.survives_without_counter {
-                return Some(CombatDoThis {
-                    line: format!("{swing} They don't break through — take it."),
-                    steps: vec![
-                        swing,
-                        format!("Math: {math}."),
-                        "Don't spend a Blocker or counter here.".into(),
-                    ],
-                });
+                return Some(table.plan(
+                    format!("{swing} They don't break through — take it."),
+                    vec!["Don't spend a Blocker or counter here.".into()],
+                ));
             }
         } else if a.lethal_to_leader {
-            let mut steps = vec![swing.clone(), format!("Math: {math}.")];
-            steps.extend(table.their_blocker_watch());
-            return Some(CombatDoThis {
-                line: format!("{swing} This is lethal — go through."),
-                steps,
-            });
+            return Some(table.plan(
+                format!("{swing} This is lethal — go through."),
+                table.their_blocker_watch(),
+            ));
         } else if a.required_counter > 0 {
-            let mut steps = vec![swing.clone(), format!("Math: {math}.")];
-            steps.extend(table.their_blocker_watch());
-            return Some(CombatDoThis {
-                line: format!("{swing} They need {need} to live."),
-                steps,
-            });
+            return Some(table.plan(
+                format!("{swing} They need {need} to live."),
+                table.their_blocker_watch(),
+            ));
         } else {
-            return Some(CombatDoThis {
-                line: format!("{swing} They don't break this — resolve."),
-                steps: vec![swing, format!("Math: {math}.")],
-            });
+            return Some(table.plan(
+                format!("{swing} They don't break this — resolve."),
+                vec!["Resolve this swing.".into()],
+            ));
         }
     }
 
-    let mut steps = vec![swing.clone()];
-    steps.extend(table.board_steps());
     if state.combat.blocker_offered {
-        steps.extend(table.your_blocker_steps());
-        return Some(CombatDoThis {
-            line: format!("{swing} Blocker window — decide now."),
-            steps,
-        });
+        return Some(table.plan(
+            format!("{swing} Blocker window — decide now."),
+            table.your_blocker_steps(),
+        ));
     }
     if defending {
-        steps.extend(table.your_blocker_steps());
-        return Some(CombatDoThis {
-            line: format!("{swing} Block, counter, or take it."),
-            steps,
-        });
+        return Some(table.plan(
+            format!("{swing} Block, counter, or take it."),
+            table.your_blocker_steps(),
+        ));
     }
-    steps.extend(table.their_blocker_watch());
-    Some(CombatDoThis {
-        line: format!("{swing} Resolve this swing."),
-        steps,
-    })
+    Some(table.plan(
+        format!("{swing} Resolve this swing."),
+        table.their_blocker_watch(),
+    ))
 }
 
 /// When no attack is open: name the bodies on the table and the next swing.
-pub fn table_do_this(
-    state: &GameState,
-    repo: &CardRepository<'_>,
-) -> Option<CombatDoThis> {
+pub fn table_do_this(state: &GameState, repo: &CardRepository<'_>) -> Option<CombatDoThis> {
     if state.combat.active {
         return None;
     }
@@ -136,8 +106,7 @@ pub fn table_do_this(
     }
 
     let table = Table::read(state, Some(repo));
-    let mut steps = table.board_steps();
-    if steps.is_empty() {
+    if table.you_roster().is_empty() && table.them_roster().is_empty() {
         return None;
     }
 
@@ -160,16 +129,12 @@ pub fn table_do_this(
         )
     };
 
-    if let Some(swing) = table.your_next_swing() {
-        if state.active_player == 0 {
-            steps.insert(0, swing);
-        }
-    }
+    let mut steps = Vec::new();
     if you.don_active > 0 && matches!(state.phase, Phase::Don | Phase::Main) {
         steps.push(table.don_step());
     }
 
-    Some(CombatDoThis { line, steps })
+    Some(table.plan(line, steps))
 }
 
 struct SideView {
@@ -212,9 +177,9 @@ impl<'a> Table<'a> {
         if self.state.combat.attacker_player == Some(0) {
             return false;
         }
-        analysis.is_some_and(|a| {
-            a.lethal_to_leader || a.recommended_block || a.required_counter > 0
-        }) && self.state.combat.target_is_leader
+        analysis
+            .is_some_and(|a| a.lethal_to_leader || a.recommended_block || a.required_counter > 0)
+            && self.state.combat.target_is_leader
     }
 
     fn attacker_idx(&self) -> usize {
@@ -270,13 +235,93 @@ impl<'a> Table<'a> {
             );
         }
 
-        if let Some(body) = self.state.players.get(player).and_then(|p| {
-            p.characters.iter().find(|c| c.card_id == id)
-        }) {
+        if let Some(body) = self
+            .state
+            .players
+            .get(player)
+            .and_then(|p| p.characters.iter().find(|c| c.card_id == id))
+        {
             return format!("{poss} {}", self.body_label(body));
         }
 
         format!("{poss} {}", named(&lookup(self.repo, id), id))
+    }
+
+    fn plan(&self, line: String, steps: Vec<String>) -> CombatDoThis {
+        CombatDoThis {
+            line,
+            steps,
+            you: self.you_roster(),
+            them: self.them_roster(),
+        }
+    }
+
+    fn you_roster(&self) -> Vec<String> {
+        self.side_roster(0)
+    }
+
+    fn them_roster(&self) -> Vec<String> {
+        self.side_roster(1)
+    }
+
+    fn side_roster(&self, player: usize) -> Vec<String> {
+        let side = if player == 0 { &self.you } else { &self.them };
+        if side.leader_id.is_empty() && self.state.players[player].characters.is_empty() {
+            return Vec::new();
+        }
+        let mut rows = Vec::new();
+        if !side.leader_id.is_empty() {
+            rows.push(format!(
+                "{} · {} · {} life",
+                named(&side.leader_name, &side.leader_id),
+                fmt_power(side.leader_power),
+                side.life
+            ));
+        }
+        if side.don_active > 0 || side.don_rested > 0 || (player == 0 && side.hand_count > 0) {
+            let mut meta = format!("{} DON · {} rest", side.don_active, side.don_rested);
+            if player == 0 {
+                meta.push_str(&format!(" · {} in hand", side.hand_count));
+            }
+            rows.push(meta);
+        }
+        for body in &self.state.players[player].characters {
+            rows.push(self.body_short(body));
+        }
+        rows
+    }
+
+    fn body_short(&self, body: &CardInstance) -> String {
+        let def = self.repo.and_then(|r| r.get_by_id(&body.card_id).ok());
+        let name = def
+            .as_ref()
+            .map(|d| d.name.as_str())
+            .unwrap_or(body.card_id.as_str());
+        let printed = def.as_ref().map(|d| d.power as i32).unwrap_or(0);
+        let power = body.effective_power(printed.max(0) as u32);
+        let stance = if body.rested || body.tapped {
+            "rested"
+        } else {
+            "ready"
+        };
+        let mut bits = vec![
+            named(name, &body.card_id),
+            format!("{} {stance}", fmt_power(power)),
+        ];
+        if body.attached_don > 0 {
+            bits.push(format!(
+                "{} + {} DON",
+                fmt_power(printed),
+                body.attached_don
+            ));
+        }
+        if def.as_ref().is_some_and(|d| d.keywords.blocker) {
+            bits.push("Blocker".into());
+        }
+        if def.as_ref().is_some_and(|d| d.keywords.rush) {
+            bits.push("Rush".into());
+        }
+        bits.join(" · ")
     }
 
     fn body_label(&self, body: &CardInstance) -> String {
@@ -292,7 +337,11 @@ impl<'a> Table<'a> {
         } else {
             "ready"
         };
-        let mut label = format!("{} at {} ({stance})", named(name, &body.card_id), fmt_power(power));
+        let mut label = format!(
+            "{} at {} ({stance})",
+            named(name, &body.card_id),
+            fmt_power(power)
+        );
         if body.attached_don > 0 {
             label.push_str(&format!(
                 ", {} + {} DON",
@@ -345,10 +394,7 @@ impl<'a> Table<'a> {
         let in_hand = hand_counters(&self.state.players[0], self.repo);
         let mut steps = Vec::new();
         if !in_hand.is_empty() {
-            steps.push(format!(
-                "Counters in hand: {}.",
-                in_hand.join("; ")
-            ));
+            steps.push(format!("Counters in hand: {}.", in_hand.join("; ")));
         } else if self.you.hand_count > 0 {
             steps.push(format!(
                 "You have {} cards in hand (about {} if they are 1k counters).",
@@ -359,49 +405,10 @@ impl<'a> Table<'a> {
             steps.push("Your hand is empty — no counters.".into());
         }
         if required > 0 {
-            steps.push(format!("Need {} counter to keep this.", fmt_power(required)));
-        }
-        steps
-    }
-
-    fn board_steps(&self) -> Vec<String> {
-        let mut steps = Vec::new();
-        steps.push(format!(
-            "You: {} at {}, {} life, {} active DON / {} rested, {} in hand.",
-            named(&self.you.leader_name, &self.you.leader_id),
-            fmt_power(self.you.leader_power),
-            self.you.life,
-            self.you.don_active,
-            self.you.don_rested,
-            self.you.hand_count
-        ));
-        if !self.state.players[0].characters.is_empty() {
-            let bodies: Vec<_> = self.state.players[0]
-                .characters
-                .iter()
-                .map(|c| self.body_label(c))
-                .collect();
-            steps.push(format!("Your characters: {}.", bodies.join("; ")));
-        } else {
-            steps.push("You have no characters on the table.".into());
-        }
-        steps.push(format!(
-            "Them: {} at {}, {} life, {} active DON / {} rested.",
-            named(&self.them.leader_name, &self.them.leader_id),
-            fmt_power(self.them.leader_power),
-            self.them.life,
-            self.them.don_active,
-            self.them.don_rested
-        ));
-        if !self.state.players[1].characters.is_empty() {
-            let bodies: Vec<_> = self.state.players[1]
-                .characters
-                .iter()
-                .map(|c| self.body_label(c))
-                .collect();
-            steps.push(format!("Their characters: {}.", bodies.join("; ")));
-        } else {
-            steps.push("They have no characters on the table.".into());
+            steps.push(format!(
+                "Need {} counter to keep this.",
+                fmt_power(required)
+            ));
         }
         steps
     }
@@ -491,9 +498,7 @@ impl<'a> Table<'a> {
     }
 
     fn don_step(&self) -> String {
-        let ready = self
-            .state
-            .players[0]
+        let ready = self.state.players[0]
             .characters
             .iter()
             .find(|c| !c.rested && !c.tapped);
@@ -616,7 +621,9 @@ mod tests {
         let mut sanji = CardInstance::new("ST01-012", 1, Zone::Character);
         sanji.attached_don = 3;
         state.players[1].characters.push(sanji);
-        state.players[0].characters.push(CardInstance::new("ST01-010", 0, Zone::Character));
+        state.players[0]
+            .characters
+            .push(CardInstance::new("ST01-010", 0, Zone::Character));
         state.players[0].hand_count = 0;
         state.players[0].life = 2;
         state.combat = combat("ST01-012", 1, 0);
@@ -625,10 +632,23 @@ mod tests {
         let line = battle.line.to_lowercase();
         assert!(line.contains("sanji"), "{line}");
         assert!(line.contains("st01-012"), "{line}");
-        assert!(line.contains("luffy") || line.contains("st01-001"), "{line}");
+        assert!(
+            line.contains("luffy") || line.contains("st01-001"),
+            "{line}"
+        );
         assert!(line.contains("9k") || line.contains("lethal"), "{line}");
-        assert!(battle.steps.iter().any(|s| s.contains("Nami") || s.contains("ST01-010")));
-        assert!(battle.steps.iter().any(|s| s.contains("2 life") || s.contains("life")));
+        assert!(battle
+            .you
+            .iter()
+            .any(|s| s.contains("Nami") || s.contains("ST01-010")));
+        assert!(battle
+            .you
+            .iter()
+            .any(|s| s.contains("2 life") || s.contains("life")));
+        assert!(battle
+            .them
+            .iter()
+            .any(|s| s.contains("Sanji") || s.contains("ST01-012")));
     }
 
     #[test]
@@ -638,10 +658,17 @@ mod tests {
         let repo = CardRepository::new(&db);
         let mut state = GameState::new();
         state.phase = Phase::Main;
-        state.players[0].characters.push(CardInstance::new("ST01-012", 0, Zone::Character));
-        state.players[1].characters.push(CardInstance::new("ST01-002", 1, Zone::Character));
+        state.players[0]
+            .characters
+            .push(CardInstance::new("ST01-012", 0, Zone::Character));
+        state.players[1]
+            .characters
+            .push(CardInstance::new("ST01-002", 1, Zone::Character));
         let plan = table_do_this(&state, &repo).unwrap();
-        assert!(plan.line.contains("Sanji") || plan.steps.iter().any(|s| s.contains("Sanji")));
-        assert!(plan.steps.iter().any(|s| s.contains("Usopp") || s.contains("ST01-002")));
+        assert!(plan.line.contains("Sanji") || plan.you.iter().any(|s| s.contains("Sanji")));
+        assert!(plan
+            .them
+            .iter()
+            .any(|s| s.contains("Usopp") || s.contains("ST01-002")));
     }
 }

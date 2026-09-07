@@ -35,10 +35,10 @@ const Bubble = memo(function Bubble({
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
       <div
-        className={`max-w-[88%] rounded px-3 py-2 text-sm leading-relaxed ${
+        className={`max-w-[88%] rounded-xl px-3 py-2 text-sm leading-relaxed ${
           isUser
             ? "bg-hud-accent/15 text-slate-100"
-            : "bg-slate-800/60 text-slate-200"
+            : "bg-slate-800/50 text-slate-200"
         }`}
       >
         <div className="whitespace-pre-wrap">

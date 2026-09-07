@@ -1704,28 +1704,36 @@ mod tests {
         {
             let mut gs = board.write();
             gs.phase = optcg_core::Phase::Main;
-            gs.players[0]
-                .characters
-                .push(optcg_core::CardInstance::new(
-                    "ST01-012",
-                    0,
-                    optcg_core::Zone::Character,
-                ));
-            gs.players[1]
-                .characters
-                .push(optcg_core::CardInstance::new(
-                    "ST01-002",
-                    1,
-                    optcg_core::Zone::Character,
-                ));
+            gs.players[0].characters.push(optcg_core::CardInstance::new(
+                "ST01-012",
+                0,
+                optcg_core::Zone::Character,
+            ));
+            gs.players[1].characters.push(optcg_core::CardInstance::new(
+                "ST01-002",
+                1,
+                optcg_core::Zone::Character,
+            ));
         }
         let payload = state.build_update_payload(None);
         let battle = payload
             .combat_coach
             .expect("a readable board should name the cards");
-        let blob = format!("{} {}", battle.line, battle.steps.join(" "));
-        assert!(blob.contains("Sanji") || blob.contains("ST01-012"), "{blob}");
-        assert!(blob.contains("Usopp") || blob.contains("ST01-002"), "{blob}");
+        let blob = format!(
+            "{} {} {} {}",
+            battle.line,
+            battle.steps.join(" "),
+            battle.you.join(" "),
+            battle.them.join(" ")
+        );
+        assert!(
+            blob.contains("Sanji") || blob.contains("ST01-012"),
+            "{blob}"
+        );
+        assert!(
+            blob.contains("Usopp") || blob.contains("ST01-002"),
+            "{blob}"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 }
