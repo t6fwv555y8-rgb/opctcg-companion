@@ -1,14 +1,24 @@
 #!/usr/bin/env bash
-# Open the OPTCG Companion. One command, one window, demo cards moving.
+# Open the OPTCG Companion.
+#   ./start                 demo cards (no real game)
+#   ./start onesimulator    live OneSimulator match
+#   ./start --terminal      print the HUD in this shell
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 
+MODE=mock
 TERMINAL=0
-if [[ "${1:-}" == "--terminal" || "${1:-}" == "hud" ]]; then
-  TERMINAL=1
-fi
+case "${1:-}" in
+  --terminal | hud) TERMINAL=1 ;;
+  onesimulator | one | --onesimulator | --live | live) MODE=onesimulator ;;
+  mock | --mock | "") MODE=mock ;;
+  *)
+    printf 'Unknown option: %s\nUse: ./start   or   ./start onesimulator\n' "$1" >&2
+    exit 1
+    ;;
+esac
 
 say() { printf '%s\n' "$*"; }
 die() { printf 'Could not start: %s\n' "$*" >&2; exit 1; }
@@ -23,7 +33,6 @@ say ""
 
 need_cmd node "Node.js is missing. On a Mac: brew install node"
 need_cmd npm  "npm is missing. Reinstall Node.js, then run ./start again."
-need_cmd python3 "Python 3 is missing. On a Mac: brew install python"
 need_cmd cargo "Rust is missing. Paste this, close Terminal, reopen it, then run ./start again:
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
 
@@ -33,12 +42,24 @@ if [[ ! -d node_modules || ! -d src-ui/node_modules ]]; then
   (cd src-ui && npm install)
 fi
 
-if ! python3 -c "import websockets" >/dev/null 2>&1; then
-  say "Installing the Python package the demo stream needs…"
-  python3 -m pip install --user websockets >/dev/null
+if [[ "$MODE" == "mock" || "$TERMINAL" -eq 1 ]]; then
+  need_cmd python3 "Python 3 is missing. On a Mac: brew install python"
+  if ! python3 -c "import websockets" >/dev/null 2>&1; then
+    say "Installing the Python package the demo stream needs…"
+    python3 -m pip install --user websockets >/dev/null
+  fi
 fi
 
-export OPTCG_SOURCE="${OPTCG_SOURCE:-mock}"
+if [[ "$MODE" == "onesimulator" ]]; then
+  if [[ ! -d browser-companion/node_modules ]]; then
+    say "Installing the Chrome extension (once)…"
+    (cd browser-companion && npm install)
+  fi
+  say "Building the Chrome extension…"
+  (cd browser-companion && npm run build)
+fi
+
+export OPTCG_SOURCE="$MODE"
 
 say ""
 if [[ "$TERMINAL" -eq 1 ]]; then
@@ -50,9 +71,29 @@ fi
 
 say "A window named OPTCG Companion is about to open."
 say "The first launch compiles Rust and can take several minutes — leave this running."
-say "Demo cards will start moving once the window is up. Ctrl-C stops everything."
+say "Ctrl-C stops everything."
 say ""
-say "Playing a real match later: in the window, Game Source → OneSimulator."
+
+if [[ "$MODE" == "onesimulator" ]]; then
+  say "OneSimulator — do these three things while the window compiles:"
+  say ""
+  say "  1. Chrome → chrome://extensions"
+  say "  2. Developer mode ON → Load unpacked → pick this folder:"
+  say "       $ROOT/browser-companion"
+  say "  3. Open a match:  https://onesimulator.slidingcodes.com"
+  say ""
+  say "The extension badge should read ON once you are in a game."
+  say "The HUD should say OneSimulator · LIVE."
+  say ""
+  if command -v open >/dev/null 2>&1; then
+    open "https://onesimulator.slidingcodes.com" 2>/dev/null || true
+    open "chrome://extensions" 2>/dev/null || true
+  fi
+  exec npm run dev:tauri
+fi
+
+say "Demo cards will start moving once the window is up."
+say "For a real match instead:  ./start onesimulator"
 say ""
 
 exec npx --yes concurrently -k -n hud,demo -c blue,green \

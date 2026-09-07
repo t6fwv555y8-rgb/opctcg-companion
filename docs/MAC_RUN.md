@@ -45,12 +45,24 @@ Wait for a window titled **OPTCG Companion**. The first launch compiles Rust and
 
 A tab at `localhost:1420` means the window never opened — quit that and run `./start` again.
 
-## Play a real match
+## Play a OneSimulator match
 
-1. Keep `./start` running.
-2. In the window, scroll to **Game Source** and click **OneSimulator**.
-3. Chrome → `chrome://extensions` → Developer mode → **Load unpacked** → pick the `browser-companion` folder inside this repo.
-4. Open a match on OneSimulator. The HUD follows the game.
+```bash
+cd ~/Desktop/opctcg-companion
+./start onesimulator
+```
+
+While the window compiles, in **Chrome** (not Safari):
+
+1. Go to `chrome://extensions`
+2. Turn **Developer mode** on (top right)
+3. **Load unpacked** → choose `~/Desktop/opctcg-companion/browser-companion`
+   (the folder that contains `manifest.json`)
+4. Open https://onesimulator.slidingcodes.com and enter a match
+
+The extension icon should say **ON**. The HUD should say **OneSimulator · LIVE**. Life, DON, and the board will follow the game.
+
+Safari cannot load this extension. Use Chrome or Edge.
 
 ## No window, only a terminal
 

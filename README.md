@@ -64,6 +64,14 @@ optcg-companion/
 
 That is the whole command. It installs anything missing, opens the **OPTCG Companion** window, and plays demo cards into it. First launch compiles Rust and can take several minutes.
 
+A real OneSimulator match:
+
+```bash
+./start onesimulator
+```
+
+Then load `browser-companion` as an unpacked Chrome extension and open a game.
+
 Walkthrough, real-match setup, and what success looks like: **[docs/MAC_RUN.md](docs/MAC_RUN.md)**.
 
 No display? `./start --terminal` prints the same HUD in the shell.

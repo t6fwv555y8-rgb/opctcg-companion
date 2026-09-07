@@ -50,9 +50,16 @@ export default function App() {
           {bridge.observation?.selection === "mock" && (
             <p className="px-1 text-[10px] leading-snug text-slate-500">
               Demo is running — cards move on their own. For a real match,
-              scroll to Game Source and pick OneSimulator.
+              quit and run ./start onesimulator.
             </p>
           )}
+          {bridge.observation?.selection === "one_simulator" &&
+            bridge.observation.hud_state !== "live" && (
+              <p className="px-1 text-[10px] leading-snug text-slate-500">
+                Waiting on OneSimulator. In Chrome: chrome://extensions →
+                Load unpacked → browser-companion, then open a match.
+              </p>
+            )}
 
           <TurnIndicator
             gameState={gs}
