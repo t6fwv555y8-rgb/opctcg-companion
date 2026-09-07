@@ -72,6 +72,7 @@ export interface PlayerStateDto {
   deck_name?: string;
   player_name?: string;
   known_cards?: string[];
+  swings?: number;
 }
 
 /// Where a side's deck list came from.

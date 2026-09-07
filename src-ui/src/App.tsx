@@ -58,7 +58,7 @@ function tableSide(
   const named = player?.leader_name?.trim() ?? "";
   const fromTable = Boolean(player?.leader_observed) || named.length > 0;
   if (!fromTable) {
-    return { leader: "Waiting for kickoff", id: "" };
+    return { leader: "—", id: "" };
   }
   const deckName = deck?.leader_name?.trim() ?? "";
   const leader =

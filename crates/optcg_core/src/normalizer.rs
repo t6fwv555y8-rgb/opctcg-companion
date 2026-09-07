@@ -165,7 +165,17 @@ impl Normalizer {
                 state.phase = *phase;
             }
             GameEvent::StateSync { payload } => {
-                if let Ok(parsed) = serde_json::from_value::<GameState>(payload.clone()) {
+                if let Ok(mut parsed) = serde_json::from_value::<GameState>(payload.clone()) {
+                    for i in 0..2 {
+                        if parsed.players[i].swings < state.players[i].swings {
+                            parsed.players[i].swings = state.players[i].swings;
+                        }
+                        if state.players[i].leader.observed
+                            && parsed.players[i].leader.card_id == state.players[i].leader.card_id
+                        {
+                            parsed.players[i].leader.observed = true;
+                        }
+                    }
                     *state = parsed;
                 }
             }
@@ -558,6 +568,14 @@ impl Normalizer {
         power: u32,
     ) -> CoreResult<()> {
         state.phase = Phase::Combat;
+        let same_swing = state.combat.active
+            && state.combat.attacker_id.as_deref() == Some(attacker)
+            && state.combat.attacker_player == Some(attacker_player.index());
+        if !same_swing {
+            if let Some(p) = state.player_mut(attacker_player.index()) {
+                p.swings = p.swings.saturating_add(1);
+            }
+        }
         let (target_id, target_player, target_is_leader) = match target {
             AttackTarget::Leader { player } => {
                 (Some("leader".to_string()), Some(player.index()), true)
@@ -737,5 +755,30 @@ mod tests {
         )
         .unwrap();
         assert!(state.combat.active);
+        assert_eq!(state.player_one().swings, 1);
+        let again = Normalizer::parse_event(
+            "ATTACK_DECLARED|PLAYER_1|ST01-002|LEADER|PLAYER_2|6000",
+        )
+        .unwrap();
+        Normalizer::apply_event(&mut state, &again).unwrap();
+        assert_eq!(
+            state.player_one().swings,
+            1,
+            "the same open swing is not a second attack"
+        );
+    }
+
+    #[test]
+    fn state_sync_keeps_swings_and_observed_leaders() {
+        let mut state = GameState::new();
+        state.player_one_mut().set_leader_id("OP13-001");
+        state.player_one_mut().swings = 3;
+        let mut payload = serde_json::to_value(&state).unwrap();
+        payload["players"][0]["leader"]["observed"] = serde_json::json!(false);
+        payload["players"][0]["swings"] = serde_json::json!(0);
+        Normalizer::apply_event(&mut state, &GameEvent::StateSync { payload }).unwrap();
+        assert!(state.player_one().leader.observed);
+        assert_eq!(state.player_one().swings, 3);
+        assert_eq!(state.player_one().leader.card_id, "OP13-001");
     }
 }

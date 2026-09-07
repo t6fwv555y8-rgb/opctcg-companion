@@ -207,6 +207,9 @@ pub struct PlayerStateDto {
     pub player_name: String,
     #[serde(default)]
     pub known_cards: Vec<String>,
+    /// Attacks this player has declared this game.
+    #[serde(default)]
+    pub swings: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -251,6 +254,7 @@ impl From<&PlayerState> for PlayerStateDto {
             deck_name: p.deck_name.clone(),
             player_name: p.player_name.clone(),
             known_cards: p.known_cards.clone(),
+            swings: p.swings,
         }
     }
 }

@@ -154,24 +154,27 @@ body {
   color: #f5d76e;
 }
 
-.scoreboard-face {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  align-items: center;
-  gap: 8px;
+.scoreboard-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   padding: 8px 12px 10px;
 }
 
-.scoreboard-team {
+.scoreboard-seat {
   min-width: 0;
 }
 
-.scoreboard-team.away {
-  text-align: left;
+.scoreboard-seat.them {
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(248, 250, 252, 0.06);
 }
 
-.scoreboard-team.home {
-  text-align: right;
+.scoreboard-seat.you {
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: rgba(212, 160, 23, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(212, 160, 23, 0.22);
 }
 
 .scoreboard-role {
@@ -181,20 +184,16 @@ body {
   color: rgba(148, 163, 184, 0.7);
 }
 
-.scoreboard-abbr {
-  margin-top: 1px;
-  font-size: 18px;
-  font-weight: 800;
-  letter-spacing: 0.06em;
-  line-height: 1.05;
-  color: #f8fafc;
+.scoreboard-seat.you .scoreboard-role {
+  color: #f5d76e;
 }
 
 .scoreboard-leader {
   margin-top: 2px;
-  font-size: 11px;
-  line-height: 1.25;
-  color: #f5d76e;
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 1.2;
+  color: #f8fafc;
   overflow: hidden;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -210,46 +209,49 @@ body {
   white-space: nowrap;
 }
 
-.scoreboard-mid {
-  text-align: center;
-  min-width: 7.5rem;
-}
-
-.scoreboard-scores {
+.life-pips {
   display: flex;
-  align-items: baseline;
-  justify-content: center;
-  gap: 8px;
+  align-items: center;
+  gap: 5px;
+  margin-top: 6px;
 }
 
-.scoreboard-points {
+.life-pips .pip {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(245, 215, 110, 0.35);
+  background: transparent;
+}
+
+.life-pips .pip.on {
+  background: #f5d76e;
+  box-shadow: 0 0 8px rgba(245, 215, 110, 0.35);
+}
+
+.life-count {
+  margin-left: 4px;
   font-variant-numeric: tabular-nums;
-  font-size: 34px;
+  font-size: 18px;
   font-weight: 800;
   line-height: 1;
   color: #f5d76e;
-  text-shadow: 0 0 12px rgba(245, 215, 110, 0.25);
 }
 
-.scoreboard-vs {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.18em;
-  color: rgba(248, 250, 252, 0.55);
+.scoreboard-meta {
+  margin-top: 3px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(226, 232, 240, 0.55);
 }
 
-.scoreboard-life {
-  margin-top: 2px;
-  font-size: 8px;
-  letter-spacing: 0.22em;
-  color: rgba(245, 215, 110, 0.7);
+.scoreboard-mid {
+  text-align: center;
+  padding: 2px 0;
 }
 
 .scoreboard-clock {
-  margin-top: 4px;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.12em;

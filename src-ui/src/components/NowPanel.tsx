@@ -130,7 +130,7 @@ export function NowPanel({
     pageState === "queue"
       ? "In queue — the next call lands when the match starts."
       : pageState === "lobby"
-        ? "In the locker — queue a match and Rayleigh will call it."
+        ? "In the lobby — queue a match and Rayleigh will call it."
         : pageState === "ended"
           ? "Final. The recap lands as soon as the result is readable."
           : "Waiting for a readable position.";
@@ -141,7 +141,9 @@ export function NowPanel({
     (!fighting && strategy?.action.description?.trim()) ||
     phaseCoach?.trim() ||
     waiting;
-  const broadcast = coachLine?.trim() || line;
+  // Follow the board. A finished coach line must not freeze the call
+  // on an earlier position.
+  const broadcast = coachBusy && coachLine?.trim() ? coachLine.trim() : line;
   const steps = (
     table?.steps?.length ? table.steps : (deckStrategy?.this_turn ?? [])
   ).slice(0, 3);
@@ -233,8 +235,8 @@ export function NowPanel({
 
       {(you.length > 0 || them.length > 0) && (
         <div className="flex flex-col gap-3 px-0.5">
-          <RosterColumn title="Away roster" rows={them} />
-          <RosterColumn title="Home roster" rows={you} />
+          <RosterColumn title="Them · top" rows={them} />
+          <RosterColumn title="You · bottom" rows={you} />
         </div>
       )}
     </div>

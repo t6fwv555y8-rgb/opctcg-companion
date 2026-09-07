@@ -273,6 +273,9 @@ pub struct PlayerState {
     pub leader_power: u32,
     #[serde(default)]
     pub leader_rested: bool,
+    /// Attacks this player has declared this game.
+    #[serde(default)]
+    pub swings: u32,
 }
 
 fn default_leader_power() -> u32 {
@@ -302,6 +305,7 @@ impl PlayerState {
             leader_id,
             leader_power: 5000,
             leader_rested: false,
+            swings: 0,
         }
     }
 
