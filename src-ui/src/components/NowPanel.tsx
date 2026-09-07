@@ -146,11 +146,9 @@ export function NowPanel({
   ).slice(0, 3);
   const you = table?.you ?? [];
   const them = table?.them ?? [];
-  const alts = table
-    ? []
-    : options
-        .filter((opt) => opt.action.description?.trim() !== line)
-        .slice(0, 3);
+  const alts = options
+    .filter((opt) => opt.action.description?.trim() && opt.action.description.trim() !== line)
+    .slice(0, 3);
   const blockerOpen = Boolean(combat?.blocker_offered);
   const notes = Boolean(coachLine || coachBusy || coachError);
 
@@ -159,14 +157,24 @@ export function NowPanel({
       <section className="hud-panel px-3.5 py-3">
         <div className="flex items-center justify-between gap-2">
           <div className="hud-title text-hud-accent">Do this</div>
-          {blockerOpen && (
-            <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-100">
-              Blocker window
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-amber-200/80">
+              Rayleigh
             </span>
-          )}
+            {blockerOpen && (
+              <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-100">
+                Blocker window
+              </span>
+            )}
+          </div>
         </div>
         {analysis && <CombatStrip analysis={analysis} />}
-        <p className="mt-2 text-[15px] leading-snug text-white">{line}</p>
+        <div className="best-line mt-2">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-amber-200">
+            Best line
+          </div>
+          <p className="mt-1 text-[16px] font-semibold leading-snug text-amber-50">{line}</p>
+        </div>
         {paused && (
           <p className="mt-2 text-[12px] text-hud-warn">
             The read is shaky — treat this as provisional.
@@ -185,9 +193,17 @@ export function NowPanel({
           </ul>
         )}
         {alts.length > 0 && (
-          <ul className="mt-3 space-y-1 border-t border-white/5 pt-3 text-[13px] text-slate-400">
-            {alts.map((opt) => (
-              <li key={opt.action.description}>{opt.action.description}</li>
+          <ul className="mt-3 space-y-1.5 border-t border-white/5 pt-3 text-[13px]">
+            {alts.map((opt, i) => (
+              <li
+                key={opt.action.description}
+                className={i === 0 ? "alt-line-1" : "alt-line-2"}
+              >
+                <span className="mr-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                  {i === 0 ? "Next" : "Hold"}
+                </span>
+                {opt.action.description}
+              </li>
             ))}
           </ul>
         )}
@@ -203,7 +219,7 @@ export function NowPanel({
       {notes && (
         <section className="px-0.5">
           <div className="text-[10px] font-medium uppercase tracking-[0.16em] text-slate-500">
-            As you go
+            Rayleigh
           </div>
           {coachBusy && !coachLine && (
             <p className="mt-1.5 animate-pulse text-[13px] text-slate-500">

@@ -86,6 +86,7 @@ export interface DeckInfoDto {
   leader_id: string;
   leader_name: string;
   leader_color: string;
+  leader_text?: string;
   known_cards: KnownCardDto[];
   origin: DeckOrigin;
   deck_id?: string | null;

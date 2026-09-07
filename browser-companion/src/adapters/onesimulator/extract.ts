@@ -203,6 +203,19 @@ function extractLeaderId(playerId: string, doc: Document): string | null {
   return el ? extractCardId(el) : null;
 }
 
+function extractLeaderName(playerId: string, doc: Document): string | null {
+  const el = doc.querySelector(
+    `[data-card-zone="${ZONES.leader}"][data-card-player-id="${playerId}"]`,
+  );
+  if (!el) return null;
+  const img = el.querySelector("img");
+  const raw = (img?.alt || el.getAttribute("data-card-name") || "").trim();
+  const name = raw.replace(CARD_ID_RE, "").replace(/\s+/g, " ").trim();
+  if (name.length < 2 || name.length > 48) return null;
+  if (/^(leader|card|image|artwork)$/i.test(name)) return null;
+  return name;
+}
+
 /** Self-hand only — never used for opponent. */
 function extractSelfHandCards(playerId: string, doc: Document): string[] {
   const ids: string[] = [];
@@ -283,6 +296,7 @@ function buildPlayerSnapshot(
     active_don: don?.active ?? null,
     rested_don: don?.rested ?? null,
     leader_id: leaderId,
+    leader_name: extractLeaderName(playerId, doc),
     deck_name: extractDeckName(playerId, doc),
     known_cards: [...known],
     board,

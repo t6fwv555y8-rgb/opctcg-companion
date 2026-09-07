@@ -288,7 +288,7 @@ pub fn is_decision_point(state: &GameState) -> bool {
     if state.active_player == YOU {
         return matches!(
             state.phase,
-            optcg_core::Phase::Main | optcg_core::Phase::Combat
+            optcg_core::Phase::Main | optcg_core::Phase::Combat | optcg_core::Phase::Don
         );
     }
     false
@@ -382,13 +382,19 @@ fn side_digest(player: &PlayerState) -> String {
 
 /// The instruction block that defines the coach's job and its limits.
 pub const SYSTEM_PROMPT: &str = "\
-You are the in-game coach inside the OPTCG Companion HUD, standing behind \
-the player during a live One Piece Card Game match.
+You are Silvers Rayleigh, the Dark King, coaching from inside the OPTCG \
+Companion HUD. Speak as Rayleigh: direct, calm, a little dry. You taught \
+Monkey D. Luffy how to get stronger. Teach this player the same way — \
+name the exact play, then why it wins.
 
 Ground every answer in the MATCH BRIEFING below. It is observed from the \
 player's simulator and is the only reliable source of board state. If the \
 briefing does not contain what you need, say what is missing instead of \
 inventing a board, a card, or a hand that was not listed.
+
+The Leaders section is the printed card: set code, name, and ability text. \
+Treat those abilities as facts. Do not rename a leader or invent wording \
+that is not listed.
 
 Write a mid-match line, not a rules recap. Four beats, in this order:
 1. The play — named cards, the target, and the DON.
@@ -420,6 +426,10 @@ pub fn build_context(
         let board = board_readout(state);
         sink(CoachEvent::tool("board_readout", board_summary(state)));
         context.push("Board", board);
+
+        let leaders = leaders_readout(state, repo);
+        sink(CoachEvent::tool("leaders_readout", leaders_summary(state)));
+        context.push("Leaders", leaders);
 
         let hands = hands_readout(state, repo);
         sink(CoachEvent::tool("hands_readout", hands_summary(state)));
@@ -890,6 +900,82 @@ fn named_hand_card(id: &str, repo: &CardRepository<'_>) -> String {
     }
 }
 
+fn leaders_summary(state: &GameState) -> String {
+    format!(
+        "{} · {}",
+        leader_short(state.player_one()),
+        leader_short(state.player_two())
+    )
+}
+
+fn leader_short(player: &PlayerState) -> String {
+    if !player.leader.card_id.is_empty() {
+        if !player.leader_name.is_empty() {
+            format!("{} ({})", player.leader_name, player.leader.card_id)
+        } else {
+            player.leader.card_id.clone()
+        }
+    } else if !player.leader_name.is_empty() {
+        player.leader_name.clone()
+    } else {
+        "unknown".into()
+    }
+}
+
+fn leaders_readout(state: &GameState, repo: &CardRepository<'_>) -> String {
+    format!(
+        "{}\n{}",
+        leader_readout("Your", state.player_one(), repo),
+        leader_readout("Their", state.player_two(), repo)
+    )
+}
+
+fn leader_readout(whose: &str, player: &PlayerState, repo: &CardRepository<'_>) -> String {
+    let id = player.leader.card_id.as_str();
+    let observed = player.leader_name.trim();
+    let def = if !id.is_empty() {
+        repo.get_by_id(id).ok()
+    } else if !observed.is_empty() {
+        repo.search_by_name(observed, 6).ok().and_then(|hits| {
+            hits.into_iter().find(|d| {
+                d.card_type == optcg_core::CardType::Leader && d.name.eq_ignore_ascii_case(observed)
+            })
+        })
+    } else {
+        None
+    };
+
+    let name = def
+        .as_ref()
+        .map(|d| d.name.as_str())
+        .filter(|n| !n.is_empty())
+        .or(if observed.is_empty() {
+            None
+        } else {
+            Some(observed)
+        })
+        .unwrap_or(if id.is_empty() { "unknown" } else { id });
+    let set = if id.is_empty() {
+        def.as_ref()
+            .map(|d| d.card_id.as_str())
+            .unwrap_or("set unknown")
+    } else {
+        id
+    };
+    let text = def
+        .as_ref()
+        .map(|d| d.rules_text.trim())
+        .filter(|t| !t.is_empty());
+
+    match text {
+        Some(text) => format!("{whose} leader: {name} ({set}) — {text}"),
+        None if name == "unknown" && set == "set unknown" => {
+            format!("{whose} leader is not readable yet.")
+        }
+        None => format!("{whose} leader: {name} ({set}). Ability text is not in the local set."),
+    }
+}
+
 fn side_readout(player: &optcg_core::PlayerState) -> String {
     let board = if player.characters.is_empty() {
         "empty board".to_string()
@@ -911,18 +997,23 @@ fn side_readout(player: &optcg_core::PlayerState) -> String {
             .join(", ")
     };
 
+    let leader = match (
+        player.leader_name.trim().is_empty(),
+        player.leader.card_id.is_empty(),
+    ) {
+        (true, true) => "unknown".to_string(),
+        (true, false) => player.leader.card_id.clone(),
+        (false, true) => player.leader_name.clone(),
+        (false, false) => format!("{} ({})", player.leader_name, player.leader.card_id),
+    };
+
     format!(
-        "life {}, hand {}, deck {}, DON {} active / {} rested, leader {} ({} power); board: {}",
+        "life {}, hand {}, deck {}, DON {} active / {} rested, leader {leader} ({} power); board: {}",
         player.life,
         player.hand_count,
         player.deck_count,
         player.don_active,
         player.don_rested,
-        if player.leader.card_id.is_empty() {
-            "unknown"
-        } else {
-            player.leader.card_id.as_str()
-        },
         player.leader.power,
         board
     )
@@ -1086,6 +1177,10 @@ mod tests {
         assert!(
             prompt.contains("## Tactical brief"),
             "missing tactical brief: {prompt}"
+        );
+        assert!(
+            prompt.contains("## Leaders"),
+            "missing leaders section: {prompt}"
         );
         assert!(prompt.contains("Red Luffy Aggro"));
         assert!(prompt.contains("4x Usopp (ST01-002)"));
@@ -1689,6 +1784,7 @@ mod tests {
 
         for absent in [
             "## Board",
+            "## Leaders",
             "## Opponent counter range",
             "## Phase guidance",
             "## Tactical brief",
@@ -1766,14 +1862,14 @@ mod tests {
         let mut state = sample_state();
 
         state.active_player = 0;
-        for phase in [Phase::Main, Phase::Combat] {
+        for phase in [Phase::Main, Phase::Combat, Phase::Don] {
             state.phase = phase;
             assert!(
                 is_decision_point(&state),
                 "{phase:?} on your turn is a decision point"
             );
         }
-        for phase in [Phase::Draw, Phase::Don, Phase::End] {
+        for phase in [Phase::Draw, Phase::End] {
             state.phase = phase;
             assert!(
                 !is_decision_point(&state),
@@ -1893,6 +1989,43 @@ mod tests {
         assert!(
             prompt.contains("ST01-007") || prompt.to_lowercase().contains("nami"),
             "hand should reach the brief: {prompt}"
+        );
+    }
+
+    #[test]
+    fn leaders_section_names_both_sides_with_set_and_text() {
+        let db = db();
+        let repo = CardRepository::new(&db);
+        let (sink, recorder) = recording_sink();
+        let mut state = sample_state();
+        state.player_one_mut().set_leader_id("ST01-001");
+        state.player_one_mut().set_leader_name("Monkey.D.Luffy");
+        state.player_two_mut().set_leader_id("ST01-001");
+        let prompt = build_context(
+            &state,
+            &repo,
+            &DeckContext::default(),
+            ContextScope::default(),
+            &sink,
+        )
+        .to_prompt();
+
+        assert!(prompt.contains("## Leaders"), "{prompt}");
+        assert!(prompt.contains("ST01-001"), "{prompt}");
+        assert!(
+            prompt.contains("Your leader") && prompt.contains("Their leader"),
+            "{prompt}"
+        );
+        assert!(
+            prompt.contains("DON!!") || prompt.contains("+2000"),
+            "printed leader text should reach the briefing: {prompt}"
+        );
+        assert!(
+            recorder
+                .events()
+                .iter()
+                .any(|e| matches!(e, CoachEvent::ToolRun(run) if run.tool == "leaders_readout")),
+            "the HUD should see that leaders were read"
         );
     }
 

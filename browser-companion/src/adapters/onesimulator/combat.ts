@@ -43,12 +43,17 @@ export function observeCombat(doc: Document = document): CombatObservation | nul
   );
 
   const attackBanner = board.querySelector(
-    '[class*="battle"], [class*="attack"], [data-combat-active="true"]',
+    '[data-combat-active="true"], [data-phase="combat"], [data-phase="battle"]',
   );
+  const phaseBits = [...board.querySelectorAll('[class*="text-yellow"]')]
+    .map((el) => el.textContent ?? "")
+    .join(" ");
+  const phaseIsCombat =
+    /phase:\s*(combat|battle|counter|block)/i.test(phaseBits) ||
+    /\b(declare attack|blocker step|counter step)\b/i.test(phaseBits);
 
-  if (!selected && !attackBanner) {
-    const text = board.textContent ?? "";
-    if (!/battle|attack|counter|block/i.test(text)) return null;
+  if (!selected && !attackBanner && !phaseIsCombat) {
+    return null;
   }
 
   const attackerEl =

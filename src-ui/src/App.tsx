@@ -21,7 +21,7 @@ type Tab = "play" | "opp" | "ask" | "setup";
 const TABS: { id: Tab; label: string }[] = [
   { id: "play", label: "Play" },
   { id: "opp", label: "Opp" },
-  { id: "ask", label: "Ask" },
+  { id: "ask", label: "Rayleigh" },
   { id: "setup", label: "Setup" },
 ];
 
@@ -62,17 +62,23 @@ export default function App() {
     (queued ? "Waiting for opponent" : "Opponent");
   const yourLeader =
     pageState === "match" ||
+    pageState === "ended" ||
     (gs?.player_one.known_cards?.length ?? 0) > 0 ||
+    Boolean(gs?.player_one.leader_id) ||
+    Boolean(bridge.snapshot?.your_deck?.leader_id) ||
     bridge.snapshot?.your_deck?.origin === "attached" ||
     bridge.snapshot?.your_deck?.origin === "presumed"
-      ? (bridge.snapshot?.your_deck?.leader_name ?? "")
+      ? (bridge.snapshot?.your_deck?.leader_name ?? gs?.player_one.leader_id ?? "")
       : "";
   const theirLeader =
     pageState === "match" ||
+    pageState === "ended" ||
     (gs?.player_two.known_cards?.length ?? 0) > 0 ||
+    Boolean(gs?.player_two.leader_id) ||
+    Boolean(bridge.snapshot?.opponent_deck?.leader_id) ||
     bridge.snapshot?.opponent_deck?.origin === "attached" ||
     bridge.snapshot?.opponent_deck?.origin === "presumed"
-      ? (bridge.snapshot?.opponent_deck?.leader_name ?? "")
+      ? (bridge.snapshot?.opponent_deck?.leader_name ?? gs?.player_two.leader_id ?? "")
       : "";
 
   return (
@@ -86,6 +92,14 @@ export default function App() {
         theirName={theirPlayer}
         yourLeader={yourLeader}
         theirLeader={theirLeader}
+        yourLeaderId={
+          bridge.snapshot?.your_deck?.leader_id || gs?.player_one.leader_id || ""
+        }
+        theirLeaderId={
+          bridge.snapshot?.opponent_deck?.leader_id || gs?.player_two.leader_id || ""
+        }
+        yourLeaderText={bridge.snapshot?.your_deck?.leader_text}
+        theirLeaderText={bridge.snapshot?.opponent_deck?.leader_text}
         hudState={bridge.observation?.hud_state ?? null}
         sourceLabel={bridge.observation?.active_source ?? null}
       />

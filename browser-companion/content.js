@@ -1,11 +1,59 @@
-// OPTCG Companion page reader 0.2.9
+// OPTCG Companion page reader 0.3.0
 // Reads the OneSimulator board and hands it to background.js.
 
-const VERSION = "0.2.9";
-const CARD_ID = /\b((?:OP|ST|EB|PRB|P)-\d{2}-\d{3}[A-Z]?)\b/i;
-const CARD_SRC = /\/cards\/(?:full|thumbnail)\/([^/.]+)\.webp/i;
+const VERSION = "0.3.0";
+const CARD_ID = /\b((?:OP|ST|EB|PRB|DP)\d{2}-\d{3}[A-Z]?|P-\d{3}[A-Z]?)\b/i;
+const CARD_SRC =
+  /(?:\/cards\/(?:full|thumbnail)\/|\/card(?:s|[-_]?images)?\/)([^/.?#]+)\.(?:webp|png|jpe?g)/i;
+
+function attrCardId(el) {
+  if (!el || typeof el.getAttribute !== "function") return null;
+  for (const key of ["data-card-id", "data-card-code", "data-cardid"]) {
+    const raw = el.getAttribute(key);
+    const m = raw && String(raw).match(CARD_ID);
+    if (m) return m[1].toUpperCase();
+  }
+  return null;
+}
 
 function cardId(el) {
+  try {
+    if (!el || typeof el !== "object") return null;
+    const fromAttr = attrCardId(el);
+    if (fromAttr) return fromAttr;
+    const img =
+      typeof el.tagName === "string" && el.tagName.toUpperCase() === "IMG"
+        ? el
+        : typeof el.querySelector === "function"
+          ? el.querySelector("img")
+          : null;
+    if (img) {
+      const fromImgAttr = attrCardId(img);
+      if (fromImgAttr) return fromImgAttr;
+      const srcs = [img.currentSrc, img.src, img.getAttribute?.("src")]
+        .filter(Boolean)
+        .map(String);
+      const srcset = img.getAttribute?.("srcset");
+      if (srcset) srcs.push(String(srcset));
+      for (const src of srcs) {
+        const fromSrc = src.match(CARD_SRC);
+        if (fromSrc) return fromSrc[1].replace(/_/g, "-").toUpperCase();
+        const fromUrl = src.match(CARD_ID);
+        if (fromUrl) return fromUrl[1].toUpperCase();
+      }
+      const alt = img.alt ? String(img.alt) : "";
+      const fromAlt = alt.match(CARD_ID);
+      if (fromAlt) return fromAlt[1].toUpperCase();
+    }
+    const text = el.textContent ? String(el.textContent) : "";
+    const fromText = text.match(CARD_ID);
+    return fromText ? fromText[1].toUpperCase() : null;
+  } catch {
+    return null;
+  }
+}
+
+function cardName(el) {
   try {
     if (!el || typeof el !== "object") return null;
     const img =
@@ -14,18 +62,22 @@ function cardId(el) {
         : typeof el.querySelector === "function"
           ? el.querySelector("img")
           : null;
-    const src = img && img.src ? String(img.src) : "";
-    const fromSrc = src.match(CARD_SRC);
-    if (fromSrc) return fromSrc[1].replace(/_/g, "-").toUpperCase();
-    const alt = img && img.alt ? String(img.alt) : "";
-    const fromAlt = alt.match(CARD_ID);
-    if (fromAlt) return fromAlt[1].toUpperCase();
-    const text = el.textContent ? String(el.textContent) : "";
-    const fromText = text.match(CARD_ID);
-    return fromText ? fromText[1].toUpperCase() : null;
+    const raw = (img && img.alt) || el.getAttribute?.("data-card-name") || "";
+    let n = String(raw).replace(new RegExp(CARD_ID.source, "gi"), "").replace(/\s+/g, " ").trim();
+    if (n.length < 2 || n.length > 48) return null;
+    if (/^(leader|card|image|artwork)$/i.test(n)) return null;
+    return n;
   } catch {
     return null;
   }
+}
+
+function leaderOf(playerId) {
+  const el = document.querySelector(
+    `[data-card-zone="leader"][data-card-player-id="${playerId}"]`,
+  );
+  if (!el) return { id: null, name: null };
+  return { id: cardId(el), name: cardName(el) };
 }
 
 function playerIds() {
@@ -277,24 +329,27 @@ function selectedLeaderId() {
       .querySelector(
         '[aria-pressed="true"] img[src*="/cards/"], [data-selected="true"] img[src*="/cards/"]',
       )
-      ?.closest("[data-card-zone], div") ||
-    document.querySelector('[data-card-zone="leader"]');
-  return cardId(selected);
+      ?.closest("[data-card-zone], [data-selected-leader], div");
+  return selected ? cardId(selected) : null;
 }
 
 function player(playerId, isSelf) {
   const d = don(playerId);
   const cards = board(playerId);
-  const leaderEl = document.querySelector(
-    `[data-card-zone="leader"][data-card-player-id="${playerId}"]`,
-  );
+  const leader = leaderOf(playerId);
+  if (!leader.id && isSelf) leader.id = selectedLeaderId();
+  if (!leader.name) {
+    const fromBoard = cards.find((c) => c.card_id && c.card_id === leader.id);
+    if (fromBoard) leader.name = fromBoard.name;
+  }
   return {
     life: life(playerId),
     hand_count: handCount(playerId),
     hand: handCards(playerId),
     active_don: d.active,
     rested_don: d.rested,
-    leader_id: cardId(leaderEl || document.createElement("div")) || (isSelf ? selectedLeaderId() : null),
+    leader_id: leader.id,
+    leader_name: leader.name,
     player_name: playerName(playerId, isSelf),
     known_cards: known(playerId),
     board: cards,
@@ -321,12 +376,16 @@ function combatCard(el) {
 function observeCombat(you, them) {
   const shell = document.querySelector(".game-board-shell");
   if (!shell) return null;
-  const text = shell.textContent || "";
   const banner = shell.querySelector(
-    '[class*="battle"], [class*="attack"], [data-combat-active="true"]',
+    '[data-combat-active="true"], [data-phase="combat"], [data-phase="battle"]',
   );
-  const fightingText =
-    /(?:battle|attacking|declare attack|counter|blocker|block this)/i.test(text);
+  // Only the yellow phase label — card rules text says "attack" / "counter"
+  // on every board and must not freeze the read into a fake combat.
+  const phaseBits = [...shell.querySelectorAll('[class*="text-yellow"]')]
+    .map((el) => el.textContent || "")
+    .join(" ");
+  const phaseIsCombat = /phase:\s*(combat|battle|counter|block)/i.test(phaseBits)
+    || /\b(declare attack|blocker step|counter step)\b/i.test(phaseBits);
   const cards = [
     ...document.querySelectorAll(
       '[data-card-zone="character"], [data-card-zone="leader"]',
@@ -336,7 +395,7 @@ function observeCombat(you, them) {
   const yours = ringed.filter((el) => el.getAttribute("data-card-player-id") === you);
   const theirs = ringed.filter((el) => el.getAttribute("data-card-player-id") === them);
 
-  if (!ringed.length && !banner && !fightingText) return null;
+  if (!ringed.length && !banner && !phaseIsCombat) return null;
 
   let attackerEl = null;
   let targetEl = null;
@@ -373,6 +432,7 @@ function observeCombat(you, them) {
     );
   }
 
+  const text = shell.textContent || "";
   const powers = [...text.matchAll(/(\d{4,5})\s*(?:→|->|power)/gi)];
   const attackerPid = attackerEl?.getAttribute("data-card-player-id");
   const targetPid = targetEl?.getAttribute("data-card-player-id");
@@ -386,7 +446,7 @@ function observeCombat(you, them) {
       attackerPid === you ? "self" : attackerPid === them ? "opponent" : null,
     target_player: targetPid === you ? "self" : targetPid === them ? "opponent" : null,
     target_is_leader: targetZone === "leader",
-    blocker_offered: /block/i.test(text),
+    blocker_offered: /blocker step|block this|declare blocker/i.test(phaseBits),
     active: true,
   };
 }
@@ -419,6 +479,7 @@ function readBoard() {
     : {
         player_name: playerName(you, true),
         leader_id: selectedLeaderId(),
+        leader_name: null,
         known_cards: [],
         board: [],
       };

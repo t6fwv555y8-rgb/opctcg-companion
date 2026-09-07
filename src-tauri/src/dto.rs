@@ -53,6 +53,9 @@ pub struct DeckInfoDto {
     pub leader_id: String,
     pub leader_name: String,
     pub leader_color: String,
+    /// Printed leader ability, when the card database has it.
+    #[serde(default)]
+    pub leader_text: String,
     pub known_cards: Vec<KnownCardDto>,
     /// How this side's deck was arrived at.
     pub origin: DeckOrigin,

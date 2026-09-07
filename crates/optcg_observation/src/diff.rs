@@ -188,6 +188,21 @@ fn diff_player(
         }
     }
 
+    if let Some(leader_name) = &side.leader_name {
+        let prev_name = prev.and_then(|p| p.leader_name.as_ref());
+        if prev_name != Some(leader_name) && !leader_name.trim().is_empty() {
+            let label = match player {
+                PlayerId::Player1 => "PLAYER_1",
+                PlayerId::Player2 => "PLAYER_2",
+            };
+            events.push(ObservationEvent::StructuredRaw {
+                raw: format!("LEADER_NAME|{label}|{leader_name}"),
+                source: ObservationSource::BrowserSimulator,
+                confidence,
+            });
+        }
+    }
+
     if let Some(deck_name) = &side.deck_name {
         let prev_name = prev.and_then(|p| p.deck_name.as_ref());
         if prev_name != Some(deck_name) && !deck_name.is_empty() {
@@ -593,6 +608,34 @@ mod tests {
         assert!(events.iter().any(|e| matches!(
             e,
             ObservationEvent::CardObserved { card_id: Some(id), .. } if id == "OP01-001"
+        )));
+    }
+
+    #[test]
+    fn leader_name_is_emitted_for_both_sides() {
+        let mut differ = SnapshotDiffer::new(ConfidenceConfig::default());
+        let snap = BrowserGameSnapshot {
+            timestamp: 1,
+            self_player: Some(BrowserPlayerSnapshot {
+                leader_id: Some("ST01-001".into()),
+                leader_name: Some("Monkey.D.Luffy".into()),
+                ..Default::default()
+            }),
+            opponent: Some(BrowserPlayerSnapshot {
+                leader_id: Some("OP13-001".into()),
+                leader_name: Some("Silvers Rayleigh".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let events = differ.diff(&snap);
+        assert!(events.iter().any(|e| matches!(
+            e,
+            ObservationEvent::StructuredRaw { raw, .. } if raw == "LEADER_NAME|PLAYER_1|Monkey.D.Luffy"
+        )));
+        assert!(events.iter().any(|e| matches!(
+            e,
+            ObservationEvent::StructuredRaw { raw, .. } if raw == "LEADER_NAME|PLAYER_2|Silvers Rayleigh"
         )));
     }
 
