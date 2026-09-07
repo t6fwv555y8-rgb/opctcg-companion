@@ -3,7 +3,9 @@ use std::time::{Duration, Instant};
 
 /// The question an automatic read asks on the user's behalf.
 pub const AUTO_QUESTION: &str =
-    "The board just changed. Give me the single best move right now and why, in two sentences.";
+    "The board just settled. Coach this position: the line with named cards, \
+the rest of this turn, why (life, DON, hands, lethal math), and what to hold. \
+Do not give generic phase advice.";
 
 /// How long the board must hold still before an automatic read fires.
 ///

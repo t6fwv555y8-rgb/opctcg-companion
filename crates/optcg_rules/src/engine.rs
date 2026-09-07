@@ -134,8 +134,7 @@ impl RulesEngine {
                 } else if opp.life <= 2 {
                     "Main phase — opponent is low life; look for lethal attack lines.".into()
                 } else {
-                    "Main phase — play affordable characters, then attack with active units."
-                        .into()
+                    "Main phase — play affordable characters, then attack with active units.".into()
                 }
             }
             Phase::Combat => CombatMath::do_this(state, None, None)
@@ -158,42 +157,54 @@ impl RulesEngine {
         action: &Action,
     ) -> StrategyRecommendation {
         let mut score = 0.0f64;
-        let mut reasons = Vec::new();
+        let mut reasons: Vec<String> = Vec::new();
 
         match action.action_type {
             ActionType::AttackLeader => {
                 score += 8.0;
-                reasons.push("Attack leader first to create life pressure before committing DON.");
+                let name = card_name(repo, action.card_id.as_deref());
+                let their_life = state.players[1 - state.active_player as usize].life;
+                reasons.push(format!("Swing {name} at their leader ({their_life} life)."));
+                if their_life <= 2 {
+                    score += 3.0;
+                    reasons.push("They are in the danger window.".into());
+                }
                 if state.combat.active {
                     score += 2.0;
                 }
             }
             ActionType::AttackCharacter => {
                 score += 5.0;
-                reasons.push("Remove an opponent character to improve board advantage.");
+                let name = card_name(repo, action.card_id.as_deref());
+                let target = card_name(repo, action.target.as_deref());
+                reasons.push(format!("Trade {name} into {target} to clear their board."));
             }
             ActionType::AttachDon => {
                 score += 4.0;
-                reasons.push("Attach DON efficiently to prepare a stronger attack next.");
+                let name = card_name(repo, action.card_id.as_deref());
+                reasons.push(format!("Put DON on {name} before this swing."));
             }
             ActionType::PlayCharacter => {
                 score += 6.0;
-                reasons.push("Develop board presence to increase future pressure.");
-                if action.cost <= state.players[state.active_player as usize].don_active {
+                let name = card_name(repo, action.card_id.as_deref());
+                let don = state.players[state.active_player as usize].don_active;
+                reasons.push(format!("Develop {name} for {} DON.", action.cost));
+                if action.cost <= don {
                     score += 1.5;
-                    reasons.push("Play is affordable with active DON.");
+                    reasons.push(format!("You have {don} active DON, so this is on curve."));
                 } else {
                     score -= 2.0;
-                    reasons.push("Expensive play — consider DON allocation first.");
+                    reasons.push("Not enough active DON — attach or wait.".into());
                 }
             }
             ActionType::ActivateBlocker => {
                 score += 9.0;
-                reasons.push("Block incoming attack to preserve life total.");
+                let name = card_name(repo, action.card_id.as_deref());
+                reasons.push(format!("Block with {name} and keep the life."));
             }
             ActionType::Pass | ActionType::EndPhase | ActionType::EndTurn => {
                 score += 1.0;
-                reasons.push("Pass if no profitable line is available.");
+                reasons.push("Pass only if nothing else wins this window.".into());
             }
             _ => {
                 score += 2.0;
@@ -203,13 +214,13 @@ impl RulesEngine {
         let opponent = 1 - state.active_player as usize;
         if state.players[state.active_player as usize].life < state.players[opponent].life {
             score += 1.0;
-            reasons.push("You are behind on life — prioritize pressure.");
+            reasons.push("You are behind on life — prioritize pressure.".into());
         }
 
         if let Some(combat) = CombatMath::analyze_current_combat(state, repo) {
             if combat.lethal_to_leader {
                 score += 3.0;
-                reasons.push("Current combat line is lethal — high value attack.");
+                reasons.push("This combat line is lethal.".into());
             }
         }
 
@@ -242,7 +253,10 @@ impl RulesEngine {
                             target_id: None,
                             target_player: Some(player_idx),
                             cost: 1,
-                            description: format!("Attach DON!! to {}", character.card_id),
+                            description: format!(
+                                "Attach DON!! to {}",
+                                card_name(repo, Some(character.card_id.as_str()))
+                            ),
                             priority: 10,
                         });
                     }
@@ -253,7 +267,10 @@ impl RulesEngine {
                     target_id: None,
                     target_player: Some(player_idx),
                     cost: 1,
-                    description: format!("Attach DON!! to Leader {}", player.leader.card_id),
+                    description: format!(
+                        "Attach DON!! to Leader {}",
+                        card_name(repo, Some(player.leader.card_id.as_str()))
+                    ),
                     priority: 8,
                 });
             }
@@ -306,7 +323,13 @@ impl RulesEngine {
                                 target_id: Some(opp_char.card_id.clone()),
                                 target_player: Some(opponent_idx as u8),
                                 cost: 0,
-                                description: format!("{} attacks {}", def.name, opp_char.card_id),
+                                description: format!(
+                                    "{} attacks {}",
+                                    def.name,
+                                    repo.get_by_id(&opp_char.card_id)
+                                        .map(|d| d.name)
+                                        .unwrap_or_else(|_| opp_char.card_id.clone())
+                                ),
                                 priority: 40 + def.power as i32,
                             });
                         }
@@ -323,7 +346,12 @@ impl RulesEngine {
                     target_id: state.combat.attacker_id.clone(),
                     target_player: Some(player_idx),
                     cost: 0,
-                    description: format!("Block with {}", blocker.card_id),
+                    description: format!(
+                        "Block with {}",
+                        repo.get_by_id(&blocker.card_id)
+                            .map(|d| d.name)
+                            .unwrap_or_else(|_| blocker.card_id.clone())
+                    ),
                     priority: 100,
                 });
             }
@@ -360,7 +388,20 @@ impl RulesEngine {
     }
 }
 
-use tracing::info; // retained for future strategy logging
+fn card_name(repo: &CardRepository, id: Option<&str>) -> String {
+    let Some(id) = id.filter(|id| !id.is_empty() && !id.eq_ignore_ascii_case("leader")) else {
+        return "leader".into();
+    };
+    repo.get_by_id(id)
+        .map(|d| {
+            if d.name.is_empty() {
+                id.to_string()
+            } else {
+                d.name
+            }
+        })
+        .unwrap_or_else(|_| id.to_string())
+}
 
 #[cfg(test)]
 mod tests {
@@ -406,6 +447,31 @@ mod tests {
         assert!(
             line.contains("ST01-012") || line.contains("ST01-001"),
             "expected the cards on the table, got {line}"
+        );
+    }
+
+    #[test]
+    fn attack_reasoning_names_the_card() {
+        let mut state = GameState::new();
+        state.phase = Phase::Main;
+        state.turn_number = 3;
+        state.player_one_mut().characters = vec![optcg_core::CardInstance::new(
+            "ST01-012",
+            0,
+            optcg_core::Zone::Character,
+        )];
+        let db = optcg_database::Database::open_in_memory().unwrap();
+        let _ = optcg_database::AssetParser::seed_defaults(&db);
+        let repo = optcg_database::CardRepository::new(&db);
+        let ranked = RulesEngine::rank_actions(&state, &repo).unwrap();
+        let swing = ranked
+            .iter()
+            .find(|r| r.action.action_type == ActionType::AttackLeader)
+            .expect("a ready character can swing");
+        assert!(
+            swing.reasoning.contains("Sanji") || swing.reasoning.contains("ST01-012"),
+            "expected a named swing, got {}",
+            swing.reasoning
         );
     }
 }

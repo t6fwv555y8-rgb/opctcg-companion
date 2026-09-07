@@ -382,19 +382,24 @@ fn side_digest(player: &PlayerState) -> String {
 
 /// The instruction block that defines the coach's job and its limits.
 pub const SYSTEM_PROMPT: &str = "\
-You are the in-game coach inside the OPTCG Companion HUD, helping the player \
-during a live One Piece Card Game match.
+You are the in-game coach inside the OPTCG Companion HUD, standing behind \
+the player during a live One Piece Card Game match.
 
 Ground every answer in the MATCH BRIEFING below. It is observed from the \
 player's simulator and is the only reliable source of board state. If the \
 briefing does not contain what you need, say what is missing instead of \
 inventing a board, a card, or a hand that was not listed.
 
-Answer like a coach mid-match: lead with the recommendation, then give the \
-short reason. Prefer concrete lines ('attack the leader with Zoro, hold Usopp \
-to block') over general theory. Be brief; the HUD is a narrow overlay. If the \
-briefing names cards in a hand, those cards were read from the table — use \
-them. If a hand is listed as not visible, do not invent its contents.";
+Write a mid-match line, not a rules recap. Four beats, in this order:
+1. The play — named cards, the target, and the DON.
+2. The rest of this turn — what to play, attach, swing next, or hold.
+3. Why — life totals, lethal math, their board, and cards in hand.
+4. What not to spend.
+
+If the briefing has a Tactical brief or Do this now section, start from that \
+and deepen it. Use Hands as facts when cards are named. If a hand is listed \
+as not visible, do not invent its contents. Never cite scores. Never give \
+generic phase advice such as 'play characters then attack'.";
 
 /// Run the read-only analysis tools and assemble the match briefing.
 ///
@@ -439,9 +444,9 @@ pub fn build_context(
         } else {
             None
         };
-        if let Some(battle) = CombatMath::do_this(state, Some(repo), combat_analysis.as_ref())
-            .or_else(|| CombatMath::table_do_this(state, repo))
-        {
+        let battle = CombatMath::do_this(state, Some(repo), combat_analysis.as_ref())
+            .or_else(|| CombatMath::table_do_this(state, repo));
+        if let Some(ref battle) = battle {
             context.push("Do this now", battle.line.clone());
             if !battle.steps.is_empty() {
                 context.push("Battle sequence", battle.steps.join(" → "));
@@ -449,6 +454,10 @@ pub fn build_context(
         } else {
             context.push("Phase guidance", RulesEngine::phase_coach(state));
         }
+        context.push(
+            "Tactical brief",
+            tactical_brief(state, repo, battle.as_ref(), decks),
+        );
 
         if state.combat.active {
             sink(CoachEvent::status("Running combat math"));
@@ -710,6 +719,97 @@ fn board_readout(state: &GameState) -> String {
         ));
     }
     lines.join("\n")
+}
+
+/// The line the offline coach and the live model should start from.
+///
+/// Do this and the phase line are one beat. This folds in the hands, the life
+/// race, what is affordable, and the list plan so an answer can name a card
+/// and say what to hold without inventing a position.
+fn tactical_brief(
+    state: &GameState,
+    repo: &CardRepository<'_>,
+    battle: Option<&optcg_rules::CombatDoThis>,
+    decks: &DeckContext,
+) -> String {
+    let mut lines = Vec::new();
+    if let Some(battle) = battle {
+        lines.push(battle.line.clone());
+        if !battle.steps.is_empty() {
+            lines.push(format!("This turn: {}.", battle.steps.join(" Then ")));
+        }
+    } else {
+        lines.push(RulesEngine::phase_coach(state));
+    }
+
+    lines.push(hand_readout("Your", state.player_one(), repo));
+    lines.push(hand_readout("Their", state.player_two(), repo));
+
+    let you = state.player_one();
+    let them = state.player_two();
+    let race = if you.life <= 2 && them.life > you.life {
+        Some("You are in the danger window — keep a counter or a Blocker unless the swing back is lethal")
+    } else if them.life <= 2 && them.life < you.life {
+        Some("They are in lethal range — swings at the leader matter more than building")
+    } else if you.life <= 2 || them.life <= 2 {
+        Some("Both sides are low — do not spend a race-winning card on a small trade")
+    } else {
+        None
+    };
+    match race {
+        Some(race) => lines.push(format!("Life is {} to {}. {race}.", you.life, them.life)),
+        None => lines.push(format!("Life is {} to {}.", you.life, them.life)),
+    }
+
+    if state.active_player == 0
+        && matches!(
+            state.phase,
+            optcg_core::Phase::Main | optcg_core::Phase::Don
+        )
+    {
+        let plays = affordable_from_hand(you, repo);
+        if !plays.is_empty() {
+            lines.push(format!("Affordable from your hand: {}.", plays.join(", ")));
+        }
+    }
+
+    if let Some(plan) = decks.plan.as_ref().filter(|p| !p.trim().is_empty()) {
+        lines.push(format!("Your list's plan: {plan}"));
+    }
+    if let Some(vs) = decks.vs_opponent.as_ref().filter(|p| !p.trim().is_empty()) {
+        lines.push(format!("Into this deck: {vs}"));
+    }
+    if let Some(matchup) = decks.matchup.as_ref() {
+        if !matchup.notes.is_empty() {
+            lines.push(format!(
+                "Your record vs this leader ({}): {}.",
+                matchup.standing,
+                matchup.notes.join(" ")
+            ));
+        }
+    }
+    if let Some(scouting) = decks.opponent_scouting.as_ref() {
+        if !scouting.notes.is_empty() {
+            lines.push(format!("They have shown: {}.", scouting.notes.join(" ")));
+        }
+    }
+
+    lines.join("\n")
+}
+
+fn affordable_from_hand(player: &PlayerState, repo: &CardRepository<'_>) -> Vec<String> {
+    let don = player.don_active;
+    player
+        .hand
+        .iter()
+        .filter_map(|card| {
+            let def = repo.get_by_id(&card.card_id).ok()?;
+            if def.cost > don {
+                return None;
+            }
+            Some(named_hand_card(&card.card_id, repo))
+        })
+        .collect()
 }
 
 fn hands_summary(state: &GameState) -> String {
@@ -982,6 +1082,10 @@ mod tests {
         assert!(
             prompt.contains("## Hands"),
             "missing hands section: {prompt}"
+        );
+        assert!(
+            prompt.contains("## Tactical brief"),
+            "missing tactical brief: {prompt}"
         );
         assert!(prompt.contains("Red Luffy Aggro"));
         assert!(prompt.contains("4x Usopp (ST01-002)"));
@@ -1587,6 +1691,7 @@ mod tests {
             "## Board",
             "## Opponent counter range",
             "## Phase guidance",
+            "## Tactical brief",
             "## Ranked options",
         ] {
             assert!(!prompt.contains(absent), "{absent} should be withheld");
@@ -1742,6 +1847,52 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, CoachEvent::ToolRun(run) if run.tool == "hands_readout")),
             "the HUD should see that hands were read"
+        );
+    }
+
+    #[test]
+    fn tactical_brief_names_the_line_and_the_hands() {
+        let db = db();
+        let repo = CardRepository::new(&db);
+        let (sink, _recorder) = recording_sink();
+        let mut state = sample_state();
+        state.phase = optcg_core::Phase::Main;
+        state.player_one_mut().life = 2;
+        state.player_two_mut().life = 2;
+        state
+            .player_one_mut()
+            .hand
+            .push(optcg_core::CardInstance::new(
+                "ST01-007",
+                0,
+                optcg_core::Zone::Hand,
+            ));
+        let prompt = build_context(
+            &state,
+            &repo,
+            &DeckContext {
+                plan: Some("Race with cheap attackers".into()),
+                ..Default::default()
+            },
+            ContextScope::default(),
+            &sink,
+        )
+        .to_prompt();
+
+        assert!(prompt.contains("## Tactical brief"), "{prompt}");
+        assert!(
+            prompt.contains("danger window")
+                || prompt.contains("lethal range")
+                || prompt.contains("Both sides are low"),
+            "low life should change the line: {prompt}"
+        );
+        assert!(
+            prompt.contains("Race with cheap attackers"),
+            "list plan should reach the brief: {prompt}"
+        );
+        assert!(
+            prompt.contains("ST01-007") || prompt.to_lowercase().contains("nami"),
+            "hand should reach the brief: {prompt}"
         );
     }
 

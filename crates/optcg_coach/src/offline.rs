@@ -82,35 +82,43 @@ impl ChatProvider for OfflineProvider {
     }
 }
 
-/// Assemble a reply from the briefing sections most relevant to the question.
+/// Assemble a mid-match line from the briefing, not a recap of scores.
 fn compose_answer(briefing: &str, question: &str) -> String {
     let sections = parse_sections(briefing);
     let mut parts = Vec::new();
 
-    if let Some(options) = sections.get("Ranked options") {
-        if let Some(best) = options.lines().next() {
-            let line =
-                best.trim_start_matches(|c: char| c.is_ascii_digit() || c == '.' || c == ' ');
-            parts.push(format!("Best line right now: {line}"));
-        }
-    }
-    if let Some(combat) = sections.get("Combat math") {
-        parts.push(combat.trim().to_string());
-    }
-    if let Some(phase) = sections.get("Phase guidance") {
-        parts.push(phase.trim().to_string());
-    }
-
-    // Deck plan is only worth spending words on for strategy-shaped questions.
-    if mentions_deck_strategy(question) {
-        if let Some(decks) = sections.get("Decks") {
-            parts.push(decks.trim().to_string());
-        }
-    }
-
     if mentions_last_game(question) {
         if let Some(review) = sections.get("Last game") {
             parts.push(review.trim().to_string());
+        }
+    }
+
+    if parts.is_empty() {
+        if let Some(brief) = sections.get("Tactical brief") {
+            parts.push(brief.trim().to_string());
+        } else if let Some(battle) = sections.get("Do this now") {
+            parts.push(battle.trim().to_string());
+            if let Some(steps) = sections.get("Battle sequence") {
+                parts.push(steps.trim().to_string());
+            }
+        } else if let Some(options) = sections.get("Ranked options") {
+            if let Some(best) = options.lines().next() {
+                parts.push(strip_rank_score(best));
+            }
+        }
+        if let Some(combat) = sections.get("Combat math") {
+            parts.push(combat.trim().to_string());
+        }
+        if parts.is_empty() {
+            if let Some(phase) = sections.get("Phase guidance") {
+                parts.push(phase.trim().to_string());
+            }
+        }
+    }
+
+    if mentions_deck_strategy(question) {
+        if let Some(decks) = sections.get("Decks") {
+            parts.push(decks.trim().to_string());
         }
     }
 
@@ -121,12 +129,20 @@ Set a model key on the Setup tab (or OPTCG_LLM_API_KEY) for conversational answe
             .to_string();
     }
 
-    parts.push(
-        "(Offline coach: answering from the rules engine. Set a model key on the Setup tab \
-or OPTCG_LLM_API_KEY for conversational answers.)"
-            .to_string(),
-    );
     parts.join("\n\n")
+}
+
+fn strip_rank_score(line: &str) -> String {
+    let line = line.trim_start_matches(|c: char| c.is_ascii_digit() || c == '.' || c == ' ');
+    if let Some((action, rest)) = line.split_once(" (score") {
+        if let Some((_, reason)) = rest.split_once("— ") {
+            format!("{action} — {reason}")
+        } else {
+            action.to_string()
+        }
+    } else {
+        line.to_string()
+    }
 }
 
 fn mentions_deck_strategy(question: &str) -> bool {
@@ -183,8 +199,14 @@ mod tests {
 Turn 4, Main phase, active player: you
 You: life 3, hand 5
 
-## Phase guidance
-Play a character and attack the leader.
+## Tactical brief
+Swing Sanji (ST01-012) at 6k into their Usopp (ST01-002).
+This turn: Attach 1 DON toward Sanji if you need the extra 1k.
+Your hand (read from the table): Nami (ST01-007), 2k counter.
+Life is 3 to 2. They are in lethal range — swings at the leader matter more than building.
+
+## Do this now
+Swing Sanji (ST01-012) at 6k into their Usopp (ST01-002).
 
 ## Ranked options
 1. Attack leader with ST01-002 (score 0.80) — trades up
@@ -224,7 +246,7 @@ Your deck: Red Luffy Aggro (leader ST01-001)";
     }
 
     #[tokio::test]
-    async fn leads_with_the_best_ranked_option() {
+    async fn leads_with_the_tactical_brief() {
         let (sink, _recorder) = recording_sink();
         let answer = OfflineProvider::instant()
             .stream_chat(&messages("what should I do?"), &sink, &CancelToken::new())
@@ -232,8 +254,17 @@ Your deck: Red Luffy Aggro (leader ST01-001)";
             .unwrap();
 
         assert!(
-            answer.starts_with("Best line right now: Attack leader with ST01-002"),
+            answer.starts_with("Swing Sanji (ST01-012)"),
             "unexpected answer: {answer}"
+        );
+        assert!(answer.contains("Nami"), "hand should be in the line: {answer}");
+        assert!(
+            !answer.contains("score 0.80"),
+            "do not dump ranked scores: {answer}"
+        );
+        assert!(
+            !answer.contains("Offline coach:"),
+            "do not spend the answer on a disclaimer: {answer}"
         );
     }
 
@@ -312,9 +343,17 @@ Your deck: Red Luffy Aggro (leader ST01-001)";
     #[test]
     fn parses_briefing_sections() {
         let sections = parse_sections(BRIEFING);
-        assert_eq!(sections.len(), 4);
         assert!(sections["Board"].starts_with("Turn 4"));
         assert!(sections["Ranked options"].contains("2. Play ST01-003"));
+        assert!(sections["Tactical brief"].contains("Sanji"));
+    }
+
+    #[test]
+    fn strips_engine_scores_from_ranked_lines() {
+        assert_eq!(
+            strip_rank_score("1. Attack leader with Zoro (score 0.80) — trades up"),
+            "Attack leader with Zoro — trades up"
+        );
     }
 
     #[test]
