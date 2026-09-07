@@ -209,11 +209,7 @@ mod tests {
 
         let events = recorder.events();
         assert_eq!(events.len(), 2);
-        assert_eq!(
-            events[0],
-            CoachEvent::delta("tail"),
-            "tail text must escape"
-        );
+        assert_eq!(events[0], CoachEvent::delta("tail"), "tail text must escape");
         assert!(events[1].is_terminal());
         assert!(sink.is_closed());
     }

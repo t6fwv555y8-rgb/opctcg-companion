@@ -58,9 +58,9 @@ impl CancelToken {
             CancelReason::Stale => CANCELLED_AS_STALE,
         };
         // First reason wins, so a later cause cannot relabel why a turn ended.
-        let _ =
-            self.state
-                .compare_exchange(NOT_CANCELLED, encoded, Ordering::SeqCst, Ordering::SeqCst);
+        let _ = self
+            .state
+            .compare_exchange(NOT_CANCELLED, encoded, Ordering::SeqCst, Ordering::SeqCst);
         self.changed.send_replace(true);
     }
 
@@ -176,10 +176,7 @@ mod tests {
         assert_eq!(clone.reason(), None);
 
         token.cancel();
-        assert!(
-            clone.is_cancelled(),
-            "cancellation must be visible to holders"
-        );
+        assert!(clone.is_cancelled(), "cancellation must be visible to holders");
         assert_eq!(clone.reason(), Some(CancelReason::User));
     }
 

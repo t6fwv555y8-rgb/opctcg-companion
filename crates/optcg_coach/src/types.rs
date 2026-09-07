@@ -227,7 +227,8 @@ mod tests {
 
     #[test]
     fn stream_events_flatten_turn_id_alongside_type() {
-        let json = serde_json::to_value(CoachStreamEvent::new(7, CoachEvent::delta("hi"))).unwrap();
+        let json =
+            serde_json::to_value(CoachStreamEvent::new(7, CoachEvent::delta("hi"))).unwrap();
         assert_eq!(
             json,
             serde_json::json!({"turn_id": 7, "type": "text_delta", "data": "hi"})
