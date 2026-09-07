@@ -1,7 +1,8 @@
 use crate::dto::ObservationStatusDto;
 use crate::dto::{
     ConnectionStatusDto, DeckCollectionDto, DeckInfoDto, DeckOrigin, GameStateDto, KnownCardDto,
-    OverlaySettings, PastedDeckDto, SavedDeckDto, StateUpdatePayload,
+    OverlaySettings, PastedDeckDto, SavedDeckDto, ScoutedCardDto, ScoutingReportDto,
+    StateUpdatePayload,
 };
 use optcg_database::Database;
 use optcg_rules::{
@@ -9,6 +10,7 @@ use optcg_rules::{
     DeckStrategyCoach, MctsConfig, MctsEngine, PastedDeckList, RulesEngine, SavedDeck, Side,
     MAX_DECKS,
 };
+use optcg_scouting::{DeckMap, Scout, ScoutingLedger, StrategyRead};
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -37,8 +39,11 @@ pub struct AppState {
     /// Lists parsed out of saved decks, keyed by deck id. Resolving a side runs
     /// on every state update, and parsing hits the card DB for each entry.
     list_cache: RwLock<HashMap<String, PastedDeckList>>,
+    /// What every opponent has shown us, accumulated across games.
+    pub scout: RwLock<Scout>,
     pasted_deck_path: PathBuf,
     collection_path: PathBuf,
+    scouting_path: PathBuf,
 }
 
 impl AppState {
@@ -49,6 +54,8 @@ impl AppState {
     ) -> Self {
         let pasted_deck_path = data_dir.join("pasted_deck.txt");
         let collection_path = data_dir.join("deck_collection.json");
+        let scouting_path = data_dir.join("scouting.json");
+        let scout = Scout::new(ScoutingLedger::load(&scouting_path));
         let mut state = Self {
             database,
             game_state,
@@ -68,8 +75,10 @@ impl AppState {
             pasted_deck: RwLock::new(None),
             deck_collection: RwLock::new(DeckCollection::default()),
             list_cache: RwLock::new(HashMap::new()),
+            scout: RwLock::new(scout),
             pasted_deck_path,
             collection_path,
+            scouting_path,
         };
         state.load_collection_from_disk();
         state
@@ -217,6 +226,92 @@ impl AppState {
         }
         let _ = self.refresh_deck_strategy();
         Ok(())
+    }
+
+    /// Read the live position for anything it says about the opponent's deck.
+    ///
+    /// Called on every observed update and cheap when nothing is new: the scout
+    /// only reports having learned something when a card or a tempo
+    /// measurement actually moved, and only then is the ledger written out.
+    pub fn scout_position(&self) {
+        let learned = {
+            let state = self.game_state.read();
+            let mut scout = self.scout.write();
+            scout.observe(&state, &now_rfc3339())
+        };
+        if learned {
+            self.persist_scouting();
+        }
+    }
+
+    /// Fold the game being watched into its profile and save.
+    ///
+    /// Worth doing on shutdown, so a session that ends without another game
+    /// starting still adds up to something.
+    pub fn close_scouting_game(&self) {
+        self.scout.write().close(&now_rfc3339());
+        self.persist_scouting();
+    }
+
+    /// Everything learned about a leader, including the game under way.
+    pub fn scouting_for(&self, leader_id: &str) -> Option<optcg_scouting::LeaderProfile> {
+        if leader_id.is_empty() {
+            return None;
+        }
+        self.scout.read().ledger().merged_profile(leader_id)
+    }
+
+    /// The scouting read on a leader, shaped for the HUD.
+    pub fn scouting_report(&self, leader_id: &str) -> Option<ScoutingReportDto> {
+        let profile = self.scouting_for(leader_id)?;
+        let map = DeckMap::from_profile(&profile)?;
+        let read = StrategyRead::from_profile(&profile);
+        let repo = self.repo();
+
+        // The recorded name is the simulator's deck label, which is often not
+        // visible; the leader's own card name is the better fallback.
+        let leader_name = if map.leader_name.trim().is_empty() {
+            repo.get_by_id(&map.leader_id)
+                .map(|def| def.name)
+                .unwrap_or_else(|_| map.leader_id.clone())
+        } else {
+            map.leader_name.clone()
+        };
+
+        Some(ScoutingReportDto {
+            leader_id: map.leader_id.clone(),
+            leader_name,
+            games: map.games,
+            reliability: map.reliability.label().to_string(),
+            pace: read
+                .as_ref()
+                .map(|read| read.pace.label().to_string())
+                .unwrap_or_else(|| "not yet established".into()),
+            mapped_copies: map.mapped_copies(),
+            cards: map
+                .cards
+                .iter()
+                .map(|card| ScoutedCardDto {
+                    card_id: card.card_id.clone(),
+                    name: repo
+                        .get_by_id(&card.card_id)
+                        .map(|def| def.name)
+                        .unwrap_or_else(|_| card.card_id.clone()),
+                    games_seen: card.games_seen,
+                    confidence: card.confidence,
+                    likely_copies: card.likely_copies,
+                    earliest_turn: card.earliest_turn,
+                })
+                .collect(),
+            notes: read.map(|read| read.notes).unwrap_or_default(),
+        })
+    }
+
+    fn persist_scouting(&self) {
+        let ledger = self.scout.read();
+        if let Err(e) = ledger.ledger().save(&self.scouting_path) {
+            tracing::warn!(error = %e, "failed to persist scouting ledger");
+        }
     }
 
     /// The list to coach a side with, and how confident we get to be about it.
@@ -752,6 +847,12 @@ impl AppState {
         let pasted_deck = self.pasted_deck.read().as_ref().map(PastedDeckDto::from);
         let deck_collection = self.deck_collection_dto();
 
+        // Only worth showing while their list is still a question. Once one is
+        // attached, an estimate of a deck we hold in full is just noise.
+        let scouting = (opponent_deck.origin != DeckOrigin::Attached)
+            .then(|| self.scouting_report(&opponent_deck.leader_id))
+            .flatten();
+
         StateUpdatePayload {
             game_state: GameStateDto::from(&*gs),
             connection,
@@ -764,6 +865,7 @@ impl AppState {
             opponent_deck,
             pasted_deck,
             deck_collection,
+            scouting,
             latency_ms,
             observation,
         }
@@ -1011,6 +1113,150 @@ mod tests {
             Some(theirs.as_str())
         );
         assert_eq!(restarted.deck_infos().1.origin, DeckOrigin::Attached);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Play out a game where the opponent shows `board` on `turn`.
+    fn scout_game(
+        state: &AppState,
+        board: &Arc<RwLock<optcg_core::GameState>>,
+        game: u128,
+        leader: &str,
+        cards: &[&str],
+        turn: u32,
+    ) {
+        {
+            let mut gs = board.write();
+            gs.game_id = uuid::Uuid::from_u128(game);
+            gs.turn_number = turn;
+            gs.player_two_mut().leader.card_id = leader.to_string();
+            gs.player_two_mut().characters = cards
+                .iter()
+                .map(|id| optcg_core::CardInstance::new(*id, 1, optcg_core::Zone::Character))
+                .collect();
+        }
+        state.scout_position();
+    }
+
+    #[test]
+    fn watching_a_game_builds_a_read_on_their_leader() {
+        let dir = temp_data_dir("scout-basic");
+        let (state, board) = app_state_with_board(&dir);
+
+        scout_game(&state, &board, 1, "OP17-079", &["OP17-080"], 3);
+
+        let report = state
+            .scouting_report("OP17-079")
+            .expect("the game in progress is already evidence");
+        assert_eq!(report.games, 1);
+        assert_eq!(report.reliability, "thin");
+        assert!(report.cards.iter().any(|c| c.card_id == "OP17-080"));
+        assert_eq!(
+            report.cards[0].name, "Usopp",
+            "the card DB should name what was seen"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_card_shown_every_game_climbs_to_full_confidence() {
+        let dir = temp_data_dir("scout-confidence");
+        let (state, board) = app_state_with_board(&dir);
+
+        for game in 1..=4 {
+            scout_game(&state, &board, game, "OP17-079", &["OP17-080"], 3);
+        }
+
+        let report = state.scouting_report("OP17-079").unwrap();
+        let card = report
+            .cards
+            .iter()
+            .find(|c| c.card_id == "OP17-080")
+            .unwrap();
+        assert_eq!(report.games, 4);
+        assert!(
+            (card.confidence - 1.0).abs() < 1e-6,
+            "four of four games should read as certain as this gets: {}",
+            card.confidence
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn scouting_survives_a_restart() {
+        let dir = temp_data_dir("scout-persist");
+        {
+            let (state, board) = app_state_with_board(&dir);
+            scout_game(&state, &board, 1, "OP17-079", &["OP17-080"], 3);
+            state.close_scouting_game();
+        }
+
+        let (restarted, _) = app_state_with_board(&dir);
+        let report = restarted
+            .scouting_report("OP17-079")
+            .expect("the ledger should come back off disk");
+        assert_eq!(report.games, 1);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn an_idle_hud_records_no_games() {
+        let dir = temp_data_dir("scout-idle");
+        let (state, board) = app_state_with_board(&dir);
+        board.write().player_two_mut().leader.card_id = "OP17-079".into();
+
+        for _ in 0..5 {
+            state.scout_position();
+        }
+
+        assert!(
+            state.scouting_report("OP17-079").is_none(),
+            "sitting on a default position is not a game played"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn scouting_is_dropped_once_their_list_is_known() {
+        let dir = temp_data_dir("scout-vs-attached");
+        let (state, board) = app_state_with_board(&dir);
+        scout_game(&state, &board, 1, "OP17-079", &["OP17-080"], 3);
+        assert!(state.build_update_payload(None).scouting.is_some());
+
+        let theirs = state.save_deck(Side::Opponent, None, None, ELBAPH).unwrap();
+        state
+            .set_deck_source(Side::Opponent, Some(&theirs.id))
+            .unwrap();
+
+        assert!(
+            state.build_update_payload(None).scouting.is_none(),
+            "an estimate of a deck we hold in full is noise"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn scouting_reads_the_leader_actually_across_the_table() {
+        let dir = temp_data_dir("scout-per-leader");
+        let (state, board) = app_state_with_board(&dir);
+        scout_game(&state, &board, 1, "OP17-079", &["OP17-080"], 3);
+        scout_game(&state, &board, 2, "ST01-001", &["ST01-002"], 3);
+
+        let report = state
+            .scouting_report("ST01-001")
+            .expect("the leader in front of us");
+        assert!(report.cards.iter().all(|c| c.card_id != "OP17-080"));
+        assert_eq!(
+            state.scouting_report("OP17-079").unwrap().games,
+            1,
+            "the earlier opponent's history stays theirs"
+        );
 
         std::fs::remove_dir_all(&dir).ok();
     }

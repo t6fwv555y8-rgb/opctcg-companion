@@ -43,13 +43,6 @@ pub enum DeckOrigin {
     Attached,
 }
 
-impl DeckOrigin {
-    /// Whether a full list accompanies this reading.
-    pub fn has_list(self) -> bool {
-        matches!(self, Self::Presumed | Self::Attached)
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeckInfoDto {
     /// Simulator deck label when visible; otherwise leader-based fallback.
@@ -95,6 +88,32 @@ pub struct SavedDeckDto {
     pub total_cards: u32,
     pub is_active: bool,
     pub updated_at: String,
+}
+
+/// What past games say about the opponent's deck, for the HUD.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScoutingReportDto {
+    pub leader_id: String,
+    pub leader_name: String,
+    pub games: u32,
+    /// How far the sample goes: `thin`, `fair`, or `solid`.
+    pub reliability: String,
+    pub pace: String,
+    /// Copies the map can name, against the fifty in a deck.
+    pub mapped_copies: u32,
+    pub cards: Vec<ScoutedCardDto>,
+    pub notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScoutedCardDto {
+    pub card_id: String,
+    pub name: String,
+    pub games_seen: u32,
+    /// Share of games this card appeared in, between 0 and 1.
+    pub confidence: f32,
+    pub likely_copies: u32,
+    pub earliest_turn: u32,
 }
 
 /// The saved deck library shipped to the HUD on every state update.
@@ -257,6 +276,9 @@ pub struct StateUpdatePayload {
     /// Saved deck library and which deck is active.
     #[serde(default)]
     pub deck_collection: DeckCollectionDto,
+    /// What earlier games say about the opponent's deck, when there were any.
+    #[serde(default)]
+    pub scouting: Option<ScoutingReportDto>,
     pub latency_ms: u64,
     pub observation: Option<ObservationStatusDto>,
 }

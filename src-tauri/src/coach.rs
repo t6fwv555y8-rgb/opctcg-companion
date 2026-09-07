@@ -6,6 +6,7 @@ use optcg_coach::{
     EventSink, FlushTicker, ListStanding, StateFingerprint, TurnKind, TurnSummary,
     DEFAULT_FLUSH_INTERVAL_MS, SYSTEM_PROMPT,
 };
+use optcg_scouting::{DeckMap, StrategyRead};
 use parking_lot::Mutex;
 use serde::Serialize;
 use std::sync::Arc;
@@ -113,9 +114,62 @@ fn deck_context(state: &AppState) -> DeckContext {
         opponent_leader: leader_label(&opponent),
         opponent_list: list_lines(&opponent),
         opponent_list_standing: standing(&opponent),
+        opponent_scouting: scouting_brief(state, &opponent),
         plan: strategy.as_ref().map(|brief| brief.your_plan.clone()),
         vs_opponent: strategy.as_ref().map(|brief| brief.vs_opponent.clone()),
     }
+}
+
+/// How many mapped cards the briefing carries.
+///
+/// The map is sorted most-established first, so this takes the part of it worth
+/// planning around and leaves the long tail of one-off sightings out of the
+/// prompt.
+const SCOUTED_CARDS: usize = 20;
+
+/// What past games say about the deck across the table.
+///
+/// Returns `None` when their list is already known, since a scouting estimate
+/// of a deck we have in full is noise, and when nothing has been seen yet.
+fn scouting_brief(
+    state: &AppState,
+    opponent: &crate::dto::DeckInfoDto,
+) -> Option<optcg_coach::ScoutingBrief> {
+    if opponent.origin == DeckOrigin::Attached {
+        return None;
+    }
+    let profile = state.scouting_for(&opponent.leader_id)?;
+    let map = DeckMap::from_profile(&profile)?;
+    let read = StrategyRead::from_profile(&profile);
+    let repo = state.repo();
+
+    let likely_cards = map
+        .cards
+        .iter()
+        .take(SCOUTED_CARDS)
+        .map(|card| {
+            let name = repo
+                .get_by_id(&card.card_id)
+                .map(|def| def.name)
+                .unwrap_or_else(|_| card.card_id.clone());
+            format!(
+                "{}x {} ({}) — {} of {} games",
+                card.likely_copies, name, card.card_id, card.games_seen, map.games
+            )
+        })
+        .collect();
+
+    Some(optcg_coach::ScoutingBrief {
+        games: map.games,
+        reliability: map.reliability.label().to_string(),
+        pace: read
+            .as_ref()
+            .map(|read| read.pace.label().to_string())
+            .unwrap_or_else(|| "not yet established".into()),
+        likely_cards,
+        notes: read.map(|read| read.notes).unwrap_or_default(),
+        mapped_copies: map.mapped_copies(),
+    })
 }
 
 fn list_lines(deck: &crate::dto::DeckInfoDto) -> Vec<String> {
@@ -475,6 +529,93 @@ mod tests {
             Arc::new(RwLock::new(optcg_core::GameState::new())),
             isolated_data_dir(),
         )
+    }
+
+    /// An app state whose board the test can drive.
+    fn app_state_with_board() -> (AppState, Arc<parking_lot::RwLock<optcg_core::GameState>>) {
+        let database = Database::open_in_memory().unwrap();
+        AssetParser::seed_defaults(&database).unwrap();
+        let board = Arc::new(RwLock::new(optcg_core::GameState::new()));
+        let state = AppState::new(database, Arc::clone(&board), isolated_data_dir());
+        (state, board)
+    }
+
+    /// Watch `games` games in which the opponent plays `card`.
+    fn scout_games(
+        state: &AppState,
+        board: &Arc<parking_lot::RwLock<optcg_core::GameState>>,
+        games: u128,
+        card: &str,
+    ) {
+        for game in 1..=games {
+            {
+                let mut gs = board.write();
+                gs.game_id = uuid::Uuid::from_u128(game);
+                gs.turn_number = 3;
+                gs.player_two_mut().leader.card_id = "OP17-079".into();
+                gs.player_two_mut().characters = vec![optcg_core::CardInstance::new(
+                    card,
+                    1,
+                    optcg_core::Zone::Character,
+                )];
+            }
+            state.scout_position();
+        }
+    }
+
+    #[test]
+    fn what_we_learned_about_them_reaches_the_deck_context() {
+        let (state, board) = app_state_with_board();
+        scout_games(&state, &board, 4, "OP17-080");
+
+        let scouting = deck_context(&state)
+            .opponent_scouting
+            .expect("four games against this leader should reach the coach");
+
+        assert_eq!(scouting.games, 4);
+        assert_eq!(scouting.reliability, "fair");
+        assert!(
+            scouting
+                .likely_cards
+                .iter()
+                .any(|line| line.contains("Usopp") && line.contains("4 of 4 games")),
+            "the card and its rate should both travel: {:?}",
+            scouting.likely_cards
+        );
+    }
+
+    #[test]
+    fn an_unscouted_opponent_adds_nothing_to_the_context() {
+        let state = app_state();
+
+        assert!(
+            deck_context(&state).opponent_scouting.is_none(),
+            "with nothing seen there is nothing to report"
+        );
+    }
+
+    #[test]
+    fn scouting_is_dropped_once_we_hold_their_real_list() {
+        let (state, board) = app_state_with_board();
+        scout_games(&state, &board, 4, "OP17-080");
+        assert!(deck_context(&state).opponent_scouting.is_some());
+
+        let theirs = state
+            .save_deck(
+                optcg_rules::Side::Opponent,
+                None,
+                None,
+                "Deck: Black Elbaph\nLeader: OP17-079\n4x OP17-080",
+            )
+            .unwrap();
+        state
+            .set_deck_source(optcg_rules::Side::Opponent, Some(&theirs.id))
+            .unwrap();
+
+        assert!(
+            deck_context(&state).opponent_scouting.is_none(),
+            "an estimate of a deck we hold in full is noise"
+        );
     }
 
     /// A directory of its own per call. Tests in a crate share one process and

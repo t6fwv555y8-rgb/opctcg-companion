@@ -151,6 +151,15 @@ fn main() {
 
             Ok(())
         })
+        .on_window_event(|window, event| {
+            // A session that ends without another game starting still has a
+            // game's worth of scouting waiting to be folded in.
+            if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+                if let Some(state) = window.try_state::<state::AppState>() {
+                    state.close_scouting_game();
+                }
+            }
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

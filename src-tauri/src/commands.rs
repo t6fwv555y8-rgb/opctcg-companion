@@ -426,6 +426,10 @@ pub fn emit_state_update(
     app_state: &AppState,
     observation: Option<ObservationStatusDto>,
 ) {
+    // Every position the opponent shows us is evidence about their deck. This
+    // is the only path new board information arrives on, so it is the only
+    // place scouting needs to happen.
+    app_state.scout_position();
     let payload = app_state.build_update_payload(observation);
     let _ = app.emit("game-state-updated", payload);
     // A streaming answer about the previous position is worse than no answer.

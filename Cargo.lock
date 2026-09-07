@@ -2598,6 +2598,7 @@ dependencies = [
  "optcg_events",
  "optcg_observation",
  "optcg_rules",
+ "optcg_scouting",
  "parking_lot",
  "serde",
  "serde_json",
@@ -2606,6 +2607,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]
@@ -2708,6 +2710,18 @@ dependencies = [
  "serde_json",
  "thiserror 1.0.69",
  "tracing",
+]
+
+[[package]]
+name = "optcg_scouting"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "optcg_core",
+ "serde",
+ "serde_json",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

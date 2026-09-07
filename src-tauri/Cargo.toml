@@ -18,6 +18,8 @@ optcg_events = { path = "../crates/optcg_events" }
 chrono = { workspace = true }
 optcg_coach = { path = "../crates/optcg_coach" }
 optcg_observation = { path = "../crates/optcg_observation" }
+optcg_scouting = { path = "../crates/optcg_scouting" }
+uuid = { workspace = true }
 tauri = { version = "2.0", features = [] }
 serde = { workspace = true }
 serde_json = { workspace = true }
