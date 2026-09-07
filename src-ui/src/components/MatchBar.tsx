@@ -8,14 +8,10 @@ interface Props {
   theirLeader: string;
   yourLeaderId?: string;
   theirLeaderId?: string;
-  yourLeaderText?: string;
-  theirLeaderText?: string;
+  yourColor?: string;
+  theirColor?: string;
   hudState: HudOperatingStateKind | null;
   sourceLabel: string | null;
-}
-
-function whoseTurn(gs: GameStateDto): string {
-  return gs.active_player === 0 ? "Your turn" : "Their turn";
 }
 
 function formatLeader(
@@ -24,51 +20,43 @@ function formatLeader(
 ): string {
   const n = name?.trim() ?? "";
   const card = id?.trim() ?? "";
-  if (n && n !== "Unknown leader" && card && n !== card) return `${n} · ${card}`;
+  if (n && n !== "Unknown leader" && card && n !== card) return `${n}  ${card}`;
   if (n && n !== "Unknown leader") return n;
   return card;
 }
 
-function Side({
-  life,
-  name,
+function teamShort(leader: string, fallback: string): string {
+  const n = leader.trim();
+  if (!n) return fallback;
+  const name = n.split("  ")[0]?.split("·")[0]?.trim() ?? n;
+  const parts = name.split(/[\s.]+/).filter(Boolean);
+  if (parts.length >= 2) return parts[parts.length - 1].slice(0, 8).toUpperCase();
+  return name.slice(0, 8).toUpperCase();
+}
+
+function Team({
+  label,
+  player,
   leader,
-  text,
-  don,
-  you,
+  color,
+  home,
 }: {
-  life: string | number;
-  name: string;
+  label: string;
+  player: string;
   leader: string;
-  text?: string;
-  don: number | null;
-  you?: boolean;
+  color?: string;
+  home?: boolean;
 }) {
   return (
-    <div className={`flex items-baseline gap-2 ${you ? "" : "opacity-80"}`}>
-      <span
-        className={`shrink-0 font-semibold tabular-nums leading-none ${
-          you ? "text-[26px] text-white" : "text-[22px] text-slate-200"
-        }`}
-      >
-        {life}
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className={`truncate text-[13px] ${you ? "text-slate-200" : "text-slate-400"}`}>
-          {name}
-        </div>
-        {leader && (
-          <div className="truncate text-[11px] text-amber-100/80">{leader}</div>
-        )}
-        {text && (
-          <div className="mt-0.5 line-clamp-2 text-[10px] leading-snug text-slate-500">
-            {text}
-          </div>
-        )}
+    <div className={`scoreboard-team ${home ? "home" : "away"}`}>
+      <div className="scoreboard-role">{label} crew</div>
+      <div className="scoreboard-abbr" style={color ? { color } : undefined}>
+        {teamShort(leader, home ? "HOME" : "AWAY")}
       </div>
-      {don != null && (
-        <span className="shrink-0 text-[11px] tabular-nums text-slate-500">{don} DON</span>
-      )}
+      <div className="scoreboard-leader">
+        {leader || (home ? "Your leader" : "Their leader")}
+      </div>
+      <div className="scoreboard-player">{player}</div>
     </div>
   );
 }
@@ -81,8 +69,8 @@ export function MatchBar({
   theirLeader,
   yourLeaderId,
   theirLeaderId,
-  yourLeaderText,
-  theirLeaderText,
+  yourColor,
+  theirColor,
   hudState,
   sourceLabel,
 }: Props) {
@@ -94,54 +82,63 @@ export function MatchBar({
   const youLeader = formatLeader(yourLeader, yourLeaderId);
   const themLeader = formatLeader(theirLeader, theirLeaderId);
   const inMatch = (page === "match" || page === "ended") && !queued;
-
-  const status = queued
-    ? "In queue"
+  const yourTurn = gameState?.active_player === 0;
+  const clock = queued
+    ? "QUEUE"
     : page === "lobby"
-      ? "In lobby"
+      ? "LOCKER"
       : page === "ended"
-        ? "Game over"
-        : page === "match" && hudState === "live"
-          ? "Live"
-          : hudState && hudState !== "live"
-            ? hudState
-            : null;
+        ? "FINAL"
+        : gameState
+          ? `T${gameState.turn_number} · ${gameState.phase}`
+          : "—";
+  const poss = !inMatch
+    ? ""
+    : yourTurn
+      ? "HOME POSSESSION"
+      : "AWAY POSSESSION";
 
   return (
-    <header className="shrink-0 border-b border-white/[0.06] px-3 py-2">
-      <div className="flex items-center justify-between gap-2 text-[11px] text-slate-500">
+    <header className="scoreboard">
+      <div className="scoreboard-ticker">
         <span className="flex items-center gap-1.5">
           <span className={`pulse-dot ${live ? "connected" : "disconnected"}`} />
           {sourceLabel ?? "Searching"}
-          {status ? ` · ${status}` : ""}
         </span>
-        {gameState && page === "match" && (
-          <span className="font-medium text-slate-300">
-            {whoseTurn(gameState)} · {gameState.phase}
+        <span className="scoreboard-brand">OPTCG · GRAND LINE</span>
+        {inMatch && (
+          <span>
+            AWAY {gameState?.player_two.hand_count ?? 0}H/{gameState?.player_two.active_don ?? 0}D
+            <span className="mx-1.5 opacity-40">·</span>
+            HOME {gameState?.player_one.hand_count ?? 0}H/{gameState?.player_one.active_don ?? 0}D
           </span>
         )}
-        {page === "ended" && (
-          <span className="font-medium text-slate-300">Match finished</span>
-        )}
-        {queued && (
-          <span className="font-medium text-hud-accent">Waiting for a match</span>
-        )}
       </div>
-      <div className="mt-1.5 flex flex-col gap-1.5">
-        <Side
-          life={them}
-          name={theirName || "Opponent"}
+      <div className="scoreboard-face">
+        <Team
+          label="Away"
+          player={theirName || "Opponent"}
           leader={themLeader}
-          text={inMatch ? theirLeaderText : undefined}
-          don={inMatch ? (gameState?.player_two.active_don ?? 0) : null}
+          color={theirColor}
         />
-        <Side
-          life={you}
-          name={yourName || "You"}
+        <div className="scoreboard-mid">
+          <div className="scoreboard-scores">
+            <span className="scoreboard-points away-score">{them}</span>
+            <span className="scoreboard-vs">
+              VS
+              <span className="scoreboard-life">LIFE</span>
+            </span>
+            <span className="scoreboard-points home-score">{you}</span>
+          </div>
+          <div className="scoreboard-clock">{clock}</div>
+          {poss && <div className="scoreboard-poss">{poss}</div>}
+        </div>
+        <Team
+          label="Home"
+          player={yourName || "You"}
           leader={youLeader}
-          text={inMatch ? yourLeaderText : undefined}
-          don={inMatch ? (gameState?.player_one.active_don ?? 0) : null}
-          you
+          color={yourColor}
+          home
         />
       </div>
     </header>

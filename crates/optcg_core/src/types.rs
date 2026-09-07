@@ -215,6 +215,10 @@ pub struct LeaderState {
     pub power: u32,
     pub rested: bool,
     pub attached_don: u32,
+    /// True only after the table (or a test) actually set this leader.
+    /// `GameState::new` seeds ST01-001 as a rules placeholder, not a read.
+    #[serde(default)]
+    pub observed: bool,
 }
 
 impl LeaderState {
@@ -224,6 +228,7 @@ impl LeaderState {
             power: 5000,
             rested: false,
             attached_don: 0,
+            observed: false,
         }
     }
 
@@ -318,6 +323,7 @@ impl PlayerState {
             self.leader_name.clear();
         }
         self.leader.card_id = id.clone();
+        self.leader.observed = true;
         self.note_card(&id);
         self.sync_leader_fields();
     }

@@ -58,6 +58,8 @@ export interface LastEventInfo {
 export interface PlayerStateDto {
   player_index: number;
   leader_id: string;
+  leader_observed?: boolean;
+  leader_name?: string;
   leader_power: number;
   life: number;
   active_don: number;

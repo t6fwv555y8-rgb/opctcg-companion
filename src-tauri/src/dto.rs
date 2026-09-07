@@ -187,6 +187,11 @@ impl From<&PastedDeckList> for PastedDeckDto {
 pub struct PlayerStateDto {
     pub player_index: u8,
     pub leader_id: String,
+    /// True when this leader was read off the table, not the default placeholder.
+    #[serde(default)]
+    pub leader_observed: bool,
+    #[serde(default)]
+    pub leader_name: String,
     pub leader_power: u32,
     pub life: u32,
     pub active_don: u32,
@@ -217,7 +222,13 @@ impl From<&PlayerState> for PlayerStateDto {
     fn from(p: &PlayerState) -> Self {
         Self {
             player_index: p.player_index,
-            leader_id: p.leader.card_id.clone(),
+            leader_id: if p.leader.observed {
+                p.leader.card_id.clone()
+            } else {
+                String::new()
+            },
+            leader_observed: p.leader.observed,
+            leader_name: p.leader_name.clone(),
             leader_power: p.leader.effective_power(),
             life: p.life,
             active_don: p.don_active,
@@ -445,4 +456,20 @@ impl ConnectionStatusDto {
 pub struct OverlaySettings {
     pub click_through: bool,
     pub opacity: f64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use optcg_core::GameState;
+
+    #[test]
+    fn an_unread_board_hides_the_placeholder_leader() {
+        let gs = GameState::new();
+        let dto = GameStateDto::from(&gs);
+        assert!(!dto.player_one.leader_observed);
+        assert!(!dto.player_two.leader_observed);
+        assert!(dto.player_one.leader_id.is_empty());
+        assert!(dto.player_two.leader_id.is_empty());
+    }
 }

@@ -81,7 +81,7 @@ function RosterColumn({
 }) {
   return (
     <div>
-      <div className="text-[10px] font-medium uppercase tracking-[0.16em] text-slate-500">
+      <div className="text-[10px] font-medium uppercase tracking-[0.16em] text-amber-200/50">
         {title}
       </div>
       {rows.length === 0 ? (
@@ -111,7 +111,7 @@ function RosterColumn({
   );
 }
 
-/// What to do this second. Updates as the board does.
+/// Rayleigh's broadcast. Updates as the board does.
 export function NowPanel({
   phaseCoach,
   strategy,
@@ -128,11 +128,11 @@ export function NowPanel({
 }: Props) {
   const waiting =
     pageState === "queue"
-      ? "In queue — the next line lands when the match starts."
+      ? "In queue — the next call lands when the match starts."
       : pageState === "lobby"
-        ? "In lobby — queue a match and this panel will follow."
+        ? "In the locker — queue a match and Rayleigh will call it."
         : pageState === "ended"
-          ? "Game over — the recap lands as soon as the result is readable."
+          ? "Final. The recap lands as soon as the result is readable."
           : "Waiting for a readable position.";
   const table = combatCoach ?? battleDoThis(combat, analysis);
   const fighting = Boolean(combat?.active || analysis);
@@ -141,6 +141,7 @@ export function NowPanel({
     (!fighting && strategy?.action.description?.trim()) ||
     phaseCoach?.trim() ||
     waiting;
+  const broadcast = coachLine?.trim() || line;
   const steps = (
     table?.steps?.length ? table.steps : (deckStrategy?.this_turn ?? [])
   ).slice(0, 3);
@@ -150,42 +151,54 @@ export function NowPanel({
     .filter((opt) => opt.action.description?.trim() && opt.action.description.trim() !== line)
     .slice(0, 3);
   const blockerOpen = Boolean(combat?.blocker_offered);
-  const notes = Boolean(coachLine || coachBusy || coachError);
+  const cover = deckStrategy?.vs_opponent?.trim() || "";
 
   return (
-    <div className="flex flex-col gap-4">
-      <section className="hud-panel px-3.5 py-3">
+    <div className="flex flex-col gap-3">
+      <section className="broadcast">
         <div className="flex items-center justify-between gap-2">
-          <div className="hud-title text-hud-accent">Do this</div>
-          <div className="flex items-center gap-1.5">
-            <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-amber-200/80">
-              Rayleigh
+          <div className="broadcast-tag">Rayleigh · Play-by-play</div>
+          {blockerOpen && (
+            <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-100">
+              Blocker window
             </span>
-            {blockerOpen && (
-              <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-100">
-                Blocker window
-              </span>
-            )}
-          </div>
+          )}
         </div>
         {analysis && <CombatStrip analysis={analysis} />}
-        <div className="best-line mt-2">
-          <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-amber-200">
-            Best line
-          </div>
-          <p className="mt-1 text-[16px] font-semibold leading-snug text-amber-50">{line}</p>
-        </div>
+        {coachBusy && !coachLine && (
+          <p className="mt-2 animate-pulse text-[13px] text-amber-200/60">
+            Reading the new position…
+          </p>
+        )}
+        {coachError && (
+          <p className="mt-2 text-[13px] text-hud-danger">{coachError}</p>
+        )}
+        <p className="broadcast-copy">
+          {broadcast}
+          {coachBusy && coachLine && (
+            <span className="ml-1 animate-pulse text-amber-300">▌</span>
+          )}
+        </p>
         {paused && (
           <p className="mt-2 text-[12px] text-hud-warn">
             The read is shaky — treat this as provisional.
           </p>
         )}
+      </section>
+
+      <section className="hud-panel px-3.5 py-3">
+        <div className="best-line">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-amber-200">
+            The call
+          </div>
+          <p className="mt-1 text-[16px] font-semibold leading-snug text-amber-50">{line}</p>
+        </div>
         {steps.length > 0 && (
           <ul className="mt-3 space-y-2">
             {steps.map((step) => (
               <li
                 key={step}
-                className="border-l border-sky-400/30 pl-3 text-[13px] leading-snug text-slate-300"
+                className="border-l border-amber-400/35 pl-3 text-[13px] leading-snug text-slate-300"
               >
                 {step}
               </li>
@@ -209,35 +222,20 @@ export function NowPanel({
         )}
       </section>
 
-      {(you.length > 0 || them.length > 0) && (
-        <div className="flex flex-col gap-3 px-0.5">
-          <RosterColumn title="Them" rows={them} />
-          <RosterColumn title="You" rows={you} />
-        </div>
+      {cover && (
+        <section className="cover-them">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-rose-200/80">
+            Cover them
+          </div>
+          <p className="mt-1.5 text-[13px] leading-relaxed text-rose-50/90">{cover}</p>
+        </section>
       )}
 
-      {notes && (
-        <section className="px-0.5">
-          <div className="text-[10px] font-medium uppercase tracking-[0.16em] text-slate-500">
-            Rayleigh
-          </div>
-          {coachBusy && !coachLine && (
-            <p className="mt-1.5 animate-pulse text-[13px] text-slate-500">
-              Reading the new position…
-            </p>
-          )}
-          {coachError && (
-            <p className="mt-1.5 text-[13px] text-hud-danger">{coachError}</p>
-          )}
-          {coachLine && (
-            <p className="mt-1.5 text-[13px] leading-relaxed text-slate-400">
-              {coachLine}
-              {coachBusy && (
-                <span className="ml-1 animate-pulse text-hud-accent">▌</span>
-              )}
-            </p>
-          )}
-        </section>
+      {(you.length > 0 || them.length > 0) && (
+        <div className="flex flex-col gap-3 px-0.5">
+          <RosterColumn title="Away roster" rows={them} />
+          <RosterColumn title="Home roster" rows={you} />
+        </div>
       )}
     </div>
   );

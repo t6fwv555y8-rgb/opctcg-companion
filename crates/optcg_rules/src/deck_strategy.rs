@@ -9,6 +9,9 @@ pub struct DeckProfile {
     pub leader_id: String,
     pub leader_name: String,
     pub leader_color: String,
+    /// Printed leader ability, when we have it.
+    #[serde(default)]
+    pub leader_text: String,
     pub known_card_ids: Vec<String>,
     pub known_card_names: Vec<String>,
     /// Exact pasted list (empty when not provided).
@@ -48,7 +51,7 @@ impl DeckStrategyCoach {
             display_name(opp)
         );
         let your_plan = your_game_plan(you);
-        let vs_opponent = matchup_plan(you, opp);
+        let vs_opponent = cover_them(you, opp);
         let this_turn = turn_priorities(state, you, opp);
         let threats = opponent_threats(opp);
         let priorities = overall_priorities(you, opp, state);
@@ -68,14 +71,17 @@ impl DeckStrategyCoach {
 }
 
 fn display_name(d: &DeckProfile) -> String {
+    if !d.leader_name.is_empty() && d.leader_name != "Unknown leader" {
+        if !d.leader_id.is_empty() && d.leader_name != d.leader_id {
+            return format!("{} ({})", d.leader_name, d.leader_id);
+        }
+        if d.leader_color.is_empty() {
+            return d.leader_name.clone();
+        }
+        return format!("{} {}", d.leader_color, d.leader_name);
+    }
     if !d.name.trim().is_empty() && d.name != "Deck unknown" {
         d.name.clone()
-    } else if !d.leader_name.is_empty() && d.leader_name != "Unknown leader" {
-        if d.leader_color.is_empty() {
-            d.leader_name.clone()
-        } else {
-            format!("{} {}", d.leader_color, d.leader_name)
-        }
     } else if !d.leader_id.is_empty() {
         d.leader_id.clone()
     } else {
@@ -394,6 +400,95 @@ fn list_specific_notes(you: &DeckProfile) -> Vec<String> {
     notes
 }
 
+/// How to play against the leader across the table, from their printed text.
+fn cover_them(you: &DeckProfile, opp: &DeckProfile) -> String {
+    let name = if opp.leader_name.is_empty() || opp.leader_name == "Unknown leader" {
+        "Their leader".to_string()
+    } else {
+        opp.leader_name.clone()
+    };
+    let text = opp.leader_text.trim();
+    let lower = text.to_ascii_lowercase();
+    let mut beats = Vec::new();
+    if !text.is_empty() {
+        beats.push(format!("{name} is printed: {text}"));
+    }
+    if lower.contains("don!!") || lower.contains("[don") {
+        beats.push(
+            "They want DON on that leader — starve the pump or race before it comes online.".into(),
+        );
+    }
+    if lower.contains("draw") {
+        beats.push("They draw off the leader. Do not gift extra turns.".into());
+    }
+    if lower.contains("k.o") || lower.contains("ko ") || lower.contains("trash") {
+        beats.push("They can remove a body. Do not overextend the 1-for-1 they wanted.".into());
+    }
+    if lower.contains("rest") {
+        beats.push("They rest your board. Keep a swing that does not need the rested body.".into());
+    }
+    if lower.contains("blocker") {
+        beats.push(
+            "The leader turns on Blocker. Have a second swing or a removal for the wall.".into(),
+        );
+    }
+    if lower.contains("life") {
+        beats.push("They play with life as a resource. Track the trigger, not just the number.".into());
+    }
+    if lower.contains("rush") {
+        beats.push("They can swing the turn a body lands. Keep life for the surprise.".into());
+    }
+    let cover = if beats.is_empty() {
+        matchup_plan(you, opp)
+    } else {
+        let mut line = beats.join(" ");
+        line.push(' ');
+        line.push_str(&answer_their_print(you, &lower));
+        if !opp.known_card_names.is_empty() {
+            let seen: Vec<_> = opp.known_card_names.iter().take(4).cloned().collect();
+            line.push_str(&format!(" Cards they have shown: {}.", seen.join(", ")));
+        }
+        line
+    };
+    cover
+}
+
+/// Turn their printed verbs into the line we play into.
+fn answer_their_print(you: &DeckProfile, text_lower: &str) -> String {
+    let you_a = archetype_hint(you);
+    let mut replies = Vec::new();
+    if text_lower.contains("don!!") || text_lower.contains("[don") {
+        replies.push(match you_a {
+            "aggro" => "Race the pump — take life before they stack DON.",
+            "control" => "Hold answers for the pumped swing, not the empty one.",
+            _ => "Don't gift them free DON turns.",
+        });
+    }
+    if text_lower.contains("draw") {
+        replies.push("Close the game before the extra cards matter.");
+    }
+    if text_lower.contains("k.o") || text_lower.contains("ko ") || text_lower.contains("trash") {
+        replies.push("Develop a second body so a single KO does not strand you.");
+    }
+    if text_lower.contains("rest") {
+        replies.push("Keep a swing that still works if they rest your best attacker.");
+    }
+    if text_lower.contains("blocker") {
+        replies.push("Plan two attacks or a removal for the wall.");
+    }
+    if text_lower.contains("life") {
+        replies.push("Count triggers, not just the life number.");
+    }
+    if text_lower.contains("rush") {
+        replies.push("Keep enough life for the turn they drop and swing.");
+    }
+    if replies.is_empty() {
+        format!("Play your {you_a} plan into that text.")
+    } else {
+        replies.join(" ")
+    }
+}
+
 fn matchup_plan(you: &DeckProfile, opp: &DeckProfile) -> String {
     let you_a = archetype_hint(you);
     let opp_a = archetype_hint(opp);
@@ -654,6 +749,7 @@ mod tests {
             leader_id: "ST01-001".into(),
             leader_name: "Monkey.D.Luffy".into(),
             leader_color: "Red".into(),
+            leader_text: String::new(),
             known_card_ids: vec!["ST01-002".into()],
             known_card_names: vec!["Usopp".into()],
             list_entries: vec![],
@@ -664,14 +760,15 @@ mod tests {
             leader_id: "OP01-001".into(),
             leader_name: "Trafalgar Law".into(),
             leader_color: "Blue".into(),
+            leader_text: "[DON!! x2] This Leader gains +2000 power.".into(),
             known_card_ids: vec![],
             known_card_names: vec![],
             list_entries: vec![],
             list_total_cards: 0,
         };
         let brief = DeckStrategyCoach::brief(&state, &you, &opp);
-        assert!(brief.matchup.contains("Red Luffy Aggro"));
-        assert!(brief.matchup.contains("Blue Control"));
+        assert!(brief.matchup.contains("Monkey.D.Luffy"));
+        assert!(brief.matchup.contains("Trafalgar Law"));
         assert!(!brief.your_plan.is_empty());
         assert!(!brief.vs_opponent.is_empty());
         assert!(!brief.this_turn.is_empty());
@@ -688,6 +785,7 @@ mod tests {
             leader_id: "ST01-001".into(),
             leader_name: "Monkey.D.Luffy".into(),
             leader_color: "Red".into(),
+            leader_text: String::new(),
             known_card_ids: vec![],
             known_card_names: vec![],
             list_entries: vec![
@@ -720,5 +818,39 @@ mod tests {
         let brief = DeckStrategyCoach::brief(&state, &you, &opp);
         assert!(brief.your_plan.contains("pasted list") || brief.list_notes.iter().any(|n| n.contains("Rush") || n.contains("Sanji")));
         assert!(brief.list_notes.iter().any(|n| n.contains("Blocker") || n.contains("Nami")));
+    }
+
+    #[test]
+    fn cover_reads_their_printed_ability() {
+        let state = GameState::new();
+        let you = DeckProfile {
+            leader_name: "Monkey.D.Luffy".into(),
+            leader_id: "ST01-001".into(),
+            ..Default::default()
+        };
+        let opp = DeckProfile {
+            leader_name: "Silvers Rayleigh".into(),
+            leader_id: "OP13-001".into(),
+            leader_text: "[DON!! x1] Draw 1 card. Then rest one of your opponent's Characters.".into(),
+            ..Default::default()
+        };
+        let brief = DeckStrategyCoach::brief(&state, &you, &opp);
+        assert!(
+            brief.vs_opponent.contains("DON!!") || brief.vs_opponent.contains("printed"),
+            "{}",
+            brief.vs_opponent
+        );
+        assert!(
+            brief.vs_opponent.contains("rest") || brief.vs_opponent.contains("Draw"),
+            "{}",
+            brief.vs_opponent
+        );
+        assert!(
+            brief.vs_opponent.contains("Race")
+                || brief.vs_opponent.contains("Close the game")
+                || brief.vs_opponent.contains("still works"),
+            "cover must answer their printed verbs: {}",
+            brief.vs_opponent
+        );
     }
 }

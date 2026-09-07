@@ -8,10 +8,10 @@ import type {
 } from "../types/coach";
 
 const SUGGESTIONS = [
-  "What should I do this turn?",
-  "Can I survive this attack?",
+  "Why is that the line?",
+  "What are they setting up?",
+  "When do I counter vs take life?",
   "How does this matchup play out?",
-  "How did I play that last game?",
 ];
 
 const ENDING_NOTE: Record<Exclude<FinishReason, "complete">, string> = {
@@ -219,7 +219,7 @@ export function CoachChatPanel() {
   return (
     <div className="hud-panel p-3">
       <div className="flex items-center justify-between gap-2">
-        <div className="hud-title">Ask Rayleigh</div>
+        <div className="hud-title">Ask</div>
         <div className="flex items-center gap-1">
           <span
             title={
@@ -262,8 +262,8 @@ export function CoachChatPanel() {
             {coach.messages.length === 0 ? (
               <div className="space-y-1">
                 <p className="text-sm text-slate-400">
-                  Ask about the live board. The coach reads your game state,
-                  deck list, and the rules engine before answering.
+                  Play is the broadcast. Ask only when you have a question —
+                  Rayleigh already has the live board and both leaders.
                 </p>
                 <div className="flex flex-wrap gap-1">
                   {SUGGESTIONS.map((suggestion) => (
@@ -319,7 +319,7 @@ export function CoachChatPanel() {
                   submit(draft);
                 }
               }}
-              placeholder="Ask Rayleigh about this board…"
+              placeholder="Ask a question…"
               rows={2}
               className="min-w-0 flex-1 resize-none rounded border border-slate-700 bg-slate-950/80 px-3 py-2 text-sm leading-snug text-slate-200 placeholder:text-slate-600 focus:border-hud-accent/50 focus:outline-none"
             />
