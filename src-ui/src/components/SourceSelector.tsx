@@ -24,7 +24,7 @@ export function SourceSelector({ observation, onSelect }: Props) {
           <button
             key={opt.value}
             onClick={() => onSelect(opt.value)}
-            className={`rounded px-2 py-1 text-[10px] transition ${
+            className={`rounded px-2 py-2 text-sm transition ${
               current === opt.value
                 ? "bg-hud-accent/30 text-hud-accent ring-1 ring-hud-accent/50"
                 : "bg-slate-800/60 text-slate-300 hover:bg-slate-700/60"

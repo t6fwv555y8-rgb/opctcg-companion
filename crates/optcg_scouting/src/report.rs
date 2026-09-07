@@ -6,6 +6,7 @@
 //! one game and advice drawn from twenty are not the same advice.
 
 use crate::ledger::LeaderProfile;
+use crate::matchup::MatchupRecord;
 use serde::{Deserialize, Serialize};
 
 /// Games needed before a pace is called at all. Below this the measurements are
@@ -223,6 +224,139 @@ impl StrategyRead {
     }
 }
 
+/// Which way a matchup has gone, once enough games say anything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Standing {
+    /// Too few finished games to call.
+    TooEarly,
+    Favourable,
+    Even,
+    Rough,
+}
+
+impl Standing {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::TooEarly => "too early to call",
+            Self::Favourable => "favourable",
+            Self::Even => "even",
+            Self::Rough => "rough",
+        }
+    }
+}
+
+/// Finished games needed before a win rate is characterised at all.
+///
+/// Three games is a coin landing the same way twice. Calling a matchup
+/// "favourable" off that would be the single most misleading thing this crate
+/// could tell someone, since they would then build around it.
+pub const MIN_GAMES_FOR_STANDING: u32 = 5;
+
+/// Win rate at or above which a matchup is called favourable.
+const FAVOURABLE_RATE: f32 = 0.6;
+
+/// Win rate at or below which it is called rough.
+const ROUGH_RATE: f32 = 0.4;
+
+/// How your deck has actually fared against one leader.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MatchupRead {
+    pub their_leader: String,
+    pub their_leader_name: String,
+    pub wins: u32,
+    pub losses: u32,
+    pub unfinished: u32,
+    pub standing: Standing,
+    /// `None` until a game has actually finished.
+    pub win_rate: Option<f32>,
+    /// Plain statements of what was measured, each safe to show a user.
+    pub notes: Vec<String>,
+}
+
+impl MatchupRead {
+    /// Read a record, or `None` when no game has been played.
+    pub fn from_record(record: &MatchupRecord) -> Option<Self> {
+        if record.played() == 0 {
+            return None;
+        }
+        let finished = record.finished();
+        let win_rate = record.win_rate();
+
+        let standing = match win_rate {
+            Some(rate) if finished >= MIN_GAMES_FOR_STANDING => {
+                if rate >= FAVOURABLE_RATE {
+                    Standing::Favourable
+                } else if rate <= ROUGH_RATE {
+                    Standing::Rough
+                } else {
+                    Standing::Even
+                }
+            }
+            _ => Standing::TooEarly,
+        };
+
+        let mut notes = Vec::new();
+        if finished > 0 {
+            notes.push(format!(
+                "You are {}-{} in {} finished game{}.",
+                record.wins,
+                record.losses,
+                finished,
+                if finished == 1 { "" } else { "s" }
+            ));
+        }
+        if standing == Standing::TooEarly && finished > 0 {
+            notes.push(format!(
+                "Too few games to call the matchup; {} needed.",
+                MIN_GAMES_FOR_STANDING.saturating_sub(finished).max(1)
+            ));
+        }
+        if let Some(turn) = record.average_length() {
+            notes.push(format!("Games run to turn {turn:.1}."));
+        }
+        if let Some(life) = record.average_life_left_on_win() {
+            notes.push(format!("When you win, you finish on {life:.1} life."));
+        }
+        if let Some(life) = record.average_their_life_left_on_loss() {
+            // The difference between losing a close game and never being in it
+            // is the difference between tuning a deck and changing it.
+            let closeness = if life >= 3.0 {
+                " — not close"
+            } else {
+                " — close games"
+            };
+            notes.push(format!(
+                "When you lose, they finish on {life:.1} life{closeness}."
+            ));
+        }
+        if record.unfinished > 0 {
+            notes.push(format!(
+                "{} game{} ended without a result and {} not counted.",
+                record.unfinished,
+                if record.unfinished == 1 { "" } else { "s" },
+                if record.unfinished == 1 { "is" } else { "are" }
+            ));
+        }
+
+        Some(Self {
+            their_leader: record.their_leader.clone(),
+            their_leader_name: record.their_leader_name.clone(),
+            wins: record.wins,
+            losses: record.losses,
+            unfinished: record.unfinished,
+            standing,
+            win_rate,
+            notes,
+        })
+    }
+
+    /// The record as it would be written on a sheet: `3-2`.
+    pub fn score(&self) -> String {
+        format!("{}-{}", self.wins, self.losses)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -381,5 +515,57 @@ mod tests {
         assert_eq!(Reliability::of(3), Reliability::Fair);
         assert_eq!(Reliability::of(5), Reliability::Fair);
         assert_eq!(Reliability::of(6), Reliability::Solid);
+    }
+
+    fn matchup(wins: u32, losses: u32) -> MatchupRecord {
+        use crate::matchup::{FinishedGame, MatchupLedger, Outcome};
+        let mut ledger = MatchupLedger::default();
+        for n in 0..(wins + losses) {
+            ledger.fold_in(
+                &FinishedGame {
+                    your_leader: "ST01-001".into(),
+                    your_leader_name: "Luffy".into(),
+                    their_leader: "OP17-079".into(),
+                    their_leader_name: "Loki".into(),
+                    outcome: Some(if n < wins {
+                        Outcome::Won
+                    } else {
+                        Outcome::Lost
+                    }),
+                    your_life: 3,
+                    their_life: 2,
+                    last_turn: 7,
+                },
+                "2026-01-01",
+            );
+        }
+        ledger.record("ST01-001", "OP17-079").unwrap().clone()
+    }
+
+    #[test]
+    fn four_wins_is_still_too_early_to_call() {
+        let read = MatchupRead::from_record(&matchup(4, 0)).unwrap();
+        assert_eq!(read.standing, Standing::TooEarly);
+        assert!(read.notes.iter().any(|n| n.contains("Too few games")));
+    }
+
+    #[test]
+    fn five_wins_reads_as_favourable() {
+        let read = MatchupRead::from_record(&matchup(5, 0)).unwrap();
+        assert_eq!(read.standing, Standing::Favourable);
+        assert_eq!(read.score(), "5-0");
+    }
+
+    #[test]
+    fn a_losing_record_of_five_reads_as_rough() {
+        let read = MatchupRead::from_record(&matchup(1, 4)).unwrap();
+        assert_eq!(read.standing, Standing::Rough);
+    }
+
+    #[test]
+    fn a_split_record_reads_as_even() {
+        let read = MatchupRead::from_record(&matchup(3, 3)).unwrap();
+        assert_eq!(read.standing, Standing::Even);
+        assert_eq!(read.win_rate, Some(0.5));
     }
 }

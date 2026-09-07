@@ -68,6 +68,7 @@ export interface PlayerStateDto {
   board_count: number;
   board?: BoardCardDto[];
   deck_name?: string;
+  player_name?: string;
   known_cards?: string[];
 }
 
@@ -140,6 +141,19 @@ export interface ScoutingReportDto {
   notes: string[];
 }
 
+/// How your deck has gone against this leader.
+export interface MatchupReportDto {
+  their_leader_id: string;
+  their_leader_name: string;
+  wins: number;
+  losses: number;
+  unfinished: number;
+  /// "too early to call" | "favourable" | "even" | "rough"
+  standing: string;
+  win_rate?: number | null;
+  notes: string[];
+}
+
 export interface ScoutedCardDto {
   card_id: string;
   name: string;
@@ -194,6 +208,7 @@ export interface GameStateDto {
   event_sequence: number;
   last_event: LastEventInfo | null;
   timestamp: string;
+  page_state?: string;
 }
 
 export interface ConnectionStatusDto {
@@ -294,6 +309,7 @@ export interface StateUpdatePayload {
   pasted_deck?: PastedDeckDto | null;
   deck_collection?: DeckCollectionDto;
   scouting?: ScoutingReportDto | null;
+  matchup?: MatchupReportDto | null;
   latency_ms: number;
   observation: ObservationStatusDto | null;
 }

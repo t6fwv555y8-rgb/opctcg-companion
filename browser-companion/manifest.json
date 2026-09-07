@@ -1,17 +1,15 @@
 {
   "manifest_version": 3,
-  "name": "OPTCG Companion Bridge",
-  "version": "0.1.0",
-  "description": "Observes player-visible OPTCG simulator state and bridges to local companion",
-  "permissions": ["activeTab"],
+  "name": "OPTCG Companion",
+  "version": "0.2.5",
+  "description": "Sends your OneSimulator match to the local companion HUD",
+  "permissions": [],
   "host_permissions": [
     "http://127.0.0.1:9003/*",
-    "http://localhost:9003/*",
     "https://onesimulator.slidingcodes.com/*"
   ],
   "background": {
-    "service_worker": "dist/background.bundle.js",
-    "type": "module"
+    "service_worker": "background.js"
   },
   "content_scripts": [
     {
@@ -19,7 +17,7 @@
         "https://onesimulator.slidingcodes.com/*",
         "http://onesimulator.slidingcodes.com/*"
       ],
-      "js": ["dist/content.bundle.js"],
+      "js": ["content.js"],
       "run_at": "document_idle"
     }
   ],

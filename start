@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# Open the OPTCG Companion.
+#   ./start                 demo cards (no real game)
+#   ./start onesimulator    live OneSimulator match
+#   ./start --terminal      print the HUD in this shell
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+cd "$ROOT"
+
+MODE=mock
+TERMINAL=0
+case "${1:-}" in
+  --terminal | hud) TERMINAL=1 ;;
+  onesimulator | one | --onesimulator | --live | live) MODE=onesimulator ;;
+  mock | --mock | "") MODE=mock ;;
+  *)
+    printf 'Unknown option: %s\nUse: ./start   or   ./start onesimulator\n' "$1" >&2
+    exit 1
+    ;;
+esac
+
+say() { printf '%s\n' "$*"; }
+die() { printf 'Could not start: %s\n' "$*" >&2; exit 1; }
+
+need_cmd() {
+  local name="$1" hint="$2"
+  command -v "$name" >/dev/null 2>&1 || die "$hint"
+}
+
+say "OPTCG Companion"
+say ""
+
+need_cmd node "Node.js is missing. On a Mac: brew install node"
+need_cmd npm  "npm is missing. Reinstall Node.js, then run ./start again."
+need_cmd cargo "Rust is missing. Paste this, close Terminal, reopen it, then run ./start again:
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+
+if [[ ! -d node_modules || ! -d src-ui/node_modules ]]; then
+  say "Installing dependencies (once)…"
+  npm install
+  (cd src-ui && npm install)
+fi
+
+if [[ "$MODE" == "mock" || "$TERMINAL" -eq 1 ]]; then
+  need_cmd python3 "Python 3 is missing. On a Mac: brew install python"
+  if ! python3 -c "import websockets" >/dev/null 2>&1; then
+    say "Installing the Python package the demo stream needs…"
+    python3 -m pip install --user websockets >/dev/null
+  fi
+fi
+
+# The OneSimulator extension is two plain JS files. No build step.
+# A leftover dist/ is the old WebSocket worker — wipe it so it cannot be loaded.
+rm -rf "$ROOT/browser-companion/dist"
+
+export OPTCG_SOURCE="$MODE"
+
+# A leftover Vite on :1420 makes Tauri refuse to start (strictPort).
+free_port() {
+  local port="$1"
+  local pids
+  pids="$(lsof -ti "tcp:${port}" 2>/dev/null || true)"
+  if [[ -n "$pids" ]]; then
+    say "Stopping the leftover process on port ${port} so the window can open…"
+    # shellcheck disable=SC2086
+    kill $pids 2>/dev/null || true
+    sleep 0.4
+  fi
+}
+
+ensure_hud_tools() {
+  if [[ ! -x "$ROOT/src-ui/node_modules/.bin/tauri" ]]; then
+    say "Installing the HUD tools…"
+    (cd "$ROOT/src-ui" && npm install)
+  fi
+}
+
+launch_hud() {
+  free_port 1420
+  free_port 1421
+  ensure_hud_tools
+  say ""
+  say "Leave this Terminal open. Compiling can take several minutes the first time."
+  say "The app is a small dark window titled  OPTCG Companion HUD"
+  say "Chrome is not the app. A tab at localhost:1420 means the window failed."
+  say "Ctrl-C stops everything."
+  say ""
+  cd "$ROOT"
+  exec npx --prefix src-ui tauri dev --config src-tauri/tauri.conf.json
+}
+
+say ""
+if [[ "$TERMINAL" -eq 1 ]]; then
+  say "Printing the HUD in this terminal. Ctrl-C stops it."
+  say "In another terminal, from this same folder:  python3 scripts/mock_stream.py"
+  say ""
+  exec cargo run -p optcg-companion -- --terminal
+fi
+
+if [[ "$MODE" == "onesimulator" ]]; then
+  say "After the HUD window appears, in Chrome:"
+  say "  1. chrome://extensions → Developer mode ON"
+  say "  2. Load unpacked → $ROOT/browser-companion   (not dist)"
+  say "  3. Card should say OPTCG Companion  0.2.5"
+  say "  4. Refresh the OneSimulator tab"
+  say ""
+  launch_hud
+fi
+
+say "Demo cards will start moving once the window is up."
+say "For a real match instead:  ./start onesimulator"
+say ""
+
+free_port 1420
+free_port 1421
+ensure_hud_tools
+cd "$ROOT"
+exec npx --yes concurrently -k -n hud,demo -c blue,green \
+  "npx --prefix src-ui tauri dev --config src-tauri/tauri.conf.json" \
+  "python3 scripts/mock_stream.py --interval 2"

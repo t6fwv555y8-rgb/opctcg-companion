@@ -6,6 +6,7 @@
 //! on a default position must not be recorded as a game anyone played.
 
 use crate::ledger::{ScoutingLedger, Tempo};
+use crate::matchup::LifeTrack;
 use optcg_core::GameState;
 use std::collections::HashMap;
 
@@ -16,11 +17,7 @@ const YOU: usize = 0;
 /// Accumulates readings from the live position into a ledger.
 pub struct Scout {
     ledger: ScoutingLedger,
-    /// The most life you have been seen with this game, so damage can be read
-    /// as a drop from it. Life is not reported as damage taken anywhere, and
-    /// the starting total is not always observed before the first hit.
-    your_high_life: u32,
-    /// The game the two fields above belong to.
+    /// The game currently being watched.
     watching: Option<String>,
 }
 
@@ -28,7 +25,6 @@ impl Scout {
     pub fn new(ledger: ScoutingLedger) -> Self {
         Self {
             ledger,
-            your_high_life: 0,
             watching: None,
         }
     }
@@ -57,11 +53,14 @@ impl Scout {
             self.ledger
                 .begin_game(&game_id, leader_id, &opponent.deck_name, now);
             self.watching = Some(game_id);
-            self.your_high_life = state.players[YOU].life;
         }
-        // The leader is often read a beat after the first cards are, and a game
-        // with sightings but no leader is thrown away when it closes.
+        // Either leader is often read a beat after the first cards are, and a
+        // game with sightings but no leader is thrown away when it closes.
         self.ledger.backfill_leader(leader_id, &opponent.deck_name);
+        let you = &state.players[YOU];
+        self.ledger
+            .record_your_leader(you.leader.card_id.trim(), &you.deck_name);
+        self.ledger.record_life(you.life, opponent.life);
 
         for (card_id, copies) in visible_copies(state) {
             self.ledger.record_card(&card_id, copies, state.turn_number);
@@ -69,14 +68,14 @@ impl Scout {
         self.record_tempo(state);
 
         // Tempo alone moves on every update, idle or not, because the turn
-        // counter is part of it. Only a game that has actually shown a card
-        // counts as having taught us something worth writing to disk.
+        // counter is part of it. Only a game that has shown a card, or reached
+        // a result, counts as having taught us something worth saving.
         self.fingerprint() != before
             && self
                 .ledger
                 .open
                 .as_ref()
-                .is_some_and(|game| game.is_substantive())
+                .is_some_and(|game| game.counts_as_played())
     }
 
     /// Fold the game being watched into its profile.
@@ -99,9 +98,12 @@ impl Scout {
         }
         tempo.widest_board = tempo.widest_board.max(board);
 
-        let your_life = state.players[YOU].life;
-        self.your_high_life = self.your_high_life.max(your_life);
-        let taken = self.your_high_life.saturating_sub(your_life);
+        // Life is never reported as damage taken, so it has to be read as a
+        // fall from the highest total seen this game. The life track already
+        // holds that high-water mark, and keeping a second copy here would be
+        // one more thing to reset on a new game.
+        let life = self.life_track();
+        let taken = life.your_high.saturating_sub(life.your_last);
         if taken > tempo.life_taken {
             tempo.life_taken = taken;
             if tempo.first_damage_turn.is_none() {
@@ -113,14 +115,27 @@ impl Scout {
         self.ledger.record_tempo(tempo);
     }
 
+    fn life_track(&self) -> LifeTrack {
+        self.ledger
+            .open
+            .as_ref()
+            .map(|game| game.life.clone())
+            .unwrap_or_default()
+    }
+
     /// A cheap stand-in for "did the ledger change", so the app only writes to
     /// disk when there is something new to write.
-    fn fingerprint(&self) -> (usize, u32, Tempo) {
+    ///
+    /// Life belongs here in its own right: their life falling is what decides a
+    /// win, and it moves nothing in tempo, which only measures damage done to
+    /// you.
+    fn fingerprint(&self) -> (usize, u32, Tempo, LifeTrack) {
         let open = self.ledger.open.as_ref();
         (
             open.map_or(0, |g| g.sightings.len()),
             open.map_or(0, |g| g.sightings.iter().map(|s| s.copies).sum()),
             open.map(|g| g.tempo.clone()).unwrap_or_default(),
+            self.life_track(),
         )
     }
 }
@@ -168,6 +183,7 @@ mod tests {
 
     const NOW: &str = "2026-01-01T00:00:00Z";
     const LEADER: &str = "OP17-079";
+    const YOUR_LEADER: &str = "ST01-001";
 
     fn scout() -> Scout {
         Scout::new(ScoutingLedger::default())
@@ -182,6 +198,7 @@ mod tests {
         state.game_id = uuid::Uuid::nil();
         state.turn_number = turn;
         state.players[YOU].life = 4;
+        state.players[YOU].leader.card_id = YOUR_LEADER.into();
         state.players[OPPONENT].leader.card_id = LEADER.into();
         state.players[OPPONENT].characters = board
             .iter()
@@ -320,6 +337,148 @@ mod tests {
             scout.ledger().profile(LEADER).unwrap().tempo.widest_board,
             3
         );
+    }
+
+    #[test]
+    fn losing_your_last_life_is_recorded_as_a_loss() {
+        let mut scout = scout();
+        scout.observe(&position(3, &["OP17-080"]), NOW);
+
+        let mut lethal = position(6, &["OP17-080"]);
+        lethal.players[YOU].life = 0;
+        scout.observe(&lethal, NOW);
+        scout.close(NOW);
+
+        let record = scout
+            .ledger()
+            .matchups
+            .record(YOUR_LEADER, LEADER)
+            .expect("a finished game belongs to a matchup");
+        assert_eq!((record.wins, record.losses), (0, 1));
+        assert_eq!(record.average_length(), Some(6.0));
+    }
+
+    #[test]
+    fn taking_their_last_life_is_recorded_as_a_win() {
+        let mut scout = scout();
+        scout.observe(&position(3, &["OP17-080"]), NOW);
+
+        let mut lethal = position(8, &["OP17-080"]);
+        lethal.players[OPPONENT].life = 0;
+        scout.observe(&lethal, NOW);
+        scout.close(NOW);
+
+        let record = scout.ledger().matchups.record(YOUR_LEADER, LEADER).unwrap();
+        assert_eq!((record.wins, record.losses), (1, 0));
+        assert_eq!(
+            record.average_life_left_on_win(),
+            Some(4.0),
+            "how much life a win was won with is what says whether it was comfortable"
+        );
+    }
+
+    #[test]
+    fn a_game_that_never_finished_is_not_recorded_as_a_loss() {
+        let mut scout = scout();
+        scout.observe(&position(3, &["OP17-080"]), NOW);
+        // Neither side dies: a disconnect, or the app closing mid-game.
+        scout.close(NOW);
+
+        let record = scout.ledger().matchups.record(YOUR_LEADER, LEADER).unwrap();
+        assert_eq!((record.wins, record.losses), (0, 0));
+        assert_eq!(record.unfinished, 1);
+        assert_eq!(
+            record.win_rate(),
+            None,
+            "walking away from a game is not losing it"
+        );
+    }
+
+    #[test]
+    fn an_idle_hud_records_no_matchup_at_all() {
+        let mut scout = scout();
+        let mut idle = GameState::new();
+        idle.game_id = uuid::Uuid::nil();
+        idle.players[YOU].leader.card_id = YOUR_LEADER.into();
+        idle.players[OPPONENT].leader.card_id = LEADER.into();
+
+        for _ in 0..10 {
+            scout.observe(&idle, NOW);
+        }
+        scout.close(NOW);
+
+        assert!(
+            scout.ledger().matchups.records.is_empty(),
+            "leaving the HUD open must not manufacture a record: {:?}",
+            scout.ledger().matchups.records
+        );
+    }
+
+    #[test]
+    fn a_result_is_recorded_even_when_they_showed_no_cards() {
+        let mut scout = scout();
+        // A game won without the adapter ever resolving one of their cards.
+        // Dropping it would bias the record towards whichever kind of game
+        // happens to reveal more.
+        let mut opening = position(2, &[]);
+        opening.players[OPPONENT].life = 5;
+        scout.observe(&opening, NOW);
+        let mut lethal = position(4, &[]);
+        lethal.players[OPPONENT].life = 0;
+        scout.observe(&lethal, NOW);
+        scout.close(NOW);
+
+        let record = scout.ledger().matchups.record(YOUR_LEADER, LEADER).unwrap();
+        assert_eq!(record.wins, 1);
+        assert!(
+            scout.ledger().profile(LEADER).is_none(),
+            "a game that revealed no cards still teaches nothing about their deck"
+        );
+    }
+
+    #[test]
+    fn the_matchup_is_keyed_on_your_leader_too() {
+        let mut scout = scout();
+        let mut other_deck = position(3, &["OP17-080"]);
+        other_deck.players[YOU].leader.card_id = "OP01-002".into();
+        other_deck.players[YOU].life = 0;
+        scout.observe(&other_deck, NOW);
+        scout.close(NOW);
+
+        assert!(
+            scout
+                .ledger()
+                .matchups
+                .record(YOUR_LEADER, LEADER)
+                .is_none(),
+            "a result belongs to the deck that played it"
+        );
+        assert!(scout.ledger().matchups.record("OP01-002", LEADER).is_some());
+    }
+
+    #[test]
+    fn results_accumulate_across_games() {
+        let mut scout = scout();
+        for n in 0..4 {
+            let mut opening = position(3, &["OP17-080"]);
+            opening.game_id = uuid::Uuid::from_u128(n);
+            scout.observe(&opening, NOW);
+
+            let mut end = position(7, &["OP17-080"]);
+            end.game_id = uuid::Uuid::from_u128(n);
+            // Win the first two, lose the rest.
+            if n < 2 {
+                end.players[OPPONENT].life = 0;
+            } else {
+                end.players[YOU].life = 0;
+            }
+            scout.observe(&end, NOW);
+        }
+        scout.close(NOW);
+
+        let record = scout.ledger().matchups.record(YOUR_LEADER, LEADER).unwrap();
+        assert_eq!((record.wins, record.losses), (2, 2));
+        assert_eq!(record.win_rate(), Some(0.5));
     }
 
     #[test]

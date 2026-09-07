@@ -56,33 +56,32 @@ optcg-companion/
 - Python 3.10+ (for mock stream / vision scripts)
 - Linux: `libwebkit2gtk-4.1-dev`, `libappindicator3-dev`, `librsvg2-dev`, `patchelf`
 
-## Quick Start (MacBook)
-
-GitHub is only the source host — opening the website is not the app.
-
-See **[docs/MAC_RUN.md](docs/MAC_RUN.md)** for the full Mac walkthrough.
+## Open the app
 
 ```bash
-npm run install:all
-cd browser-companion && npm install && npm run build && cd ..
-
-# Real native HUD (required) — NOT npm run dev:ui
-cd src-ui && npm run tauri:dev
+./start
 ```
 
-You should get a desktop window titled **OPTCG Companion HUD**.  
-A browser tab on `localhost:1420` alone means the frontend-only Vite server is running.
+That is the whole command. It installs anything missing, opens the **OPTCG Companion** window, and plays demo cards into it. First launch compiles Rust and can take several minutes.
 
-Optional mock stream (second terminal):
+A real OneSimulator match:
 
 ```bash
-python3 scripts/mock_stream.py
+./start onesimulator
 ```
+
+Then in Chrome: remove every old Companion card, Load unpacked → the `browser-companion` folder (not `dist`). The card should say version 0.2.5. A label on the game page says whether it is reading. The HUD says **In queue** while you wait, with your name and leader.
+
+Walkthrough, real-match setup, and what success looks like: **[docs/MAC_RUN.md](docs/MAC_RUN.md)**.
+
+No display? `./start --terminal` prints the same HUD in the shell.
 
 ## Individual Commands
 
 | Command | Description |
 |---------|-------------|
+| `./start` | Open the HUD with demo cards (this is the one to use) |
+| `npm start` | Same as `./start` |
 | `npm run dev` | Tauri app + mock stream concurrently |
 | `npm run dev:ui` | Vite frontend only (port 1420) |
 | `npm run dev:stream` | Python mock event broadcaster |
@@ -107,7 +106,9 @@ Inject events as JSON over WebSocket or write to monitored log files:
 - **Deck Collection** — Save multiple decks, and choose per side whether a deck
   is read from play or taken from a saved list (see below)
 - **Scouting** — Learns opponents' decks and pace across games (see below)
+- **Matchup** — Records how your deck actually fares against each leader
 - **Ask the Coach** — Streaming chat grounded in the live board (see below)
+- **Terminal HUD** — `optcg-companion --terminal` prints the same panels in a shell
 - **Connectivity Bar** — WebSocket, file monitor, latency, event count
 - **Click-Through Toggle** — OS-level transparent overlay mode
 
@@ -169,6 +170,16 @@ drawn from cards they have played, explicitly not a list anyone confirmed, and
 never grounds for saying a card is in their hand right now. Once you attach
 their real list the report disappears, since an estimate of a deck held in full
 is noise. Withholding decks with the sharing pills withholds this too.
+
+## Matchup
+
+Scouting says what they play. The **Matchup** panel says what happens when your
+fifty meet theirs — wins and losses per pairing of leaders, recorded as games
+finish. Nothing in the observation protocol announces a winner, so a result is
+inferred from life reaching zero, and only when that side was previously seen
+with life to lose. A game that never concluded is filed as unfinished rather
+than guessed at. Five finished games are required before a matchup is called
+favourable, even, or rough.
 
 ## Ask the Coach
 

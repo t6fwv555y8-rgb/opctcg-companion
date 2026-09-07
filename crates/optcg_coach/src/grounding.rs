@@ -20,6 +20,8 @@ pub struct DeckContext {
     pub opponent_list_standing: ListStanding,
     /// What earlier games against this leader add up to, when there were any.
     pub opponent_scouting: Option<ScoutingBrief>,
+    /// Your own deck's record in this matchup, when it has played it.
+    pub matchup: Option<MatchupBrief>,
     pub plan: Option<String>,
     pub vs_opponent: Option<String>,
 }
@@ -42,6 +44,22 @@ pub struct ScoutingBrief {
     pub notes: Vec<String>,
     /// Copies the map can name, against the fifty in a deck.
     pub mapped_copies: u32,
+}
+
+/// Your own deck's record against this leader.
+///
+/// The one piece of context here that is not inference. Wins and losses are
+/// what actually happened, so the coach is allowed to lean on them — but only
+/// as far as the sample goes, which is why the standing arrives already graded
+/// rather than as a bare percentage for the model to over-read.
+#[derive(Debug, Clone, Default)]
+pub struct MatchupBrief {
+    pub wins: u32,
+    pub losses: u32,
+    /// `too early to call`, `favourable`, `even`, or `rough`.
+    pub standing: String,
+    /// Plain statements of what was measured.
+    pub notes: Vec<String>,
 }
 
 /// How far a side's deck list can be trusted.
@@ -434,6 +452,14 @@ pub fn build_context(
             ));
             context.push("Scouting report", scouting_readout(scouting));
         }
+
+        if let Some(matchup) = decks.matchup.as_ref() {
+            sink(CoachEvent::tool(
+                "matchup_record",
+                format!("{}-{} in this matchup", matchup.wins, matchup.losses),
+            ));
+            context.push("Matchup record", matchup_readout(matchup));
+        }
     }
 
     // Name what was held back, or the model fills the gap by inventing a board.
@@ -496,6 +522,33 @@ fn scouting_readout(scouting: &ScoutingBrief) -> String {
     if !scouting.notes.is_empty() {
         lines.push(format!("Measured: {}", scouting.notes.join(" ")));
     }
+
+    lines.join("\n")
+}
+
+/// The matchup record, framed so a small sample cannot be read as a verdict.
+fn matchup_readout(matchup: &MatchupBrief) -> String {
+    let finished = matchup.wins + matchup.losses;
+    let mut lines = vec![format!(
+        "Your deck is {}-{} against this leader across {} finished game{}, \
+         which makes the matchup {}. These are real results, not estimates.",
+        matchup.wins,
+        matchup.losses,
+        finished,
+        if finished == 1 { "" } else { "s" },
+        matchup.standing
+    )];
+
+    if !matchup.notes.is_empty() {
+        lines.push(format!("Measured: {}", matchup.notes.join(" ")));
+    }
+
+    lines.push(
+        "Use this to set the plan, not to predict this game. A losing record \
+         means the default line has not been working — say what to do \
+         differently. Never tell the player they are likely to lose."
+            .to_string(),
+    );
 
     lines.join("\n")
 }
@@ -1173,6 +1226,27 @@ mod tests {
             "a single game must not read as plural evidence: {prompt}"
         );
         assert!(prompt.contains("thin"));
+    }
+
+    #[test]
+    fn a_matchup_record_reaches_the_briefing_with_its_standing() {
+        let prompt = prompt_for(&DeckContext {
+            matchup: Some(MatchupBrief {
+                wins: 6,
+                losses: 2,
+                standing: "favourable".into(),
+                notes: vec!["You are 6-2 in 8 finished games.".into()],
+            }),
+            ..Default::default()
+        });
+
+        assert!(prompt.contains("## Matchup record"));
+        assert!(prompt.contains("6-2"));
+        assert!(prompt.contains("favourable"));
+        assert!(
+            prompt.contains("Never tell the player they are likely to lose"),
+            "a losing record must not become a prediction: {prompt}"
+        );
     }
 
     #[test]

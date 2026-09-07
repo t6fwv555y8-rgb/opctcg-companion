@@ -1,8 +1,8 @@
 use crate::dto::ObservationStatusDto;
 use crate::dto::{
     ConnectionStatusDto, DeckCollectionDto, DeckInfoDto, DeckOrigin, GameStateDto, KnownCardDto,
-    OverlaySettings, PastedDeckDto, SavedDeckDto, ScoutedCardDto, ScoutingReportDto,
-    StateUpdatePayload,
+    MatchupReportDto, OverlaySettings, PastedDeckDto, SavedDeckDto, ScoutedCardDto,
+    ScoutingReportDto, StateUpdatePayload,
 };
 use optcg_database::Database;
 use optcg_rules::{
@@ -10,7 +10,7 @@ use optcg_rules::{
     DeckStrategyCoach, MctsConfig, MctsEngine, PastedDeckList, RulesEngine, SavedDeck, Side,
     MAX_DECKS,
 };
-use optcg_scouting::{DeckMap, Scout, ScoutingLedger, StrategyRead};
+use optcg_scouting::{DeckMap, MatchupRead, Scout, ScoutingLedger, StrategyRead};
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -304,6 +304,47 @@ impl AppState {
                 })
                 .collect(),
             notes: read.map(|read| read.notes).unwrap_or_default(),
+        })
+    }
+
+    /// Your deck's record against a leader, shaped for the HUD.
+    ///
+    /// Unlike the deck map, this is not merged with the game under way: the
+    /// current game has no result yet, and it is the one being played.
+    pub fn matchup_report(
+        &self,
+        your_leader: &str,
+        their_leader: &str,
+    ) -> Option<MatchupReportDto> {
+        if your_leader.is_empty() || their_leader.is_empty() {
+            return None;
+        }
+        let read = {
+            let scout = self.scout.read();
+            let record = scout.ledger().matchups.record(your_leader, their_leader)?;
+            MatchupRead::from_record(record)?
+        };
+
+        // The stored name is the simulator's deck label, often blank; the
+        // leader's own card name is the better fallback.
+        let leader_name = if read.their_leader_name.trim().is_empty() {
+            self.repo()
+                .get_by_id(&read.their_leader)
+                .map(|def| def.name)
+                .unwrap_or_else(|_| read.their_leader.clone())
+        } else {
+            read.their_leader_name.clone()
+        };
+
+        Some(MatchupReportDto {
+            their_leader_id: read.their_leader.clone(),
+            their_leader_name: leader_name,
+            wins: read.wins,
+            losses: read.losses,
+            unfinished: read.unfinished,
+            standing: read.standing.label().to_string(),
+            win_rate: read.win_rate,
+            notes: read.notes,
         })
     }
 
@@ -853,6 +894,10 @@ impl AppState {
             .then(|| self.scouting_report(&opponent_deck.leader_id))
             .flatten();
 
+        // Shown whatever the deck sources say: knowing their list does not tell
+        // you how your own deck has gone against it.
+        let matchup = self.matchup_report(&your_deck.leader_id, &opponent_deck.leader_id);
+
         StateUpdatePayload {
             game_state: GameStateDto::from(&*gs),
             connection,
@@ -866,6 +911,7 @@ impl AppState {
             pasted_deck,
             deck_collection,
             scouting,
+            matchup,
             latency_ms,
             observation,
         }
@@ -1217,6 +1263,39 @@ mod tests {
             state.scouting_report("OP17-079").is_none(),
             "sitting on a default position is not a game played"
         );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_finished_game_shows_up_in_the_matchup_payload() {
+        let dir = temp_data_dir("matchup-win");
+        let (state, board) = app_state_with_board(&dir);
+        {
+            let mut gs = board.write();
+            gs.game_id = uuid::Uuid::from_u128(1);
+            gs.turn_number = 6;
+            gs.player_one_mut().leader.card_id = "ST01-001".into();
+            gs.player_two_mut().leader.card_id = "OP17-079".into();
+            gs.player_two_mut().characters = vec![optcg_core::CardInstance::new(
+                "OP17-080",
+                1,
+                optcg_core::Zone::Character,
+            )];
+            gs.player_one_mut().life = 3;
+            gs.player_two_mut().life = 5;
+        }
+        state.scout_position();
+        board.write().player_two_mut().life = 0;
+        state.scout_position();
+        state.close_scouting_game();
+
+        let report = state
+            .matchup_report("ST01-001", "OP17-079")
+            .expect("a finished game belongs to a matchup");
+        assert_eq!((report.wins, report.losses), (1, 0));
+        assert_eq!(report.standing, "too early to call");
+        assert!(state.build_update_payload(None).matchup.is_some());
 
         std::fs::remove_dir_all(&dir).ok();
     }

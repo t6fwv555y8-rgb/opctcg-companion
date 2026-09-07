@@ -10,6 +10,9 @@ pub struct BrowserGameSnapshot {
     pub turn: Option<u32>,
     pub phase: Option<String>,
     pub active_player: Option<String>,
+    /// `queue`, `lobby`, or `match` when the page can say where the player is.
+    #[serde(default)]
+    pub page_state: Option<String>,
     #[serde(rename = "self")]
     pub self_player: Option<BrowserPlayerSnapshot>,
     pub opponent: Option<BrowserPlayerSnapshot>,
@@ -25,6 +28,9 @@ pub struct BrowserPlayerSnapshot {
     pub rested_don: Option<u8>,
     /// Leader card ID when visible.
     pub leader_id: Option<String>,
+    /// Simulator display name for this player, when the page shows one.
+    #[serde(default)]
+    pub player_name: Option<String>,
     /// Deck name from UI when detectable.
     pub deck_name: Option<String>,
     /// Unique known card IDs for this player (visible zones only).

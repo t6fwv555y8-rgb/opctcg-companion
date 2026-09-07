@@ -30,7 +30,8 @@ pub mod types;
 pub use auto::{AutoDecision, AutoTrigger, AutoTriggerConfig, AUTO_QUESTION};
 pub use grounding::{
     build_context, estimate_counters, fingerprint, is_decision_point, ContextScope,
-    CounterEstimate, DeckContext, GroundedContext, ListStanding, ScoutingBrief, SYSTEM_PROMPT,
+    CounterEstimate, DeckContext, GroundedContext, ListStanding, MatchupBrief, ScoutingBrief,
+    SYSTEM_PROMPT,
 };
 pub use offline::OfflineProvider;
 pub use openai::{OpenAiConfig, OpenAiProvider, DEFAULT_BASE_URL, DEFAULT_MODEL};

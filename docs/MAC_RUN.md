@@ -1,118 +1,86 @@
-# Run on MacBook (HUD, not browser)
+# Open the app
 
-GitHub only stores the code. Opening the repo in a browser is **not** the app.
+GitHub is only the source. The app is a desktop window named **OPTCG Companion**.
 
-The real companion is a **native macOS window** titled **OPTCG Companion HUD**.  
-If you only see `localhost:1420` in Chrome/Safari, you started the **frontend only**.
+## First time (once)
 
-## 1. Install tools (once)
+1. Install Xcode tools, Rust, and Node — paste these, one at a time:
 
 ```bash
 xcode-select --install
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-# restart Terminal, then:
-rustc --version
-node --version   # need 18+
 ```
 
-## 2. Clone and install
+Close Terminal and open a new one, then:
+
+```bash
+brew install node
+```
+
+Skip `brew` if `node -v` already prints 18 or higher.
+
+2. Get the code (skip if you already cloned it):
 
 ```bash
 cd ~/Desktop
 git clone https://github.com/t6fwv555y8-rgb/opctcg-companion.git
-cd opctcg-companion
-git pull
-
-npm run install:all
-cd browser-companion && npm install && npm run build && cd ..
 ```
 
-## 3. Start the real HUD (required command)
-
-From the **repo root** (`opctcg-companion` folder that contains `Cargo.toml`):
-
-```bash
-cd ~/Desktop/opctcg-companion/src-ui
-npm run tauri:dev
-```
-
-First run compiles Rust and can take **5–15 minutes**. Wait until you see a desktop window.
-
-**Success looks like:** a normal macOS app window named **OPTCG Companion HUD** (Dock icon appears).
-
-**Failure looks like:** only a browser tab at `http://localhost:1420` — that is Vite UI only, not the companion backend.
-
-## 4. Smoke-test with mock data
-
-**Order matters:** the HUD must already be running. The mock script connects *to* the HUD; it is not a server.
-
-Terminal 1 (keep running):
-
-```bash
-cd ~/Desktop/opctcg-companion/src-ui
-npm run tauri:dev
-```
-
-Terminal 2:
+## Every time you want to use it
 
 ```bash
 cd ~/Desktop/opctcg-companion
-python3 -m pip install --user websockets
-python3 scripts/mock_stream.py
+./start
 ```
 
-If you see `Install websockets` / `Missing Python package`, run the `pip install` line above.
+Wait for a window titled **OPTCG Companion**. The first launch compiles Rust and can take several minutes. Leave that Terminal open. Demo cards will move on their own.
 
-If you see `Waiting for HUD WebSocket` / `Connection refused`, the Tauri app is not up yet — wait until the HUD window is open, then retry.
+`Ctrl-C` in that Terminal stops the app.
 
-In the HUD, select source **Mock** (or Auto). State should update.
+## What you should see
 
-## 5. OneSimulator (live)
+- A small dark window, not a browser tab
+- **Mock Game · LIVE** at the top
+- The **Play** tab updates as the board does: what to do now, then a line after each play settles
+- Decks, Scouting, Matchup, and Coach panels filling in as the demo plays
 
-1. Keep the HUD running (`tauri:dev`).
-2. Chrome → `chrome://extensions` → Developer mode → **Load unpacked** → select folder:
-   `~/Desktop/opctcg-companion/browser-companion`
-3. Open https://onesimulator.slidingcodes.com and enter a match.
-4. HUD source → **OneSimulator**.
+A tab at `localhost:1420` means the window never opened — quit that tab and run `./start` again. Chrome is not the app.
 
-## Commands that are NOT the full app
+If nothing appears, leave the Terminal open. The first compile can sit there for several minutes. If you already tried once, a leftover process on port 1420 will block the window — `./start` now clears that port.
 
-| Command | What it does |
-|---------|----------------|
-| `npm run dev:ui` | Browser-only Vite — **not** the HUD |
-| `npm run build` | Builds JS assets only |
-| Opening GitHub in Safari/Chrome | Source viewing only |
-
-## If the window still does not appear / keeps crashing
-
-1. Pull latest:
-   ```bash
-   cd ~/Desktop/opctcg-companion
-   git pull
-   ```
-2. Run from Terminal so you can see the crash reason:
-   ```bash
-   cd ~/Desktop/opctcg-companion/src-ui
-   npm run tauri:dev
-   ```
-3. Copy the **last 30–50 lines** of Terminal output (especially lines with `panic`, `error`, `failed`, `SIG`).
-
-Common causes already fixed in recent commits:
-- Missing `~/Library/Application Support/optcg-companion/` data directory (first-launch SQLite crash)
-- Auto-detect fighting for ports before Mock is ready
-
-Also try:
-```bash
-# free ports if a previous run left them busy
-lsof -i :1420 -i :9002 -i :9003
-# kill leftovers if needed, then retry tauri:dev
-```
-
-## Confirm you are in the repo root
+## Play a OneSimulator match
 
 ```bash
-pwd
-ls Cargo.toml src-ui src-tauri browser-companion
+cd ~/Desktop/opctcg-companion
+./start onesimulator
 ```
 
-All four must exist.
+Leave that Terminal open. Then **once**, in **Chrome** (not Safari):
+
+1. Go to `chrome://extensions`
+2. Turn **Developer mode** on
+3. Remove every **OPTCG Companion** / **OPTCG Companion Bridge** card
+4. **Load unpacked** → `Desktop/opctcg-companion/browser-companion`  
+   (the folder that contains `background.js` and `manifest.json` — not `dist`)
+5. Confirm the card says version **0.2.5**
+6. Open https://onesimulator.slidingcodes.com and enter a match
+
+If Chrome’s error page shows `dist/bridge.js` or `ws://127.0.0.1:9003`, that is the old extension. Remove it and load the folder above.
+
+A label in the bottom-right of the game tells you what is happening:
+
+- **Companion is reading this match** — working
+- **Start the app first** — the HUD window is not running
+- **enter a match** — you are still on the lobby
+
+If the extension was already loaded: on the extension card click **Errors → Clear all**, then **Reload**, then **refresh the OneSimulator tab**. Chrome keeps old `content.js` errors on that card until you clear them. The on-page label should say `Companion 0.2.5` when the new reader is actually running.
+
+Keep the HUD on **Play**. While you are in queue the top bar says **In queue** and shows your name and leader — that means it is reading. In a match it shows both players' names and leaders, plus life and the next move. After a play settles, a short strategy line lands under **As you go**.
+
+## No window, only a terminal
+
+```bash
+./start --terminal
+```
+
+Same panels, printed in the shell. In a second Terminal: `python3 scripts/mock_stream.py`

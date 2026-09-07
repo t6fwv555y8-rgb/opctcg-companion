@@ -18,6 +18,8 @@ pub struct GameStateDto {
     pub event_sequence: u64,
     pub last_event: Option<LastEventInfo>,
     pub timestamp: String,
+    #[serde(default)]
+    pub page_state: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,6 +107,25 @@ pub struct ScoutingReportDto {
     pub notes: Vec<String>,
 }
 
+/// How your deck has actually fared against this leader, for the HUD.
+///
+/// Finished games only. A game in progress has no result to report, and the
+/// current one is exactly the game the player is trying to win.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MatchupReportDto {
+    pub their_leader_id: String,
+    pub their_leader_name: String,
+    pub wins: u32,
+    pub losses: u32,
+    /// Games that ended without a readable result.
+    pub unfinished: u32,
+    /// `too_early`, `favourable`, `even`, or `rough`.
+    pub standing: String,
+    /// Share of finished games won, absent until a game has finished.
+    pub win_rate: Option<f32>,
+    pub notes: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScoutedCardDto {
     pub card_id: String,
@@ -157,6 +178,8 @@ pub struct PlayerStateDto {
     #[serde(default)]
     pub deck_name: String,
     #[serde(default)]
+    pub player_name: String,
+    #[serde(default)]
     pub known_cards: Vec<String>,
 }
 
@@ -194,6 +217,7 @@ impl From<&PlayerState> for PlayerStateDto {
                 })
                 .collect(),
             deck_name: p.deck_name.clone(),
+            player_name: p.player_name.clone(),
             known_cards: p.known_cards.clone(),
         }
     }
@@ -212,6 +236,7 @@ impl From<&GameState> for GameStateDto {
             event_sequence: state.event_sequence,
             last_event: state.last_event.clone(),
             timestamp: state.timestamp.to_rfc3339(),
+            page_state: state.page_state.clone(),
         }
     }
 }
@@ -279,6 +304,9 @@ pub struct StateUpdatePayload {
     /// What earlier games say about the opponent's deck, when there were any.
     #[serde(default)]
     pub scouting: Option<ScoutingReportDto>,
+    /// How your deck has gone against this leader before, when it has.
+    #[serde(default)]
+    pub matchup: Option<MatchupReportDto>,
     pub latency_ms: u64,
     pub observation: Option<ObservationStatusDto>,
 }
