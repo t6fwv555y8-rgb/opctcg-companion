@@ -30,9 +30,19 @@ function notifyStatus(): void {
 }
 
 export function connectBridge(): void {
-  if (ws?.readyState === WebSocket.OPEN) return;
+  if (ws?.readyState === WebSocket.OPEN || ws?.readyState === WebSocket.CONNECTING) {
+    return;
+  }
 
-  ws = new WebSocket(BRIDGE_WS);
+  try {
+    ws = new WebSocket(BRIDGE_WS);
+  } catch (err) {
+    lastError = "HUD is not listening yet";
+    scheduleReconnect();
+    notifyStatus();
+    return;
+  }
+
   ws.onopen = () => {
     connected = true;
     lastError = null;
@@ -41,22 +51,25 @@ export function connectBridge(): void {
   };
   ws.onclose = () => {
     connected = false;
+    if (!lastError) lastError = "HUD is not listening yet";
     scheduleReconnect();
     notifyStatus();
   };
   ws.onerror = () => {
-    lastError = "Bridge connection error";
-    scheduleReconnect();
+    // onclose follows; keep the message, do not schedule twice.
+    lastError = "HUD is not listening yet";
     notifyStatus();
   };
 }
 
 function scheduleReconnect(): void {
   if (reconnectTimer !== null) return;
-  reconnectTimer = window.setTimeout(() => {
+  // Service workers have no `window`. Using it here used to crash the
+  // extension the first time the HUD was not already up.
+  reconnectTimer = globalThis.setTimeout(() => {
     reconnectTimer = null;
     connectBridge();
-  }, 3000);
+  }, 3000) as unknown as number;
 }
 
 function validateSnapshot(snapshot: BrowserGameSnapshot): string | null {
