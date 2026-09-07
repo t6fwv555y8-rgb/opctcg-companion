@@ -52,17 +52,21 @@ cd ~/Desktop/opctcg-companion
 ./start onesimulator
 ```
 
-While the window compiles, in **Chrome** (not Safari):
+Leave that Terminal open. Then **once**, in **Chrome** (not Safari):
 
 1. Go to `chrome://extensions`
-2. Turn **Developer mode** on (top right)
-3. **Load unpacked** → choose `~/Desktop/opctcg-companion/browser-companion`
-   (the folder that contains `manifest.json`)
-4. Open https://onesimulator.slidingcodes.com and enter a match
+2. Turn **Developer mode** on
+3. Remove any old **OPTCG Companion Bridge**
+4. **Load unpacked** → `Desktop/opctcg-companion/browser-companion`
+5. Open https://onesimulator.slidingcodes.com and enter a match
 
-The extension icon should say **ON**. The HUD should say **OneSimulator · LIVE**. Life, DON, and the board will follow the game.
+A label in the bottom-right of the game tells you what is happening:
 
-Safari cannot load this extension. Use Chrome or Edge.
+- **Companion is reading this match** — working
+- **Start the app first** — the HUD window is not running
+- **enter a match** — you are still on the lobby
+
+If the extension was already loaded, click reload, then refresh the OneSimulator tab.
 
 ## No window, only a terminal
 

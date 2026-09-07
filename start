@@ -50,14 +50,7 @@ if [[ "$MODE" == "mock" || "$TERMINAL" -eq 1 ]]; then
   fi
 fi
 
-if [[ "$MODE" == "onesimulator" ]]; then
-  if [[ ! -d browser-companion/node_modules ]]; then
-    say "Installing the Chrome extension (once)…"
-    (cd browser-companion && npm install)
-  fi
-  say "Building the Chrome extension…"
-  (cd browser-companion && npm run build)
-fi
+# The OneSimulator extension is two plain JS files. No build step.
 
 export OPTCG_SOURCE="$MODE"
 
@@ -82,8 +75,8 @@ if [[ "$MODE" == "onesimulator" ]]; then
   say "       $ROOT/browser-companion"
   say "  3. Open a match:  https://onesimulator.slidingcodes.com"
   say ""
-  say "The extension badge should read ON once you are in a game."
-  say "The HUD should say OneSimulator · LIVE."
+  say "A label in the bottom-right of the game says if it is working."
+  say "If you already loaded the old extension, remove it, then Load unpacked again."
   say ""
   if command -v open >/dev/null 2>&1; then
     open "https://onesimulator.slidingcodes.com" 2>/dev/null || true
