@@ -5,10 +5,13 @@
 //! sightings, so the fifth game against a leader starts with four games of
 //! evidence instead of nothing.
 
+use crate::matchup::{FinishedGame, LifeTrack, MatchupLedger, Outcome};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-pub const LEDGER_VERSION: u32 = 1;
+/// Bumped when matchup records joined the file. Older files load: every field
+/// added since is defaulted.
+pub const LEDGER_VERSION: u32 = 2;
 
 /// Cap on remembered leaders. Reached only by someone who has played hundreds
 /// of distinct matchups, and it keeps the file from growing without limit.
@@ -61,6 +64,16 @@ pub struct OpenGame {
     pub started_at: String,
     pub sightings: Vec<Sighting>,
     pub tempo: Tempo,
+    /// Your own leader, needed to file the result under a matchup rather than
+    /// just against an opponent. Defaulted so files written before matchup
+    /// records existed still load.
+    #[serde(default)]
+    pub your_leader_id: String,
+    #[serde(default)]
+    pub your_leader_name: String,
+    /// Life on both sides, from which the result is inferred.
+    #[serde(default)]
+    pub life: LifeTrack,
 }
 
 impl OpenGame {
@@ -72,6 +85,9 @@ impl OpenGame {
             started_at: now.to_string(),
             sightings: Vec::new(),
             tempo: Tempo::default(),
+            your_leader_id: String::new(),
+            your_leader_name: String::new(),
+            life: LifeTrack::default(),
         }
     }
 
@@ -82,6 +98,23 @@ impl OpenGame {
     /// happened.
     pub fn is_substantive(&self) -> bool {
         !self.sightings.is_empty()
+    }
+
+    /// Whether this belongs in the matchup record.
+    ///
+    /// Looser than `is_substantive` by design. A game that ended in a decided
+    /// result is a game you played even if the opponent's cards went
+    /// unobserved, and requiring sightings would drop those — biasing the
+    /// record towards whichever kind of game happens to show more cards.
+    /// An idle HUD still cannot qualify: it never sees life fall from a
+    /// positive reading to zero.
+    pub fn counts_as_played(&self) -> bool {
+        self.is_substantive() || self.life.outcome().is_some()
+    }
+
+    /// The result this game reached, if it reached one.
+    pub fn outcome(&self) -> Option<Outcome> {
+        self.life.outcome()
     }
 
     /// Note `copies` of a card visible on `turn`.
@@ -228,6 +261,10 @@ pub struct ScoutingLedger {
     /// starts, which is the only moment we know it finished.
     #[serde(default)]
     pub open: Option<OpenGame>,
+    /// How your decks have fared against each leader. Defaulted so files
+    /// written before this existed still load.
+    #[serde(default)]
+    pub matchups: MatchupLedger,
 }
 
 impl Default for ScoutingLedger {
@@ -236,6 +273,7 @@ impl Default for ScoutingLedger {
             version: LEDGER_VERSION,
             profiles: Vec::new(),
             open: None,
+            matchups: MatchupLedger::default(),
         }
     }
 }
@@ -303,11 +341,26 @@ impl ScoutingLedger {
         self.open = Some(OpenGame::new(game_id, leader_id, leader_name, now));
     }
 
-    /// Fold the open game into its profile, if it saw anything.
+    /// Fold the open game into its profile and its matchup record.
     pub fn close_open_game(&mut self, now: &str) {
         let Some(game) = self.open.take() else {
             return;
         };
+        if game.counts_as_played() && !game.leader_id.is_empty() {
+            self.matchups.fold_in(
+                &FinishedGame {
+                    your_leader: game.your_leader_id.clone(),
+                    your_leader_name: game.your_leader_name.clone(),
+                    their_leader: game.leader_id.clone(),
+                    their_leader_name: game.leader_name.clone(),
+                    outcome: game.outcome(),
+                    your_life: game.life.your_last,
+                    their_life: game.life.their_last,
+                    last_turn: game.tempo.last_turn,
+                },
+                now,
+            );
+        }
         if !game.is_substantive() || game.leader_id.is_empty() {
             return;
         }
@@ -353,6 +406,34 @@ impl ScoutingLedger {
         if open.leader_name.is_empty() && !leader_name.is_empty() {
             open.leader_name = leader_name.to_string();
         }
+    }
+
+    /// Note which of your leaders is playing this game.
+    ///
+    /// Separate from `begin_game` because your leader, like theirs, is often
+    /// read a beat after the game id is.
+    pub fn record_your_leader(&mut self, leader_id: &str, leader_name: &str) {
+        let Some(open) = self.open.as_mut() else {
+            return;
+        };
+        if !leader_id.is_empty() {
+            open.your_leader_id = leader_id.to_string();
+        }
+        if open.your_leader_name.is_empty() && !leader_name.is_empty() {
+            open.your_leader_name = leader_name.to_string();
+        }
+    }
+
+    /// Take a life reading for both sides in the open game.
+    pub fn record_life(&mut self, your_life: u32, their_life: u32) {
+        if let Some(open) = self.open.as_mut() {
+            open.life.observe(your_life, their_life);
+        }
+    }
+
+    /// The result the open game has reached, if any.
+    pub fn open_outcome(&self) -> Option<Outcome> {
+        self.open.as_ref().and_then(OpenGame::outcome)
     }
 
     /// Note `copies` of a card visible on `turn` in the open game.
@@ -412,6 +493,7 @@ impl ScoutingLedger {
         for profile in &mut self.profiles {
             profile.cards.truncate(MAX_CARDS_PER_PROFILE);
         }
+        self.matchups.prune();
     }
 }
 
