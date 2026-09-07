@@ -80,6 +80,8 @@ pub enum ObservationEvent {
     AttackObserved {
         attacker: Option<CardInstanceId>,
         attacker_card_id: Option<String>,
+        #[serde(default)]
+        attacker_player: Option<PlayerId>,
         target: Option<AttackTarget>,
         observed_power: Option<u32>,
         confidence: f32,

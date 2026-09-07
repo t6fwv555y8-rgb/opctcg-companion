@@ -54,6 +54,20 @@ pub struct BrowserCombatSnapshot {
     pub attacker: Option<ObservedCard>,
     pub target: Option<ObservedCard>,
     pub displayed_power: Option<u32>,
+    /// `self` / `opponent` when the page can say who owns the attacker.
+    #[serde(default)]
+    pub attacker_player: Option<String>,
+    /// `self` / `opponent` when the page can say who is being attacked.
+    #[serde(default)]
+    pub target_player: Option<String>,
+    #[serde(default)]
+    pub target_is_leader: Option<bool>,
+    #[serde(default)]
+    pub blocker_offered: Option<bool>,
+    #[serde(default)]
+    pub blocker_id: Option<String>,
+    #[serde(default)]
+    pub active: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]

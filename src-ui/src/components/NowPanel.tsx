@@ -1,5 +1,7 @@
+import { battleDoThis } from "../battleDoThis";
 import type {
   CombatAnalysis,
+  CombatDoThis,
   CombatState,
   DeckStrategyBrief,
   StrategyRecommendation,
@@ -14,6 +16,7 @@ interface Props {
   deckStrategy: DeckStrategyBrief | null;
   combat: CombatState | null;
   analysis: CombatAnalysis | null;
+  combatCoach?: CombatDoThis | null;
   paused: boolean;
   /// Latest unprompted coach line, if one has landed.
   coachLine: string | null;
@@ -30,6 +33,7 @@ export function NowPanel({
   deckStrategy,
   combat,
   analysis,
+  combatCoach,
   paused,
   coachLine,
   coachBusy,
@@ -42,15 +46,21 @@ export function NowPanel({
       : pageState === "lobby"
         ? "In lobby — queue a match and this panel will follow."
         : "Waiting for a readable position.";
-  const line =
-    strategy?.action.description?.trim() ||
-    phaseCoach?.trim() ||
-    waiting;
-  const steps = deckStrategy?.this_turn.slice(0, 3) ?? [];
-  const alts = options
-    .filter((opt) => opt.action.description?.trim() !== line)
-    .slice(0, 3);
-  const fighting = Boolean(combat?.active || analysis);
+  const battle = combatCoach ?? battleDoThis(combat, analysis);
+  const fighting = Boolean(battle || combat?.active || analysis);
+  const line = fighting
+    ? battle?.line || phaseCoach?.trim() || waiting
+    : strategy?.action.description?.trim() ||
+      phaseCoach?.trim() ||
+      waiting;
+  const steps = fighting
+    ? (battle?.steps?.length ? battle.steps : []).slice(0, 3)
+    : (deckStrategy?.this_turn.slice(0, 3) ?? []);
+  const alts = fighting
+    ? []
+    : options
+        .filter((opt) => opt.action.description?.trim() !== line)
+        .slice(0, 3);
 
   return (
     <div className="flex flex-col gap-3">

@@ -388,12 +388,23 @@ pub fn build_context(
         context.push("Opponent counter range", counters.readout());
 
         sink(CoachEvent::status("Checking the current phase"));
-        let phase_coach = RulesEngine::phase_coach(state);
-        context.push("Phase guidance", phase_coach);
+        let combat_analysis = if state.combat.active {
+            CombatMath::analyze_current_combat(state, repo)
+        } else {
+            None
+        };
+        if let Some(battle) = CombatMath::do_this(state, combat_analysis.as_ref()) {
+            context.push("Do this now", battle.line.clone());
+            if !battle.steps.is_empty() {
+                context.push("Battle sequence", battle.steps.join(" → "));
+            }
+        } else {
+            context.push("Phase guidance", RulesEngine::phase_coach(state));
+        }
 
         if state.combat.active {
             sink(CoachEvent::status("Running combat math"));
-            if let Some(analysis) = CombatMath::analyze_current_combat(state, repo) {
+            if let Some(analysis) = combat_analysis.as_ref() {
                 sink(CoachEvent::tool(
                     "combat_math",
                     format!(
@@ -401,7 +412,7 @@ pub fn build_context(
                         analysis.survival_status, analysis.required_counter
                     ),
                 ));
-                context.push("Combat math", combat_readout(&analysis));
+                context.push("Combat math", combat_readout(analysis));
             }
         }
 

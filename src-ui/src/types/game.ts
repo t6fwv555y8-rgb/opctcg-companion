@@ -189,7 +189,9 @@ export interface BoardCardDto {
 export interface CombatState {
   active: boolean;
   attacker_id: string | null;
+  attacker_player?: number | null;
   target_id: string | null;
+  target_player?: number | null;
   target_is_leader: boolean;
   blocker_offered: boolean;
   blocker_id: string | null;
@@ -257,6 +259,11 @@ export interface CombatCalculation {
   survives: boolean;
 }
 
+export interface CombatDoThis {
+  line: string;
+  steps: string[];
+}
+
 export interface CombatAnalysis {
   calculation: CombatCalculation;
   survival_status: SurvivalStatus;
@@ -300,6 +307,7 @@ export interface StateUpdatePayload {
   game_state: GameStateDto;
   connection: ConnectionStatusDto;
   combat_analysis: CombatAnalysis | null;
+  combat_coach?: CombatDoThis | null;
   strategy: StrategyRecommendation | null;
   options?: StrategyRecommendation[];
   phase_coach?: string;

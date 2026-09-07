@@ -271,7 +271,9 @@ fn combat_block(payload: &StateUpdatePayload) -> String {
 }
 
 fn coach_block(payload: &StateUpdatePayload) -> String {
-    let hint = if !payload.phase_coach.is_empty() {
+    let hint = if let Some(battle) = payload.combat_coach.as_ref() {
+        battle.line.as_str()
+    } else if !payload.phase_coach.is_empty() {
         payload.phase_coach.as_str()
     } else {
         payload

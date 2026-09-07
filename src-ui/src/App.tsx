@@ -123,6 +123,7 @@ export default function App() {
                 deckStrategy={bridge.snapshot?.deck_strategy ?? null}
                 combat={combat}
                 analysis={bridge.snapshot?.combat_analysis ?? null}
+                combatCoach={bridge.snapshot?.combat_coach ?? null}
                 paused={
                   bridge.observation?.analysis?.mode === "paused" ||
                   bridge.observation?.hud_state === "lost"

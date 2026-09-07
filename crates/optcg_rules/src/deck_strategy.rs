@@ -464,6 +464,11 @@ fn matchup_plan(you: &DeckProfile, opp: &DeckProfile) -> String {
 }
 
 fn turn_priorities(state: &GameState, you: &DeckProfile, _opp: &DeckProfile) -> Vec<String> {
+    if state.combat.active {
+        if let Some(battle) = crate::combat_math::CombatMath::do_this(state, None) {
+            return battle.steps;
+        }
+    }
     let you_p = &state.players[state.active_player as usize];
     let opp_p = &state.players[(1 - state.active_player) as usize];
     let arch = archetype_hint(you);
