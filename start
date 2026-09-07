@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# Open the OPTCG Companion. One command, one window, demo cards moving.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+cd "$ROOT"
+
+TERMINAL=0
+if [[ "${1:-}" == "--terminal" || "${1:-}" == "hud" ]]; then
+  TERMINAL=1
+fi
+
+say() { printf '%s\n' "$*"; }
+die() { printf 'Could not start: %s\n' "$*" >&2; exit 1; }
+
+need_cmd() {
+  local name="$1" hint="$2"
+  command -v "$name" >/dev/null 2>&1 || die "$hint"
+}
+
+say "OPTCG Companion"
+say ""
+
+need_cmd node "Node.js is missing. On a Mac: brew install node"
+need_cmd npm  "npm is missing. Reinstall Node.js, then run ./start again."
+need_cmd python3 "Python 3 is missing. On a Mac: brew install python"
+need_cmd cargo "Rust is missing. Paste this, close Terminal, reopen it, then run ./start again:
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+
+if [[ ! -d node_modules || ! -d src-ui/node_modules ]]; then
+  say "Installing dependencies (once)…"
+  npm install
+  (cd src-ui && npm install)
+fi
+
+if ! python3 -c "import websockets" >/dev/null 2>&1; then
+  say "Installing the Python package the demo stream needs…"
+  python3 -m pip install --user websockets >/dev/null
+fi
+
+export OPTCG_SOURCE="${OPTCG_SOURCE:-mock}"
+
+say ""
+if [[ "$TERMINAL" -eq 1 ]]; then
+  say "Printing the HUD in this terminal. Ctrl-C stops it."
+  say "In another terminal, from this same folder:  python3 scripts/mock_stream.py"
+  say ""
+  exec cargo run -p optcg-companion -- --terminal
+fi
+
+say "A window named OPTCG Companion is about to open."
+say "The first launch compiles Rust and can take several minutes — leave this running."
+say "Demo cards will start moving once the window is up. Ctrl-C stops everything."
+say ""
+say "Playing a real match later: in the window, Game Source → OneSimulator."
+say ""
+
+exec npx --yes concurrently -k -n hud,demo -c blue,green \
+  "npm run dev:tauri" \
+  "python3 scripts/mock_stream.py --interval 2"

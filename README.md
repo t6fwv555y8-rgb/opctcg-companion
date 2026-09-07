@@ -56,41 +56,24 @@ optcg-companion/
 - Python 3.10+ (for mock stream / vision scripts)
 - Linux: `libwebkit2gtk-4.1-dev`, `libappindicator3-dev`, `librsvg2-dev`, `patchelf`
 
-## Quick Start (MacBook)
-
-GitHub is only the source host — opening the website is not the app.
-
-See **[docs/MAC_RUN.md](docs/MAC_RUN.md)** for the full Mac walkthrough.
+## Open the app
 
 ```bash
-npm run install:all
-cd browser-companion && npm install && npm run build && cd ..
-
-# Real native HUD (required) — NOT npm run dev:ui
-cd src-ui && npm run tauri:dev
+./start
 ```
 
-You should get a desktop window titled **OPTCG Companion HUD**.  
-A browser tab on `localhost:1420` alone means the frontend-only Vite server is running.
+That is the whole command. It installs anything missing, opens the **OPTCG Companion** window, and plays demo cards into it. First launch compiles Rust and can take several minutes.
 
-No display? The same HUD prints in the terminal:
+Walkthrough, real-match setup, and what success looks like: **[docs/MAC_RUN.md](docs/MAC_RUN.md)**.
 
-```bash
-OPTCG_SOURCE=mock cargo run -p optcg-companion -- --terminal
-# second terminal
-python3 scripts/mock_stream.py
-```
-
-Optional mock stream (second terminal) when using the desktop window:
-
-```bash
-python3 scripts/mock_stream.py
-```
+No display? `./start --terminal` prints the same HUD in the shell.
 
 ## Individual Commands
 
 | Command | Description |
 |---------|-------------|
+| `./start` | Open the HUD with demo cards (this is the one to use) |
+| `npm start` | Same as `./start` |
 | `npm run dev` | Tauri app + mock stream concurrently |
 | `npm run dev:ui` | Vite frontend only (port 1420) |
 | `npm run dev:stream` | Python mock event broadcaster |

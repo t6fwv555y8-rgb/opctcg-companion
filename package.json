@@ -4,7 +4,8 @@
   "private": true,
   "description": "Real-time OPTCG Simulator companion HUD overlay",
   "scripts": {
-    "dev": "concurrently -k -n tauri,stream -c blue,green \"npm run dev:tauri\" \"npm run dev:stream\"",
+    "start": "bash ./start",
+    "dev": "OPTCG_SOURCE=mock concurrently -k -n tauri,stream -c blue,green \"npm run dev:tauri\" \"npm run dev:stream\"",
     "dev:tauri": "cd src-ui && npm run tauri:dev",
     "dev:stream": "python3 scripts/mock_stream.py --interval 2",
     "dev:ui": "cd src-ui && npm run dev",

@@ -47,6 +47,12 @@ export default function App() {
       <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain px-2 pb-2">
         <div className="flex flex-col gap-2">
           <SourceStatusHud observation={bridge.observation} debug={DEBUG} />
+          {bridge.observation?.selection === "mock" && (
+            <p className="px-1 text-[10px] leading-snug text-slate-500">
+              Demo is running — cards move on their own. For a real match,
+              scroll to Game Source and pick OneSimulator.
+            </p>
+          )}
 
           <TurnIndicator
             gameState={gs}
