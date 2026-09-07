@@ -47,7 +47,7 @@ function CombatStrip({ analysis }: { analysis: CombatAnalysis }) {
 
   return (
     <div
-      className={`flex items-center justify-between gap-3 rounded-xl px-3 py-2 text-[13px] ${tone}`}
+      className={`mt-2 flex items-center justify-between gap-3 rounded-lg px-2.5 py-1.5 text-[13px] ${tone}`}
     >
       <p className="min-w-0 tabular-nums">
         <span className="font-semibold text-sky-300">
@@ -64,7 +64,7 @@ function CombatStrip({ analysis }: { analysis: CombatAnalysis }) {
         )}
       </p>
       {tag && (
-        <span className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.14em] text-current/80">
+        <span className="shrink-0 text-[11px] font-medium text-current/80">
           {tag}
         </span>
       )}
@@ -90,16 +90,23 @@ function RosterColumn({
         <p className="mt-1.5 text-[12px] text-slate-600">Empty</p>
       ) : (
         <ul className="mt-1.5 space-y-1">
-          {rows.map((row, i) => (
-            <li
-              key={`${i}-${row}`}
-              className={`text-[12px] leading-snug ${
-                i === 0 ? "font-medium text-slate-200" : "text-slate-400"
-              }`}
-            >
-              {row}
-            </li>
-          ))}
+          {rows.map((row, i) => {
+            const meta = /\bDON\b|\bin hand\b|\brest\b/.test(row) && !/\(ST/i.test(row);
+            return (
+              <li
+                key={`${i}-${row}`}
+                className={`text-[12px] leading-snug ${
+                  meta
+                    ? "text-slate-500"
+                    : i === 0
+                      ? "font-medium text-slate-200"
+                      : "text-slate-400"
+                }`}
+              >
+                {row}
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>
@@ -148,18 +155,18 @@ export function NowPanel({
   const notes = Boolean(coachLine || coachBusy || coachError);
 
   return (
-    <div className="flex flex-col gap-3">
-      {blockerOpen && (
-        <div className="rounded-xl border border-amber-400/25 bg-amber-500/10 px-3 py-1.5 text-[12px] text-amber-100">
-          Blocker window — decide now
-        </div>
-      )}
-
-      {analysis && <CombatStrip analysis={analysis} />}
-
+    <div className="flex flex-col gap-4">
       <section className="hud-panel px-3.5 py-3">
-        <div className="hud-title text-hud-accent">Do this</div>
-        <p className="mt-1.5 text-[15px] leading-snug text-white">{line}</p>
+        <div className="flex items-center justify-between gap-2">
+          <div className="hud-title text-hud-accent">Do this</div>
+          {blockerOpen && (
+            <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-100">
+              Blocker window
+            </span>
+          )}
+        </div>
+        {analysis && <CombatStrip analysis={analysis} />}
+        <p className="mt-2 text-[15px] leading-snug text-white">{line}</p>
         {paused && (
           <p className="mt-2 text-[12px] text-hud-warn">
             The read is shaky — treat this as provisional.
