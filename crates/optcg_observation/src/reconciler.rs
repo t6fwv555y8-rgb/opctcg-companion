@@ -119,6 +119,33 @@ impl ObservationReconciler {
                     confidence,
                 });
             }
+            if let Some((player_idx, cards)) = parse_hand_raw(raw) {
+                if let Some(p) = session.state.player_mut(player_idx) {
+                    p.hand = cards
+                        .iter()
+                        .map(|id| {
+                            optcg_core::CardInstance::new(
+                                id.clone(),
+                                player_idx,
+                                optcg_core::Zone::Hand,
+                            )
+                        })
+                        .collect();
+                    if !cards.is_empty() {
+                        p.hand_count = cards.len() as u32;
+                    }
+                    for id in &cards {
+                        p.note_card(id);
+                    }
+                }
+                return Ok(ReconcileOutcome {
+                    applied: true,
+                    game_events: vec![],
+                    corrected: false,
+                    rejection_reason: None,
+                    confidence,
+                });
+            }
         }
 
         if let ObservationEvent::TurnObserved { player, .. } = obs {
@@ -520,6 +547,24 @@ mod tests {
     }
 
     #[test]
+    fn hand_structured_raw_replaces_the_current_hand() {
+        let mut reconciler = ObservationReconciler::default();
+        let mut session = GameSession::new(ObservationSource::BrowserSimulator);
+        let obs = ObservationEvent::StructuredRaw {
+            raw: "HAND|PLAYER_1|ST01-007,ST01-013".into(),
+            source: ObservationSource::BrowserSimulator,
+            confidence: 0.95,
+        };
+        let outcome = reconciler.reconcile(&mut session, &obs).unwrap();
+        assert!(outcome.applied);
+        let you = session.state.player_one();
+        assert_eq!(you.hand.len(), 2);
+        assert_eq!(you.hand[0].card_id, "ST01-007");
+        assert_eq!(you.hand[1].card_id, "ST01-013");
+        assert!(you.known_cards.iter().any(|c| c == "ST01-007"));
+    }
+
+    #[test]
     fn note_card_structured_raw_applied() {
         let mut reconciler = ObservationReconciler::default();
         let mut session = GameSession::new(ObservationSource::BrowserSimulator);
@@ -574,7 +619,10 @@ mod tests {
         };
         assert!(reconciler.reconcile(&mut session, &obs).unwrap().applied);
         assert!(session.state.combat.active);
-        assert_eq!(session.state.combat.attacker_id.as_deref(), Some("ST01-012"));
+        assert_eq!(
+            session.state.combat.attacker_id.as_deref(),
+            Some("ST01-012")
+        );
         assert_eq!(session.state.combat.attacker_player, Some(1));
         assert_eq!(session.state.combat.target_player, Some(0));
         assert!(session.state.combat.target_is_leader);
@@ -636,6 +684,27 @@ fn parse_deck_name_raw(raw: &str) -> Option<(u8, String)> {
         return None;
     }
     Some((idx, name.to_string()))
+}
+
+fn parse_hand_raw(raw: &str) -> Option<(u8, Vec<String>)> {
+    let parts: Vec<&str> = raw.splitn(3, '|').collect();
+    if parts.len() < 2 || parts[0] != "HAND" {
+        return None;
+    }
+    let idx = match parts[1] {
+        "PLAYER_1" | "P1" | "0" => 0u8,
+        "PLAYER_2" | "P2" | "1" => 1u8,
+        _ => return None,
+    };
+    let cards = parts
+        .get(2)
+        .unwrap_or(&"")
+        .split(',')
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(|id| id.to_string())
+        .collect();
+    Some((idx, cards))
 }
 
 fn parse_note_card_raw(raw: &str) -> Option<(u8, String)> {
