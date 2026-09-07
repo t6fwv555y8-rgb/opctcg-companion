@@ -58,7 +58,7 @@ fn main() {
     ));
     let manager = pipeline.manager();
 
-    let app_state = AppState::new(database, Arc::clone(&game_state), data_dir);
+    let app_state = AppState::new(database, Arc::clone(&game_state), data_dir.clone());
 
     tauri::Builder::default()
         .manage(app_state)
@@ -66,7 +66,7 @@ fn main() {
             pipeline: Arc::clone(&pipeline),
             manager: Arc::clone(&manager),
         })
-        .manage(coach::CoachRuntime::from_env())
+        .manage(coach::CoachRuntime::new(data_dir))
         .invoke_handler(tauri::generate_handler![
             commands::get_game_state,
             commands::get_connection_status,
@@ -104,6 +104,9 @@ fn main() {
             coach::coach_status,
             coach::coach_set_auto,
             coach::coach_set_context,
+            coach::coach_llm_settings,
+            coach::coach_set_llm,
+            coach::coach_clear_llm,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { CalibrationPanel } from "./components/CalibrationPanel";
+import { CoachLlmPanel } from "./components/CoachLlmPanel";
 import { CoachChatPanel } from "./components/CoachChatPanel";
 import { ConnectionStatus } from "./components/ConnectionStatus";
 import { DebugPanel } from "./components/DebugPanel";
@@ -151,6 +152,7 @@ export default function App() {
 
             {tab === "setup" && (
               <div className="flex flex-col gap-3">
+                <CoachLlmPanel />
                 <SourceSelector
                   observation={bridge.observation}
                   onSelect={bridge.setObservationSource}

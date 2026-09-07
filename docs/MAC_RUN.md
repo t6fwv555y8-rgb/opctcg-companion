@@ -78,6 +78,8 @@ If the extension was already loaded: on the extension card click **Errors → Cl
 
 Keep the HUD on **Play**. While you are in queue the top bar says **In queue** and shows your name and leader — that means it is reading. In a match it shows both players' names and leaders, plus life and the next move. After a play settles, a short strategy line lands under **As you go**.
 
+To make **Ask** conversational instead of the offline rules engine: **Setup → Coach model**, paste an OpenAI API key from [platform.openai.com](https://platform.openai.com/api-keys), **Save and use**. The badge on Ask should change from `Offline coach` to `gpt-4o-mini`.
+
 ## No window, only a terminal
 
 ```bash
