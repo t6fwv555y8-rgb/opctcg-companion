@@ -115,6 +115,7 @@ fn deck_context(state: &AppState) -> DeckContext {
         opponent_list: list_lines(&opponent),
         opponent_list_standing: standing(&opponent),
         opponent_scouting: scouting_brief(state, &opponent),
+        matchup: matchup_brief(state, &yours, &opponent),
         plan: strategy.as_ref().map(|brief| brief.your_plan.clone()),
         vs_opponent: strategy.as_ref().map(|brief| brief.vs_opponent.clone()),
     }
@@ -169,6 +170,25 @@ fn scouting_brief(
         likely_cards,
         notes: read.map(|read| read.notes).unwrap_or_default(),
         mapped_copies: map.mapped_copies(),
+    })
+}
+
+/// Your deck's record against this leader, when any games have finished.
+fn matchup_brief(
+    state: &AppState,
+    yours: &crate::dto::DeckInfoDto,
+    opponent: &crate::dto::DeckInfoDto,
+) -> Option<optcg_coach::MatchupBrief> {
+    let report = state.matchup_report(&yours.leader_id, &opponent.leader_id)?;
+    // A record of unfinished games only has no result the coach can lean on.
+    if report.wins + report.losses == 0 {
+        return None;
+    }
+    Some(optcg_coach::MatchupBrief {
+        wins: report.wins,
+        losses: report.losses,
+        standing: report.standing,
+        notes: report.notes,
     })
 }
 
@@ -616,6 +636,33 @@ mod tests {
             deck_context(&state).opponent_scouting.is_none(),
             "an estimate of a deck we hold in full is noise"
         );
+    }
+
+    #[test]
+    fn a_finished_matchup_reaches_the_deck_context() {
+        let (state, board) = app_state_with_board();
+        {
+            let mut gs = board.write();
+            gs.game_id = uuid::Uuid::from_u128(1);
+            gs.player_one_mut().leader.card_id = "ST01-001".into();
+            gs.player_two_mut().leader.card_id = "OP17-079".into();
+            gs.player_two_mut().characters = vec![optcg_core::CardInstance::new(
+                "OP17-080",
+                1,
+                optcg_core::Zone::Character,
+            )];
+            gs.player_two_mut().life = 5;
+        }
+        state.scout_position();
+        board.write().player_two_mut().life = 0;
+        state.scout_position();
+        state.close_scouting_game();
+
+        let matchup = deck_context(&state)
+            .matchup
+            .expect("a finished game should reach the coach");
+        assert_eq!((matchup.wins, matchup.losses), (1, 0));
+        assert_eq!(matchup.standing, "too early to call");
     }
 
     /// A directory of its own per call. Tests in a crate share one process and

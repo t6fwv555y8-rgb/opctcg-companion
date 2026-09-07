@@ -278,7 +278,10 @@ mod tests {
         let (first, first_cancel) = session.begin_turn("q1").unwrap();
         let (second, _) = session.begin_turn("q2").unwrap();
 
-        assert!(first_cancel.is_cancelled(), "superseded turn must be cancelled");
+        assert!(
+            first_cancel.is_cancelled(),
+            "superseded turn must be cancelled"
+        );
         assert_eq!(session.active_turn(), Some(second));
         assert_ne!(first, second);
     }
@@ -294,10 +297,17 @@ mod tests {
             "the stale turn should be refused"
         );
         assert!(
-            session.history().iter().all(|m| m.content != "stale answer"),
+            session
+                .history()
+                .iter()
+                .all(|m| m.content != "stale answer"),
             "stale text must not enter history"
         );
-        assert_eq!(session.active_turn(), Some(second), "the live turn survives");
+        assert_eq!(
+            session.active_turn(),
+            Some(second),
+            "the live turn survives"
+        );
     }
 
     fn position(digest: &str) -> StateFingerprint {
@@ -445,7 +455,11 @@ mod tests {
         session.begin_turn("what now?").unwrap();
 
         let prompt = session.prompt_with("BRIEFING".into());
-        assert_eq!(prompt.len(), 2, "system briefing plus the recorded question");
+        assert_eq!(
+            prompt.len(),
+            2,
+            "system briefing plus the recorded question"
+        );
         assert_eq!(prompt[1].content, "what now?");
         assert_eq!(
             prompt.iter().filter(|m| m.content == "what now?").count(),
@@ -458,10 +472,16 @@ mod tests {
     fn supersession_is_distinct_from_cancellation() {
         let mut session = CoachSession::new();
         let (first, _) = session.begin_turn("q1").unwrap();
-        assert!(!session.is_superseded(first), "the only turn is not superseded");
+        assert!(
+            !session.is_superseded(first),
+            "the only turn is not superseded"
+        );
 
         session.begin_turn("q2").unwrap();
-        assert!(session.is_superseded(first), "a newer turn supersedes the old one");
+        assert!(
+            session.is_superseded(first),
+            "a newer turn supersedes the old one"
+        );
 
         let mut cancelled = CoachSession::new();
         let (turn, _) = cancelled.begin_turn("q").unwrap();

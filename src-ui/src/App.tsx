@@ -6,6 +6,7 @@ import { CoachChatPanel } from "./components/CoachChatPanel";
 import { CombatPanel } from "./components/CombatPanel";
 import { ConnectionStatus } from "./components/ConnectionStatus";
 import { DeckPanel } from "./components/DeckPanel";
+import { MatchupPanel } from "./components/MatchupPanel";
 import { ScoutingPanel } from "./components/ScoutingPanel";
 import { GameStatePanel } from "./components/GameStatePanel";
 import { SourceSelector } from "./components/SourceSelector";
@@ -86,6 +87,7 @@ export default function App() {
                   bridge.snapshot?.opponent_deck?.origin === "attached"
                 }
               />
+              <MatchupPanel report={bridge.snapshot?.matchup ?? null} />
               <BlockerWarning
                 combat={combat}
                 analysis={bridge.snapshot?.combat_analysis ?? null}

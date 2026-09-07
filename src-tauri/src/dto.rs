@@ -105,6 +105,25 @@ pub struct ScoutingReportDto {
     pub notes: Vec<String>,
 }
 
+/// How your deck has actually fared against this leader, for the HUD.
+///
+/// Finished games only. A game in progress has no result to report, and the
+/// current one is exactly the game the player is trying to win.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MatchupReportDto {
+    pub their_leader_id: String,
+    pub their_leader_name: String,
+    pub wins: u32,
+    pub losses: u32,
+    /// Games that ended without a readable result.
+    pub unfinished: u32,
+    /// `too_early`, `favourable`, `even`, or `rough`.
+    pub standing: String,
+    /// Share of finished games won, absent until a game has finished.
+    pub win_rate: Option<f32>,
+    pub notes: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScoutedCardDto {
     pub card_id: String,
@@ -279,6 +298,9 @@ pub struct StateUpdatePayload {
     /// What earlier games say about the opponent's deck, when there were any.
     #[serde(default)]
     pub scouting: Option<ScoutingReportDto>,
+    /// How your deck has gone against this leader before, when it has.
+    #[serde(default)]
+    pub matchup: Option<MatchupReportDto>,
     pub latency_ms: u64,
     pub observation: Option<ObservationStatusDto>,
 }

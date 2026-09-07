@@ -89,7 +89,8 @@ fn compose_answer(briefing: &str, question: &str) -> String {
 
     if let Some(options) = sections.get("Ranked options") {
         if let Some(best) = options.lines().next() {
-            let line = best.trim_start_matches(|c: char| c.is_ascii_digit() || c == '.' || c == ' ');
+            let line =
+                best.trim_start_matches(|c: char| c.is_ascii_digit() || c == '.' || c == ' ');
             parts.push(format!("Best line right now: {line}"));
         }
     }
@@ -174,10 +175,7 @@ Play a character and attack the leader.
 Your deck: Red Luffy Aggro (leader ST01-001)";
 
     fn messages(question: &str) -> Vec<ChatMessage> {
-        vec![
-            ChatMessage::system(BRIEFING),
-            ChatMessage::user(question),
-        ]
+        vec![ChatMessage::system(BRIEFING), ChatMessage::user(question)]
     }
 
     #[tokio::test]
@@ -200,7 +198,10 @@ Your deck: Red Luffy Aggro (leader ST01-001)";
             .iter()
             .filter(|e| matches!(e, CoachEvent::TextDelta(_)))
             .count();
-        assert!(delta_count > 5, "expected incremental deltas, got {delta_count}");
+        assert!(
+            delta_count > 5,
+            "expected incremental deltas, got {delta_count}"
+        );
     }
 
     #[tokio::test]

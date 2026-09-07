@@ -516,4 +516,56 @@ mod tests {
         assert_eq!(Reliability::of(5), Reliability::Fair);
         assert_eq!(Reliability::of(6), Reliability::Solid);
     }
+
+    fn matchup(wins: u32, losses: u32) -> MatchupRecord {
+        use crate::matchup::{FinishedGame, MatchupLedger, Outcome};
+        let mut ledger = MatchupLedger::default();
+        for n in 0..(wins + losses) {
+            ledger.fold_in(
+                &FinishedGame {
+                    your_leader: "ST01-001".into(),
+                    your_leader_name: "Luffy".into(),
+                    their_leader: "OP17-079".into(),
+                    their_leader_name: "Loki".into(),
+                    outcome: Some(if n < wins {
+                        Outcome::Won
+                    } else {
+                        Outcome::Lost
+                    }),
+                    your_life: 3,
+                    their_life: 2,
+                    last_turn: 7,
+                },
+                "2026-01-01",
+            );
+        }
+        ledger.record("ST01-001", "OP17-079").unwrap().clone()
+    }
+
+    #[test]
+    fn four_wins_is_still_too_early_to_call() {
+        let read = MatchupRead::from_record(&matchup(4, 0)).unwrap();
+        assert_eq!(read.standing, Standing::TooEarly);
+        assert!(read.notes.iter().any(|n| n.contains("Too few games")));
+    }
+
+    #[test]
+    fn five_wins_reads_as_favourable() {
+        let read = MatchupRead::from_record(&matchup(5, 0)).unwrap();
+        assert_eq!(read.standing, Standing::Favourable);
+        assert_eq!(read.score(), "5-0");
+    }
+
+    #[test]
+    fn a_losing_record_of_five_reads_as_rough() {
+        let read = MatchupRead::from_record(&matchup(1, 4)).unwrap();
+        assert_eq!(read.standing, Standing::Rough);
+    }
+
+    #[test]
+    fn a_split_record_reads_as_even() {
+        let read = MatchupRead::from_record(&matchup(3, 3)).unwrap();
+        assert_eq!(read.standing, Standing::Even);
+        assert_eq!(read.win_rate, Some(0.5));
+    }
 }
