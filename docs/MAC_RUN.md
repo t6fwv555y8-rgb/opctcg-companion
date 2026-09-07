@@ -60,7 +60,7 @@ Leave that Terminal open. Then **once**, in **Chrome** (not Safari):
 3. Remove every **OPTCG Companion** / **OPTCG Companion Bridge** card
 4. **Load unpacked** → `Desktop/opctcg-companion/browser-companion`  
    (the folder that contains `background.js` and `manifest.json` — not `dist`)
-5. Confirm the card says version **0.2.2**
+5. Confirm the card says version **0.2.3**
 6. Open https://onesimulator.slidingcodes.com and enter a match
 
 If Chrome’s error page shows `dist/bridge.js` or `ws://127.0.0.1:9003`, that is the old extension. Remove it and load the folder above.

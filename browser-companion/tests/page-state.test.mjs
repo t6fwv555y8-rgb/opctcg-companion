@@ -8,5 +8,14 @@ test("the page reader can see a queue and a match", () => {
   assert.match(src, /page_state/);
   assert.match(src, /player_name/);
   assert.match(src, /In queue — companion is reading/);
-  assert.match(src, /searching for/);
+  assert.match(src, /searching/);
+});
+
+test("cardId survives a missing node so the queue screen cannot crash the reader", () => {
+  const start = src.indexOf("const CARD_ID");
+  const end = src.indexOf("\nfunction playerIds");
+  assert.notEqual(start, -1);
+  const cardId = new Function(`${src.slice(start, end)}; return cardId;`)();
+  assert.equal(cardId(null), null);
+  assert.equal(cardId(undefined), null);
 });

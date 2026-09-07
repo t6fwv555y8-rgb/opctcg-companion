@@ -5,7 +5,8 @@ const CARD_ID = /\b((?:OP|ST|EB|PRB|P)-\d{2}-\d{3}[A-Z]?)\b/i;
 const CARD_SRC = /\/cards\/(?:full|thumbnail)\/([^/.]+)\.webp/i;
 
 function cardId(el) {
-  const img = el.querySelector("img");
+  if (!el) return null;
+  const img = el.tagName === "IMG" ? el : el.querySelector?.("img");
   const fromSrc = img?.src?.match(CARD_SRC);
   if (fromSrc) return fromSrc[1].replace(/_/g, "-").toUpperCase();
   const fromAlt = img?.alt?.match(CARD_ID);
@@ -131,8 +132,8 @@ function pageState() {
   const queued =
     /queue|matchmaking/.test(href) ||
     /\b(in queue|queued)\b/i.test(text) ||
-    /searching for (an? )?(opponent|match|player)/i.test(text) ||
-    /finding (an? )?(opponent|match|player)/i.test(text) ||
+    /searching(\s+for|\.\.\.|…)/i.test(text) ||
+    /finding (an? )?(opponent|match|player|game)/i.test(text) ||
     /looking for (an? )?(opponent|match)/i.test(text) ||
     /waiting for (an? )?opponent/i.test(text) ||
     /matchmaking/i.test(text);
@@ -181,19 +182,31 @@ function playerName(playerId, isSelf) {
         me?.textContent,
     );
     if (n) return n;
+    for (const el of document.querySelectorAll(
+      "[data-player-name], [data-username], [data-display-name]",
+    )) {
+      const loose = cleanName(
+        el.getAttribute("data-player-name") ||
+          el.getAttribute("data-username") ||
+          el.getAttribute("data-display-name") ||
+          el.textContent,
+      );
+      if (loose) return loose;
+    }
   }
   return null;
 }
 
 function selectedLeaderId() {
-  return (
-    cardId(document.querySelector("[data-selected-leader]")) ||
-    cardId(
-      document.querySelector(
+  const selected =
+    document.querySelector("[data-selected-leader]") ||
+    document
+      .querySelector(
         '[aria-pressed="true"] img[src*="/cards/"], [data-selected="true"] img[src*="/cards/"]',
-      )?.closest("[data-card-zone], div") || document.createElement("div"),
-    )
-  );
+      )
+      ?.closest("[data-card-zone], div") ||
+    document.querySelector('[data-card-zone="leader"]');
+  return cardId(selected);
 }
 
 function player(playerId, isSelf) {
@@ -286,7 +299,14 @@ function paintStatus(text, ok) {
 }
 
 function send() {
-  const snapshot = readBoard();
+  let snapshot;
+  try {
+    snapshot = readBoard();
+  } catch (err) {
+    console.warn("[optcg-companion] page read failed", err);
+    paintStatus("Companion hit a page read error — refresh this tab", false);
+    return;
+  }
   const state = snapshot.page_state;
 
   if (!chrome.runtime?.id) {
