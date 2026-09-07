@@ -27,6 +27,12 @@ pub enum SurvivalStatus {
 pub struct CombatDoThis {
     pub line: String,
     pub steps: Vec<String>,
+    /// Compact labels for your leader, DON, and characters.
+    #[serde(default)]
+    pub you: Vec<String>,
+    /// Compact labels for their leader, DON, and characters.
+    #[serde(default)]
+    pub them: Vec<String>,
 }
 
 /// Extended combat analysis for HUD (includes legacy fields).
