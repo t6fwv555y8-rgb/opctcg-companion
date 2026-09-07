@@ -4,8 +4,8 @@ use optcg_coach::{
     key_hint, key_source, provider_from_config, resolve_config, AutoDecision, AutoTrigger,
     CancelReason, CancelToken, ChatMessage, ChatProvider, CoachError, CoachEvent, CoachSession,
     CoachStreamEvent, CoalescingSink, ContextScope, DeckContext, EventSink, FlushTicker,
-    ListStanding, LlmKeySource, LlmSettings, StateFingerprint, TurnKind, TurnSummary,
-    DEFAULT_FLUSH_INTERVAL_MS, SYSTEM_PROMPT,
+    ListStanding, LlmKeySource, LlmSettings, OfflineProvider, StateFingerprint, TurnKind,
+    TurnSummary, DEFAULT_FLUSH_INTERVAL_MS, SYSTEM_PROMPT,
 };
 use optcg_scouting::{DeckMap, StrategyRead};
 use parking_lot::Mutex;
@@ -138,7 +138,7 @@ pub struct CoachStatusDto {
     pub automatic: bool,
     /// True when board changes trigger reads on their own.
     pub auto_enabled: bool,
-        /// What the next turn will send to the model.
+    /// What the next turn will send to the model.
     pub context: ContextScope,
 }
 
@@ -408,19 +408,53 @@ async fn run_turn<G, F>(
             TurnSummary::complete(answer)
         }
         Err(error) => {
-            let mut guard = session.lock();
-            if guard.is_superseded(turn_id) {
-                tracing::debug!(turn_id, "dropping superseded coach turn");
-                return;
+            {
+                let guard = session.lock();
+                if guard.is_superseded(turn_id) {
+                    tracing::debug!(turn_id, "dropping superseded coach turn");
+                    return;
+                }
             }
-            guard.abandon_turn(turn_id);
-            drop(guard);
 
             match error {
-                CoachError::Cancelled => summarize_cancellation(&cancel),
+                CoachError::Cancelled => {
+                    session.lock().abandon_turn(turn_id);
+                    summarize_cancellation(&cancel)
+                }
+                e if e.is_quota_exhausted() && provider.is_live() => {
+                    tracing::warn!(
+                        error = %e,
+                        turn_id,
+                        "model has no credits; using the rules engine"
+                    );
+                    sink(CoachEvent::status(
+                        "OpenAI key has no credits — answering from the rules engine",
+                    ));
+                    match OfflineProvider::default()
+                        .stream_chat(&messages, &sink, &cancel)
+                        .await
+                    {
+                        Ok(answer) => {
+                            if !session.lock().finish_turn(turn_id, &answer) {
+                                tracing::debug!(turn_id, "dropping superseded coach turn");
+                                return;
+                            }
+                            TurnSummary::complete(answer)
+                        }
+                        Err(CoachError::Cancelled) => {
+                            session.lock().abandon_turn(turn_id);
+                            summarize_cancellation(&cancel)
+                        }
+                        Err(_) => {
+                            session.lock().abandon_turn(turn_id);
+                            TurnSummary::failed(e.user_message())
+                        }
+                    }
+                }
                 e => {
+                    session.lock().abandon_turn(turn_id);
                     tracing::warn!(error = %e, turn_id, "coach turn failed");
-                    TurnSummary::failed(e.to_string())
+                    TurnSummary::failed(e.user_message())
                 }
             }
         }

@@ -58,9 +58,9 @@ impl CancelToken {
             CancelReason::Stale => CANCELLED_AS_STALE,
         };
         // First reason wins, so a later cause cannot relabel why a turn ended.
-        let _ = self
-            .state
-            .compare_exchange(NOT_CANCELLED, encoded, Ordering::SeqCst, Ordering::SeqCst);
+        let _ =
+            self.state
+                .compare_exchange(NOT_CANCELLED, encoded, Ordering::SeqCst, Ordering::SeqCst);
         self.changed.send_replace(true);
     }
 
@@ -100,6 +100,50 @@ pub enum CoachError {
     Decode(String),
     #[error("cancelled")]
     Cancelled,
+}
+
+impl CoachError {
+    /// What the HUD should show. Never the raw JSON from the model API.
+    pub fn user_message(&self) -> String {
+        match self {
+            CoachError::Api { status, body } => describe_api_error(*status, body),
+            CoachError::NotConfigured(msg) => msg.clone(),
+            CoachError::Transport(_) => {
+                "Could not reach the model. Check the network, then ask again.".into()
+            }
+            CoachError::Decode(msg) => msg.clone(),
+            CoachError::Cancelled => "cancelled".into(),
+        }
+    }
+
+    /// True when the key is valid but the OpenAI account has nothing left to spend.
+    pub fn is_quota_exhausted(&self) -> bool {
+        matches!(self, CoachError::Api { status, body } if *status == 429 && quota_exhausted(body))
+    }
+}
+
+fn quota_exhausted(body: &str) -> bool {
+    let lower = body.to_ascii_lowercase();
+    lower.contains("insufficient_quota")
+        || lower.contains("credit_balance")
+        || lower.contains("no credits")
+}
+
+fn describe_api_error(status: u16, body: &str) -> String {
+    let lower = body.to_ascii_lowercase();
+    if status == 429 && quota_exhausted(body) {
+        return "This OpenAI key has no credits left. Add billing at platform.openai.com — Ask still answers from the rules engine.".into();
+    }
+    if status == 429 {
+        return "The model is rate-limited. Wait a few seconds and ask again.".into();
+    }
+    if status == 401 || lower.contains("invalid_api_key") || lower.contains("incorrect api key") {
+        return "That API key was rejected. Paste a new one on Setup.".into();
+    }
+    if status == 404 {
+        return "The model name on Setup was not found. Check the model field.".into();
+    }
+    format!("The model could not answer (HTTP {status}).")
 }
 
 pub type CoachResult<T> = Result<T, CoachError>;
@@ -176,7 +220,10 @@ mod tests {
         assert_eq!(clone.reason(), None);
 
         token.cancel();
-        assert!(clone.is_cancelled(), "cancellation must be visible to holders");
+        assert!(
+            clone.is_cancelled(),
+            "cancellation must be visible to holders"
+        );
         assert_eq!(clone.reason(), Some(CancelReason::User));
     }
 
@@ -190,6 +237,30 @@ mod tests {
             Some(CancelReason::Stale),
             "a later cause must not relabel why the turn ended"
         );
+    }
+
+    #[test]
+    fn quota_errors_do_not_show_the_raw_json() {
+        let error = CoachError::Api {
+            status: 429,
+            body: r#"{ "error": { "message": "You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.", "type": "insufficient_quota", "code": "credit_balance_exhausted" } }"#.into(),
+        };
+        assert!(error.is_quota_exhausted());
+        let shown = error.user_message();
+        assert!(shown.contains("no credits"), "{shown}");
+        assert!(!shown.contains("insufficient_quota"), "{shown}");
+        assert!(!shown.contains('{'), "{shown}");
+    }
+
+    #[test]
+    fn rejected_keys_point_at_setup() {
+        let error = CoachError::Api {
+            status: 401,
+            body: r#"{"error":{"code":"invalid_api_key"}}"#.into(),
+        };
+        let shown = error.user_message();
+        assert!(shown.contains("Setup"), "{shown}");
+        assert!(!shown.contains("invalid_api_key"), "{shown}");
     }
 
     #[tokio::test]

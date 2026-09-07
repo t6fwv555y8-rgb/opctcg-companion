@@ -297,7 +297,7 @@ export function CoachChatPanel() {
           )}
 
           {coach.error && (
-            <p className="text-[9px] text-hud-danger">{coach.error}</p>
+            <p className="text-[13px] leading-snug text-hud-danger">{coach.error}</p>
           )}
 
           {coach.status && (

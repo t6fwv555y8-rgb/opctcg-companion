@@ -113,8 +113,9 @@ export function CoachLlmPanel() {
       </div>
 
       <p className="mt-2 text-[11px] leading-relaxed text-slate-500">
-        Get a key at platform.openai.com → API keys. Local runners (Ollama, LM
-        Studio) can use any key and set the endpoint to their server.
+        Get a key at platform.openai.com → API keys. The key needs billing
+        credits or Ask falls back to the rules engine. Local runners (Ollama,
+        LM Studio) can use any key and set the endpoint to their server.
       </p>
     </section>
   );
