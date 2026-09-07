@@ -1,7 +1,7 @@
-// OPTCG Companion page reader 0.2.6
+// OPTCG Companion page reader 0.2.7
 // Reads the OneSimulator board and hands it to background.js.
 
-const VERSION = "0.2.6";
+const VERSION = "0.2.7";
 const CARD_ID = /\b((?:OP|ST|EB|PRB|P)-\d{2}-\d{3}[A-Z]?)\b/i;
 const CARD_SRC = /\/cards\/(?:full|thumbnail)\/([^/.]+)\.webp/i;
 
@@ -72,6 +72,20 @@ function handCount(playerId) {
   return n > 0 ? n : null;
 }
 
+function handCards(playerId) {
+  const cards = [];
+  document
+    .querySelectorAll(`[data-card-zone="hand"][data-card-player-id="${playerId}"]`)
+    .forEach((el) => {
+      const img = typeof el.querySelector === "function" ? el.querySelector("img") : null;
+      cards.push({
+        card_id: cardId(el),
+        name: (img && img.alt) || null,
+      });
+    });
+  return cards;
+}
+
 function don(playerId) {
   const field = document.querySelector(`[data-zone-anchor="${playerId}:donField"]`);
   if (!field) return { active: null, rested: null };
@@ -103,11 +117,9 @@ function board(playerId) {
   return cards;
 }
 
-function known(playerId, isSelf) {
+function known(playerId) {
   const ids = new Set();
-  const zones = isSelf
-    ? ["leader", "character", "stage", "trash", "hand"]
-    : ["leader", "character", "stage", "trash"];
+  const zones = ["leader", "character", "stage", "trash", "hand"];
   for (const zone of zones) {
     document
       .querySelectorAll(`[data-card-zone="${zone}"][data-card-player-id="${playerId}"]`)
@@ -231,11 +243,12 @@ function player(playerId, isSelf) {
   return {
     life: life(playerId),
     hand_count: handCount(playerId),
+    hand: handCards(playerId),
     active_don: d.active,
     rested_don: d.rested,
     leader_id: cardId(leaderEl || document.createElement("div")) || (isSelf ? selectedLeaderId() : null),
     player_name: playerName(playerId, isSelf),
-    known_cards: known(playerId, isSelf),
+    known_cards: known(playerId),
     board: cards,
   };
 }

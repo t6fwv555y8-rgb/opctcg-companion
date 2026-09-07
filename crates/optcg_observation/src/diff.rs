@@ -1,6 +1,4 @@
-use crate::bridge_protocol::{
-    BrowserCombatSnapshot, BrowserGameSnapshot, BrowserPlayerSnapshot,
-};
+use crate::bridge_protocol::{BrowserCombatSnapshot, BrowserGameSnapshot, BrowserPlayerSnapshot};
 use crate::confidence::ConfidenceConfig;
 use crate::types::{ObservationEvent, ObservationSource};
 use optcg_core::{AttackTarget, Phase, PlayerId, Zone};
@@ -82,7 +80,8 @@ impl SnapshotDiffer {
 
         if let Some(combat) = &snapshot.combat {
             if combat_signal(combat) {
-                let changed = prev_combat.map(combat_fingerprint) != Some(combat_fingerprint(combat));
+                let changed =
+                    prev_combat.map(combat_fingerprint) != Some(combat_fingerprint(combat));
                 if changed || prev.is_none() {
                     if let Some(attacker_card_id) =
                         combat.attacker.as_ref().and_then(|c| c.card_id.clone())
@@ -214,6 +213,31 @@ fn diff_player(
         }
     }
 
+    let hand_ids: Vec<String> = side
+        .hand
+        .iter()
+        .filter_map(|card| card.card_id.clone())
+        .collect();
+    let prev_hand_ids: Vec<String> = prev
+        .map(|p| {
+            p.hand
+                .iter()
+                .filter_map(|card| card.card_id.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+    if hand_ids != prev_hand_ids {
+        let label = match player {
+            PlayerId::Player1 => "PLAYER_1",
+            PlayerId::Player2 => "PLAYER_2",
+        };
+        events.push(ObservationEvent::StructuredRaw {
+            raw: format!("HAND|{label}|{}", hand_ids.join(",")),
+            source: ObservationSource::BrowserSimulator,
+            confidence,
+        });
+    }
+
     if let (Some(active), Some(rested)) = (side.active_don, side.rested_don) {
         let prev_don = prev.map(|p| (p.active_don, p.rested_don));
         if prev_don != Some((Some(active), Some(rested))) {
@@ -309,8 +333,16 @@ fn diff_player(
 
 fn combat_signal(combat: &BrowserCombatSnapshot) -> bool {
     combat.active == Some(true)
-        || combat.attacker.as_ref().and_then(|c| c.card_id.as_ref()).is_some()
-        || combat.target.as_ref().and_then(|c| c.card_id.as_ref()).is_some()
+        || combat
+            .attacker
+            .as_ref()
+            .and_then(|c| c.card_id.as_ref())
+            .is_some()
+        || combat
+            .target
+            .as_ref()
+            .and_then(|c| c.card_id.as_ref())
+            .is_some()
         || combat.displayed_power.is_some()
         || combat.blocker_offered == Some(true)
 }
@@ -635,6 +667,44 @@ mod tests {
         assert!(events.iter().any(|e| matches!(
             e,
             ObservationEvent::StructuredRaw { raw, .. } if raw == "COMBAT_RESOLVED"
+        )));
+    }
+
+    #[test]
+    fn named_hand_cards_emit_a_hand_event() {
+        let mut differ = SnapshotDiffer::new(ConfidenceConfig::default());
+        let snap = BrowserGameSnapshot {
+            timestamp: 1,
+            self_player: Some(BrowserPlayerSnapshot {
+                hand: vec![
+                    ObservedCard {
+                        card_id: Some("ST01-007".into()),
+                        ..Default::default()
+                    },
+                    ObservedCard {
+                        card_id: Some("ST01-013".into()),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }),
+            opponent: Some(BrowserPlayerSnapshot {
+                hand: vec![ObservedCard {
+                    card_id: Some("ST01-002".into()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let events = differ.diff(&snap);
+        assert!(events.iter().any(|e| matches!(
+            e,
+            ObservationEvent::StructuredRaw { raw, .. } if raw == "HAND|PLAYER_1|ST01-007,ST01-013"
+        )));
+        assert!(events.iter().any(|e| matches!(
+            e,
+            ObservationEvent::StructuredRaw { raw, .. } if raw == "HAND|PLAYER_2|ST01-002"
         )));
     }
 }

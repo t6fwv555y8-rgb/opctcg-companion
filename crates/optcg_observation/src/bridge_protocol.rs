@@ -24,6 +24,9 @@ pub struct BrowserGameSnapshot {
 pub struct BrowserPlayerSnapshot {
     pub life: Option<u8>,
     pub hand_count: Option<u8>,
+    /// Cards currently in this player's hand when the page shows their faces.
+    #[serde(default)]
+    pub hand: Vec<ObservedCard>,
     pub active_don: Option<u8>,
     pub rested_don: Option<u8>,
     /// Leader card ID when visible.

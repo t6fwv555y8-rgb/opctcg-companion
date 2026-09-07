@@ -288,7 +288,29 @@ impl<'a> Table<'a> {
         for body in &self.state.players[player].characters {
             rows.push(self.body_short(body));
         }
+        let named_hand: Vec<String> = self.state.players[player]
+            .hand
+            .iter()
+            .filter(|card| !card.card_id.is_empty())
+            .map(|card| self.hand_short(card))
+            .collect();
+        if !named_hand.is_empty() {
+            rows.push(format!("Hand: {}", named_hand.join("; ")));
+        }
         rows
+    }
+
+    fn hand_short(&self, card: &CardInstance) -> String {
+        let def = self.repo.and_then(|r| r.get_by_id(&card.card_id).ok());
+        let name = def
+            .as_ref()
+            .map(|d| d.name.as_str())
+            .unwrap_or(card.card_id.as_str());
+        let mut label = named(name, &card.card_id);
+        if let Some(counter) = def.as_ref().map(|d| d.counter).filter(|c| *c > 0) {
+            label.push_str(&format!(" · {} counter", fmt_power(counter)));
+        }
+        label
     }
 
     fn body_short(&self, body: &CardInstance) -> String {
@@ -670,5 +692,35 @@ mod tests {
             .them
             .iter()
             .any(|s| s.contains("Usopp") || s.contains("ST01-002")));
+    }
+
+    #[test]
+    fn roster_names_cards_in_both_hands() {
+        let db = Database::open_in_memory().unwrap();
+        AssetParser::seed_defaults(&db).unwrap();
+        let repo = CardRepository::new(&db);
+        let mut state = GameState::new();
+        state.phase = Phase::Main;
+        state.players[0]
+            .hand
+            .push(CardInstance::new("ST01-007", 0, Zone::Hand));
+        state.players[1]
+            .hand
+            .push(CardInstance::new("ST01-002", 1, Zone::Hand));
+        let plan = table_do_this(&state, &repo).unwrap();
+        assert!(
+            plan.you
+                .iter()
+                .any(|s| s.contains("ST01-007") || s.contains("Nami")),
+            "{:?}",
+            plan.you
+        );
+        assert!(
+            plan.them
+                .iter()
+                .any(|s| s.contains("ST01-002") || s.contains("Usopp")),
+            "{:?}",
+            plan.them
+        );
     }
 }

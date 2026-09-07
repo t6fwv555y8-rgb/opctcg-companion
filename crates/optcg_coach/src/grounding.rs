@@ -196,9 +196,8 @@ impl CounterEstimate {
             );
         }
         format!(
-            "Opponent holds {} cards. Cards they have revealed carry counters of {}. \
-             If every card in hand were their largest counter ({}), they could add at \
-             most {}. This is an upper bound from revealed cards, not their actual hand.",
+            "Opponent holds {} cards. Observed counters: {}. Largest single {}. \
+             Worst case if every remaining unknown card were that large: {}.",
             self.hand_size,
             self.observed_values
                 .iter()
@@ -214,18 +213,36 @@ impl CounterEstimate {
 /// Estimate the opponent's counter ceiling from cards they have revealed.
 pub fn estimate_counters(opponent: &PlayerState, repo: &CardRepository<'_>) -> CounterEstimate {
     let mut values: Vec<i32> = Vec::new();
+    let mut from_hand = false;
 
-    // One lookup per iteration: each `get_by_id` takes the database lock, so
-    // they must not be combined into a single expression.
-    for card_id in &opponent.known_cards {
-        let Ok(card) = repo.get_by_id(card_id) else {
+    // Prefer the cards actually sitting in their hand when the table shows them.
+    for card in &opponent.hand {
+        if card.card_id.is_empty() {
+            continue;
+        }
+        from_hand = true;
+        let Ok(def) = repo.get_by_id(&card.card_id) else {
             continue;
         };
-        if card.counter > 0 {
-            values.push(card.counter);
+        if def.counter > 0 {
+            values.push(def.counter);
         }
     }
 
+    if !from_hand {
+        // One lookup per iteration: each `get_by_id` takes the database lock, so
+        // they must not be combined into a single expression.
+        for card_id in &opponent.known_cards {
+            let Ok(card) = repo.get_by_id(card_id) else {
+                continue;
+            };
+            if card.counter > 0 {
+                values.push(card.counter);
+            }
+        }
+    }
+
+    let actual_total: i32 = values.iter().sum();
     values.sort_unstable();
     values.dedup();
     let max_single = values.last().copied().unwrap_or(0);
@@ -234,7 +251,11 @@ pub fn estimate_counters(opponent: &PlayerState, repo: &CardRepository<'_>) -> C
         hand_size: opponent.hand_count,
         observed_values: values,
         max_single,
-        worst_case_total: max_single * opponent.hand_count as i32,
+        worst_case_total: if from_hand {
+            actual_total
+        } else {
+            max_single * opponent.hand_count as i32
+        },
     }
 }
 
@@ -327,10 +348,18 @@ fn side_digest(player: &PlayerState) -> String {
     // Board order is an artifact of observation, not part of the position.
     board.sort_unstable();
 
+    let mut hand: Vec<String> = player
+        .hand
+        .iter()
+        .map(|card| card.card_id.clone())
+        .collect();
+    hand.sort_unstable();
+
     format!(
-        "L{} h{} d{}/{} ldr{}+{} [{}]",
+        "L{} h{}:{} d{}/{} ldr{}+{} [{}]",
         player.life,
         player.hand_count,
+        hand.join("+"),
         player.don_active,
         player.don_rested,
         player.leader.card_id,
@@ -347,12 +376,13 @@ during a live One Piece Card Game match.
 Ground every answer in the MATCH BRIEFING below. It is observed from the \
 player's simulator and is the only reliable source of board state. If the \
 briefing does not contain what you need, say what is missing instead of \
-inventing a board, a card, or an opponent's hand.
+inventing a board, a card, or a hand that was not listed.
 
 Answer like a coach mid-match: lead with the recommendation, then give the \
 short reason. Prefer concrete lines ('attack the leader with Zoro, hold Usopp \
-to block') over general theory. Be brief; the HUD is a narrow overlay. Never \
-claim to know hidden information such as the opponent's hand.";
+to block') over general theory. Be brief; the HUD is a narrow overlay. If the \
+briefing names cards in a hand, those cards were read from the table — use \
+them. If a hand is listed as not visible, do not invent its contents.";
 
 /// Run the read-only analysis tools and assemble the match briefing.
 ///
@@ -373,6 +403,10 @@ pub fn build_context(
         let board = board_readout(state);
         sink(CoachEvent::tool("board_readout", board_summary(state)));
         context.push("Board", board);
+
+        let hands = hands_readout(state, repo);
+        sink(CoachEvent::tool("hands_readout", hands_summary(state)));
+        context.push("Hands", hands);
 
         if let Some(actions) = recent_actions(state) {
             sink(CoachEvent::tool(
@@ -637,6 +671,84 @@ fn board_readout(state: &GameState) -> String {
     lines.join("\n")
 }
 
+fn hands_summary(state: &GameState) -> String {
+    format!(
+        "you {} · them {}",
+        hand_label(state.player_one()),
+        hand_label(state.player_two())
+    )
+}
+
+fn hand_label(player: &optcg_core::PlayerState) -> String {
+    let named = player
+        .hand
+        .iter()
+        .filter(|card| !card.card_id.is_empty())
+        .count();
+    if named > 0 {
+        format!("{named} named")
+    } else {
+        format!("{} hidden", player.hand_count)
+    }
+}
+
+fn hands_readout(state: &GameState, repo: &CardRepository<'_>) -> String {
+    format!(
+        "{}\n{}",
+        hand_readout("Your", state.player_one(), repo),
+        hand_readout("Their", state.player_two(), repo)
+    )
+}
+
+fn hand_readout(
+    whose: &str,
+    player: &optcg_core::PlayerState,
+    repo: &CardRepository<'_>,
+) -> String {
+    let cards: Vec<String> = player
+        .hand
+        .iter()
+        .filter(|card| !card.card_id.is_empty())
+        .map(|card| named_hand_card(&card.card_id, repo))
+        .collect();
+    if !cards.is_empty() {
+        let unknown = player.hand_count.saturating_sub(cards.len() as u32);
+        let extra = if unknown > 0 {
+            format!(" · {unknown} more not identified")
+        } else {
+            String::new()
+        };
+        return format!(
+            "{whose} hand (read from the table): {}{extra}.",
+            cards.join(", ")
+        );
+    }
+    if player.hand_count == 0 {
+        return format!("{whose} hand is empty.");
+    }
+    format!(
+        "{whose} hand has {} card{}, identities not visible.",
+        player.hand_count,
+        if player.hand_count == 1 { "" } else { "s" }
+    )
+}
+
+fn named_hand_card(id: &str, repo: &CardRepository<'_>) -> String {
+    let Ok(def) = repo.get_by_id(id) else {
+        return id.to_string();
+    };
+    let name = if def.name.is_empty() || def.name == id {
+        id.to_string()
+    } else {
+        format!("{} ({id})", def.name)
+    };
+    if def.counter > 0 {
+        format!("{name}, {} counter", def.counter)
+    } else {
+        name
+    }
+}
+
 fn side_readout(player: &optcg_core::PlayerState) -> String {
     let board = if player.characters.is_empty() {
         "empty board".to_string()
@@ -826,6 +938,10 @@ mod tests {
             "missing board section: {prompt}"
         );
         assert!(prompt.contains("life 3"), "own life missing: {prompt}");
+        assert!(
+            prompt.contains("## Hands"),
+            "missing hands section: {prompt}"
+        );
         assert!(prompt.contains("Red Luffy Aggro"));
         assert!(prompt.contains("4x Usopp (ST01-002)"));
         assert!(prompt.contains("Race with cheap attackers"));
@@ -1055,6 +1171,21 @@ mod tests {
             fingerprint(&drawn).digest,
             before.digest,
             "opponent hand size matters"
+        );
+
+        let mut new_card = base.clone();
+        new_card
+            .player_one_mut()
+            .hand
+            .push(optcg_core::CardInstance::new(
+                "ST01-007",
+                0,
+                optcg_core::Zone::Hand,
+            ));
+        assert_ne!(
+            fingerprint(&new_card).digest,
+            before.digest,
+            "a named card entering hand matters"
         );
 
         let mut fighting = base.clone();
@@ -1500,6 +1631,59 @@ mod tests {
         // Their attack on their own board is not your decision.
         state.combat.target_player = Some(1);
         assert!(!is_decision_point(&state));
+    }
+
+    #[test]
+    fn briefing_names_both_hands_when_the_table_shows_them() {
+        let db = db();
+        let repo = CardRepository::new(&db);
+        let (sink, recorder) = recording_sink();
+        let mut state = sample_state();
+        state
+            .player_one_mut()
+            .hand
+            .push(optcg_core::CardInstance::new(
+                "ST01-007",
+                0,
+                optcg_core::Zone::Hand,
+            ));
+        state
+            .player_two_mut()
+            .hand
+            .push(optcg_core::CardInstance::new(
+                "ST01-002",
+                1,
+                optcg_core::Zone::Hand,
+            ));
+        let prompt = build_context(
+            &state,
+            &repo,
+            &DeckContext::default(),
+            ContextScope::default(),
+            &sink,
+        )
+        .to_prompt();
+
+        assert!(prompt.contains("## Hands"), "{prompt}");
+        assert!(
+            prompt.contains("ST01-007") || prompt.to_lowercase().contains("nami"),
+            "your hand missing: {prompt}"
+        );
+        assert!(
+            prompt.contains("ST01-002") || prompt.to_lowercase().contains("usopp"),
+            "their hand missing: {prompt}"
+        );
+        assert!(
+            prompt.contains("read from the table"),
+            "must say these cards were observed: {prompt}"
+        );
+        assert!(
+            recorder
+                .events()
+                .iter()
+                .any(|e| matches!(e, CoachEvent::ToolRun(run) if run.tool == "hands_readout")),
+            "the HUD should see that hands were read"
+        );
     }
 
     #[test]
