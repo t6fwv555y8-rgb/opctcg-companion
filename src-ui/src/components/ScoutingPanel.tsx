@@ -3,6 +3,8 @@ import type { ScoutedCardDto, ScoutingReportDto } from "../types/game";
 
 interface Props {
   report: ScoutingReportDto | null;
+  /// Their real list is attached, so the report is withheld rather than absent.
+  listAttached: boolean;
 }
 
 /// How many cards to show before asking.
@@ -48,7 +50,7 @@ function CardRow({ card, games }: { card: ScoutedCardDto; games: number }) {
 }
 
 /// What we have worked out about the opponent's deck from watching them play.
-export function ScoutingPanel({ report }: Props) {
+export function ScoutingPanel({ report, listAttached }: Props) {
   const [expanded, setExpanded] = useState(false);
 
   if (!report) {
@@ -56,8 +58,9 @@ export function ScoutingPanel({ report }: Props) {
       <div className="hud-panel p-3">
         <div className="hud-title">Scouting</div>
         <p className="mt-1 text-[10px] leading-snug text-slate-500">
-          Nothing on this leader yet. Every game you play is recorded, and the
-          cards they show build up into a picture of their deck.
+          {listAttached
+            ? "Their list is attached, so there is nothing left to infer. Games are still recorded either way."
+            : "Nothing on this leader yet. Every game you play is recorded, and the cards they show build up into a picture of their deck."}
         </p>
       </div>
     );

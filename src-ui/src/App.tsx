@@ -80,7 +80,12 @@ export default function App() {
                 onRenameDeck={bridge.renameDeck}
                 onClearPaste={bridge.clearPastedDeck}
               />
-              <ScoutingPanel report={bridge.snapshot?.scouting ?? null} />
+              <ScoutingPanel
+                report={bridge.snapshot?.scouting ?? null}
+                listAttached={
+                  bridge.snapshot?.opponent_deck?.origin === "attached"
+                }
+              />
               <BlockerWarning
                 combat={combat}
                 analysis={bridge.snapshot?.combat_analysis ?? null}
