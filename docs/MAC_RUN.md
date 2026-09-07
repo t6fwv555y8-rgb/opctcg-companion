@@ -60,7 +60,7 @@ Leave that Terminal open. Then **once**, in **Chrome** (not Safari):
 3. Remove every **OPTCG Companion** / **OPTCG Companion Bridge** card
 4. **Load unpacked** → `Desktop/opctcg-companion/browser-companion`  
    (the folder that contains `background.js` and `manifest.json` — not `dist`)
-5. Confirm the card says version **0.2.3**
+5. Confirm the card says version **0.2.4**
 6. Open https://onesimulator.slidingcodes.com and enter a match
 
 If Chrome’s error page shows `dist/bridge.js` or `ws://127.0.0.1:9003`, that is the old extension. Remove it and load the folder above.
@@ -71,7 +71,7 @@ A label in the bottom-right of the game tells you what is happening:
 - **Start the app first** — the HUD window is not running
 - **enter a match** — you are still on the lobby
 
-If the extension was already loaded, click reload, then refresh the OneSimulator tab.
+If the extension was already loaded, click reload, then **refresh the OneSimulator tab**. Reloading the extension without refreshing the game tab leaves a dead reader on the page.
 
 Keep the HUD on **Play**. While you are in queue the top bar says **In queue** and shows your name and leader — that means it is reading. In a match it shows both players' names and leaders, plus life and the next move. After a play settles, a short strategy line lands under **As you go**.
 

@@ -11,6 +11,11 @@ test("the page reader can see a queue and a match", () => {
   assert.match(src, /searching/);
 });
 
+test("a reloaded extension stops the old reader instead of throwing", () => {
+  assert.match(src, /extension context/i);
+  assert.match(src, /refresh this tab/);
+});
+
 test("cardId survives a missing node so the queue screen cannot crash the reader", () => {
   const start = src.indexOf("const CARD_ID");
   const end = src.indexOf("\nfunction playerIds");

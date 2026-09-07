@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "OPTCG Companion",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Sends your OneSimulator match to the local companion HUD",
   "permissions": [],
   "host_permissions": [

@@ -284,55 +284,82 @@ function readBoard() {
 }
 
 function paintStatus(text, ok) {
-  let el = document.getElementById("optcg-companion-status");
-  if (!el) {
-    el = document.createElement("div");
-    el.id = "optcg-companion-status";
-    el.style.cssText =
-      "position:fixed;z-index:2147483647;right:12px;bottom:12px;padding:8px 10px;" +
-      "font:12px/1.3 system-ui,sans-serif;border-radius:8px;color:#fff;" +
-      "box-shadow:0 2px 8px rgba(0,0,0,.4)";
-    document.documentElement.appendChild(el);
+  try {
+    let el = document.getElementById("optcg-companion-status");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "optcg-companion-status";
+      el.style.cssText =
+        "position:fixed;z-index:2147483647;right:12px;bottom:12px;padding:8px 10px;" +
+        "font:12px/1.3 system-ui,sans-serif;border-radius:8px;color:#fff;" +
+        "box-shadow:0 2px 8px rgba(0,0,0,.4)";
+      (document.documentElement || document.body).appendChild(el);
+    }
+    el.style.background = ok ? "#166534" : "#7f1d1d";
+    el.textContent = text;
+  } catch {
+    // The page may not be writable yet; the next tick will try again.
   }
-  el.style.background = ok ? "#166534" : "#7f1d1d";
-  el.textContent = text;
+}
+
+function extensionGone(err) {
+  const msg = String(err?.message || err || "");
+  return /invalidated|extension context/i.test(msg);
+}
+
+let tick = null;
+
+function stop(reason) {
+  if (tick !== null) {
+    clearInterval(tick);
+    tick = null;
+  }
+  paintStatus(reason, false);
 }
 
 function send() {
-  let snapshot;
   try {
-    snapshot = readBoard();
+    if (typeof chrome === "undefined" || !chrome.runtime?.id) {
+      stop("Companion extension was reloaded — refresh this tab");
+      return;
+    }
+
+    const snapshot = readBoard();
+    const state = snapshot.page_state;
+
+    chrome.runtime.sendMessage({ type: "snapshot", snapshot }, (res) => {
+      try {
+        if (chrome.runtime.lastError || !res) {
+          paintStatus("Start the app first:  ./start onesimulator", false);
+          return;
+        }
+        if (!res.ok) {
+          paintStatus("HUD is not open. Run ./start onesimulator", false);
+          return;
+        }
+        const label =
+          state === "match"
+            ? "Companion is reading this match"
+            : state === "queue"
+              ? "In queue — companion is reading"
+              : "Companion ready — in lobby";
+        paintStatus(label, true);
+      } catch (err) {
+        if (extensionGone(err)) {
+          stop("Companion extension was reloaded — refresh this tab");
+        }
+      }
+    });
   } catch (err) {
+    if (extensionGone(err)) {
+      stop("Companion extension was reloaded — refresh this tab");
+      return;
+    }
     console.warn("[optcg-companion] page read failed", err);
-    paintStatus("Companion hit a page read error — refresh this tab", false);
-    return;
+    paintStatus(`Read error: ${String(err?.message || err).slice(0, 80)}`, false);
   }
-  const state = snapshot.page_state;
-
-  if (!chrome.runtime?.id) {
-    paintStatus("Companion extension was reloaded — refresh this tab", false);
-    return;
-  }
-
-  chrome.runtime.sendMessage({ type: "snapshot", snapshot }, (res) => {
-    if (chrome.runtime.lastError || !res) {
-      paintStatus("Start the app first:  ./start onesimulator", false);
-      return;
-    }
-    if (!res.ok) {
-      paintStatus("HUD is not open. Run ./start onesimulator", false);
-      return;
-    }
-    const label =
-      state === "match"
-        ? "Companion is reading this match"
-        : state === "queue"
-          ? "In queue — companion is reading"
-          : "Companion ready — in lobby";
-    paintStatus(label, true);
-  });
 }
 
 paintStatus("Companion starting…", false);
 send();
-setInterval(send, 800);
+tick = setInterval(send, 800);
