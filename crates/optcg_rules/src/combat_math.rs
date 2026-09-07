@@ -178,127 +178,21 @@ impl CombatMath {
         Self::analyze_attack(state, repo, attacker, defender, target_is_leader)
     }
 
-    /// Imperative for the open swing — block, counter, take it, or go through.
-    pub fn do_this(state: &GameState, analysis: Option<&CombatAnalysis>) -> Option<CombatDoThis> {
-        if !state.combat.active && analysis.is_none() {
-            return None;
-        }
+    /// Imperative for the open swing — names the cards on the table.
+    pub fn do_this(
+        state: &GameState,
+        repo: Option<&CardRepository<'_>>,
+        analysis: Option<&CombatAnalysis>,
+    ) -> Option<CombatDoThis> {
+        crate::do_this::battle_do_this(state, repo, analysis)
+    }
 
-        let defending = you_are_defending(state, analysis);
-        let target = target_label(state);
-
-        if let Some(a) = analysis {
-            let need = fmt_power(a.required_counter);
-            if defending {
-                if a.lethal_to_leader {
-                    let mut steps = Vec::new();
-                    if a.blocker_available || state.combat.blocker_offered {
-                        steps.push("Block this swing with a ready character.".into());
-                    }
-                    if a.required_counter > 0 {
-                        steps.push(format!("Or counter {need} to keep the life."));
-                    }
-                    steps.push("If you take it, you lose.".into());
-                    let line = if a.blocker_available || state.combat.blocker_offered {
-                        format!("Block this or counter {need} — this swing is lethal.")
-                    } else {
-                        format!("Counter {need} or you lose — this swing is lethal.")
-                    };
-                    return Some(CombatDoThis { line, steps });
-                }
-                if a.recommended_block || (state.combat.blocker_offered && !a.survives_without_counter)
-                {
-                    return Some(CombatDoThis {
-                        line: format!("Block this swing at {target}."),
-                        steps: vec![
-                            "Activate a ready blocker.".into(),
-                            if a.required_counter > 0 {
-                                format!("If you don't block, you need {need} counter.")
-                            } else {
-                                "If you don't block, take the hit.".into()
-                            },
-                        ],
-                    });
-                }
-                if a.required_counter > 0 && !a.survives_without_counter {
-                    return Some(CombatDoThis {
-                        line: format!("Counter {need} or take the hit on {target}."),
-                        steps: vec![
-                            format!("Play {need} counter if this body / life is worth the card."),
-                            "Otherwise take the hit and keep the cards.".into(),
-                        ],
-                    });
-                }
-                if a.survives_without_counter {
-                    return Some(CombatDoThis {
-                        line: format!("This swing doesn't break {target} — take it."),
-                        steps: vec![
-                            "Don't spend a blocker or counter here.".into(),
-                            "Resolve and get back to the turn.".into(),
-                        ],
-                    });
-                }
-            } else if a.lethal_to_leader {
-                return Some(CombatDoThis {
-                    line: format!("This swing is lethal on {target} — go through."),
-                    steps: vec![
-                        "Confirm the attack.".into(),
-                        "Watch for a blocker before it resolves.".into(),
-                    ],
-                });
-            } else if a.required_counter > 0 {
-                return Some(CombatDoThis {
-                    line: format!("Swing at {target}. They need {need} to live."),
-                    steps: vec![
-                        format!("Attack {target}."),
-                        format!("They must counter {need} or lose the body / life."),
-                    ],
-                });
-            } else {
-                return Some(CombatDoThis {
-                    line: format!("Swing at {target} — they don't break this."),
-                    steps: vec![
-                        format!("Attack {target}."),
-                        "Resolve and continue the turn.".into(),
-                    ],
-                });
-            }
-        }
-
-        if state.combat.blocker_offered {
-            return Some(CombatDoThis {
-                line: "Blocker window — decide now.".into(),
-                steps: vec![
-                    format!("They're swinging at {target}."),
-                    "Block, counter, or take the hit.".into(),
-                ],
-            });
-        }
-        if defending {
-            return Some(CombatDoThis {
-                line: format!("They're swinging at {target} — block, counter, or take it."),
-                steps: vec![
-                    "Compare powers on this attack.".into(),
-                    "Block or counter only if the save is worth the card.".into(),
-                ],
-            });
-        }
-        if state.combat.attacker_player == Some(0) || state.combat.active {
-            return Some(CombatDoThis {
-                line: format!("You're attacking {target} — resolve this swing."),
-                steps: vec![
-                    format!("Confirm the attack on {target}."),
-                    "Watch for their blocker, then resolve.".into(),
-                ],
-            });
-        }
-        Some(CombatDoThis {
-            line: "A battle is open — resolve this swing before anything else.".into(),
-            steps: vec![
-                "Identify the attacker and the target.".into(),
-                "Decide block, counter, or take the hit.".into(),
-            ],
-        })
+    /// When no attack is open, still name the bodies and the next swing.
+    pub fn table_do_this(
+        state: &GameState,
+        repo: &CardRepository<'_>,
+    ) -> Option<CombatDoThis> {
+        crate::do_this::table_do_this(state, repo)
     }
 
     fn attacker_power(
@@ -332,46 +226,6 @@ impl CombatMath {
 
 use optcg_core::CardDefinition;
 use tracing::info;
-
-fn fmt_power(n: i32) -> String {
-    if n >= 1000 && n % 1000 == 0 {
-        format!("{}k", n / 1000)
-    } else {
-        n.to_string()
-    }
-}
-
-fn target_label(state: &GameState) -> &'static str {
-    if state.combat.target_is_leader {
-        if state.combat.target_player == Some(0) {
-            "your leader"
-        } else {
-            "their leader"
-        }
-    } else if state.combat.target_player == Some(0) {
-        "your character"
-    } else {
-        "their character"
-    }
-}
-
-fn you_are_defending(state: &GameState, analysis: Option<&CombatAnalysis>) -> bool {
-    if state.combat.target_player == Some(0) {
-        return true;
-    }
-    if state.combat.target_player == Some(1) {
-        return false;
-    }
-    if state.combat.attacker_player == Some(1) {
-        return true;
-    }
-    if state.combat.attacker_player == Some(0) {
-        return false;
-    }
-    analysis.is_some_and(|a| {
-        a.lethal_to_leader || a.recommended_block || a.required_counter > 0
-    }) && state.combat.target_is_leader
-}
 
 impl CombatMath {
     pub fn optimal_counter_play(
@@ -475,9 +329,12 @@ mod tests {
         state.combat = combat_state("ST01-012", 1, 0, true);
         let analysis = CombatMath::analyze_current_combat(&state, &repo).unwrap();
         assert!(analysis.lethal_to_leader);
-        let battle = CombatMath::do_this(&state, Some(&analysis)).unwrap();
+        let battle = CombatMath::do_this(&state, Some(&repo), Some(&analysis)).unwrap();
         assert!(battle.line.to_lowercase().contains("lethal"));
-        assert!(battle.line.to_lowercase().contains("counter") || battle.line.to_lowercase().contains("block"));
+        assert!(
+            battle.line.to_lowercase().contains("sanji")
+                || battle.line.to_lowercase().contains("st01-012")
+        );
         assert!(!battle.steps.is_empty());
     }
 
@@ -493,17 +350,20 @@ mod tests {
         state.players[1].hand_count = 0;
         state.combat = combat_state("ST01-012", 0, 1, true);
         let analysis = CombatMath::analyze_current_combat(&state, &repo).unwrap();
-        let battle = CombatMath::do_this(&state, Some(&analysis)).unwrap();
+        let battle = CombatMath::do_this(&state, Some(&repo), Some(&analysis)).unwrap();
         assert!(battle.line.to_lowercase().contains("lethal"));
         assert!(battle.line.to_lowercase().contains("go through"));
+        assert!(battle.line.contains("Sanji") || battle.line.contains("ST01-012"));
     }
 
     #[test]
     fn do_this_uses_the_open_swing_without_math() {
         let mut state = GameState::new();
         state.combat = combat_state("ST01-001", 1, 0, true);
-        let battle = CombatMath::do_this(&state, None).unwrap();
+        let battle = CombatMath::do_this(&state, None, None).unwrap();
         assert!(battle.line.to_lowercase().contains("swinging"));
-        assert!(battle.line.to_lowercase().contains("your leader"));
+        assert!(
+            battle.line.contains("ST01-001") || battle.line.to_lowercase().contains("leader")
+        );
     }
 }

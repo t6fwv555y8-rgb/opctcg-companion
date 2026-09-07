@@ -1,5 +1,6 @@
 pub mod beam_search;
 pub mod combat_math;
+pub mod do_this;
 pub mod deck_collection;
 pub mod deck_list;
 pub mod deck_strategy;

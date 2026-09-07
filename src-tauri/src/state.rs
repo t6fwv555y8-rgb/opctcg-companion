@@ -775,10 +775,16 @@ impl AppState {
         let gs = self.game_state.read();
         let repo = self.repo();
         let combat_analysis = CombatMath::analyze_current_combat(&gs, &repo);
-        let combat_coach = CombatMath::do_this(&gs, combat_analysis.as_ref());
+        let combat_coach = CombatMath::do_this(&gs, Some(&repo), combat_analysis.as_ref())
+            .or_else(|| CombatMath::table_do_this(&gs, &repo));
         let your_deck = self.deck_info_for(gs.player_one(), Side::You);
         let opponent_deck = self.deck_info_for(gs.player_two(), Side::Opponent);
-        let deck_strategy = self.ensure_deck_strategy(&your_deck, &opponent_deck, &gs);
+        let mut deck_strategy = self.ensure_deck_strategy(&your_deck, &opponent_deck, &gs);
+        if let Some(ref battle) = combat_coach {
+            if !battle.steps.is_empty() {
+                deck_strategy.this_turn = battle.steps.clone();
+            }
+        }
         let mut phase_coach = if let Some(ref battle) = combat_coach {
             battle.line.clone()
         } else {
@@ -1681,8 +1687,45 @@ mod tests {
             "expected lethal instruction, got {}",
             battle.line
         );
+        assert!(
+            battle.line.contains("Sanji") || battle.line.contains("ST01-012"),
+            "expected the attacker named, got {}",
+            battle.line
+        );
         assert_eq!(payload.phase_coach, battle.line);
         assert!(!battle.steps.is_empty());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn do_this_names_the_cards_on_the_table_between_swings() {
+        let dir = temp_data_dir("table-do-this");
+        let (state, board) = app_state_with_board(&dir);
+        {
+            let mut gs = board.write();
+            gs.phase = optcg_core::Phase::Main;
+            gs.players[0]
+                .characters
+                .push(optcg_core::CardInstance::new(
+                    "ST01-012",
+                    0,
+                    optcg_core::Zone::Character,
+                ));
+            gs.players[1]
+                .characters
+                .push(optcg_core::CardInstance::new(
+                    "ST01-002",
+                    1,
+                    optcg_core::Zone::Character,
+                ));
+        }
+        let payload = state.build_update_payload(None);
+        let battle = payload
+            .combat_coach
+            .expect("a readable board should name the cards");
+        let blob = format!("{} {}", battle.line, battle.steps.join(" "));
+        assert!(blob.contains("Sanji") || blob.contains("ST01-012"), "{blob}");
+        assert!(blob.contains("Usopp") || blob.contains("ST01-002"), "{blob}");
         std::fs::remove_dir_all(&dir).ok();
     }
 }

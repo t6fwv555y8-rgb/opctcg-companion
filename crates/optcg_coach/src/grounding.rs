@@ -393,7 +393,9 @@ pub fn build_context(
         } else {
             None
         };
-        if let Some(battle) = CombatMath::do_this(state, combat_analysis.as_ref()) {
+        if let Some(battle) = CombatMath::do_this(state, Some(repo), combat_analysis.as_ref())
+            .or_else(|| CombatMath::table_do_this(state, repo))
+        {
             context.push("Do this now", battle.line.clone());
             if !battle.steps.is_empty() {
                 context.push("Battle sequence", battle.steps.join(" → "));
