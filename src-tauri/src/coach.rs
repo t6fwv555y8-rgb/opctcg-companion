@@ -725,7 +725,7 @@ mod tests {
                 let mut gs = board.write();
                 gs.game_id = uuid::Uuid::from_u128(game);
                 gs.turn_number = 3;
-                gs.player_two_mut().leader.card_id = "OP17-079".into();
+                gs.player_two_mut().set_leader_id("OP17-079");
                 gs.player_two_mut().characters = vec![optcg_core::CardInstance::new(
                     card,
                     1,
@@ -797,8 +797,8 @@ mod tests {
         {
             let mut gs = board.write();
             gs.game_id = uuid::Uuid::from_u128(1);
-            gs.player_one_mut().leader.card_id = "ST01-001".into();
-            gs.player_two_mut().leader.card_id = "OP17-079".into();
+            gs.player_one_mut().set_leader_id("ST01-001");
+            gs.player_two_mut().set_leader_id("OP17-079");
             gs.player_two_mut().characters = vec![optcg_core::CardInstance::new(
                 "OP17-080",
                 1,
