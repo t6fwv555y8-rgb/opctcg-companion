@@ -20,7 +20,7 @@ pub const DEFAULT_MIN_INTERVAL_MS: u64 = 8_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AutoTriggerConfig {
-    /// Off by default: automatic reads spend tokens without being asked for.
+    /// On by default so the HUD keeps advising as the match moves.
     pub enabled: bool,
     pub settle: Duration,
     pub min_interval: Duration,
@@ -29,7 +29,7 @@ pub struct AutoTriggerConfig {
 impl Default for AutoTriggerConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             settle: Duration::from_millis(DEFAULT_SETTLE_MS),
             min_interval: Duration::from_millis(DEFAULT_MIN_INTERVAL_MS),
         }
@@ -158,13 +158,13 @@ mod tests {
     }
 
     #[test]
-    fn disabled_by_default() {
+    fn on_by_default() {
         let mut trigger = AutoTrigger::default();
-        assert!(!trigger.is_enabled());
+        assert!(trigger.is_enabled());
         assert_eq!(
             trigger.observe(&position("a"), true, Instant::now()),
-            AutoDecision::Idle,
-            "automatic reads must be opt-in"
+            AutoDecision::Settling,
+            "a live match should start reading as soon as the board moves"
         );
     }
 

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CalibrationPanel } from "./components/CalibrationPanel";
 import { CoachChatPanel } from "./components/CoachChatPanel";
 import { ConnectionStatus } from "./components/ConnectionStatus";
@@ -9,6 +9,7 @@ import { MatchupPanel } from "./components/MatchupPanel";
 import { NowPanel } from "./components/NowPanel";
 import { ScoutingPanel } from "./components/ScoutingPanel";
 import { SourceSelector } from "./components/SourceSelector";
+import { useCoachStream } from "./hooks/useCoachStream";
 import { useCompanionBridge } from "./hooks/useCompanionBridge";
 
 const DEBUG = Boolean((import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV);
@@ -24,9 +25,29 @@ const TABS: { id: Tab; label: string }[] = [
 
 export default function App() {
   const bridge = useCompanionBridge();
+  const coach = useCoachStream();
   const gs = bridge.snapshot?.game_state ?? null;
   const combat = gs?.combat ?? null;
   const [tab, setTab] = useState<Tab>("play");
+  const nudgedAuto = useRef(false);
+
+  // Older sessions defaulted automatic reads off. Turn them on once so Play
+  // keeps advising, but do not fight the user if they later switch them off.
+  useEffect(() => {
+    if (nudgedAuto.current || !coach.status) return;
+    nudgedAuto.current = true;
+    if (!coach.status.auto_enabled) {
+      void coach.setAuto(true);
+    }
+  }, [coach.status, coach.setAuto]);
+
+  const latestCoach = (() => {
+    const assistants = [...coach.messages]
+      .reverse()
+      .filter((m) => m.role === "assistant" && m.content.trim());
+    const automatic = assistants.find((m) => m.automatic);
+    return (automatic ?? assistants[0])?.content ?? null;
+  })();
 
   return (
     <div
@@ -75,6 +96,7 @@ export default function App() {
               <NowPanel
                 phaseCoach={bridge.snapshot?.phase_coach ?? null}
                 strategy={bridge.snapshot?.strategy ?? null}
+                options={bridge.snapshot?.options ?? []}
                 deckStrategy={bridge.snapshot?.deck_strategy ?? null}
                 combat={combat}
                 analysis={bridge.snapshot?.combat_analysis ?? null}
@@ -82,6 +104,9 @@ export default function App() {
                   bridge.observation?.analysis?.mode === "paused" ||
                   bridge.observation?.hud_state === "lost"
                 }
+                coachLine={latestCoach}
+                coachBusy={coach.streaming}
+                coachError={coach.error}
               />
             )}
 

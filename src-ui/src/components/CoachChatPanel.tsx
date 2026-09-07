@@ -235,7 +235,7 @@ export function CoachChatPanel() {
             {provider}
           </span>
           <AutoToggle
-            enabled={coach.status?.auto_enabled ?? false}
+            enabled={coach.status?.auto_enabled ?? true}
             disabled={coach.status ? !coach.status.context.board : true}
             onChange={(enabled) => {
               if (enabled) setOpen(true);

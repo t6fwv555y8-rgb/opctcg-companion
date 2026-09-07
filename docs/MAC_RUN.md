@@ -41,6 +41,7 @@ Wait for a window titled **OPTCG Companion**. The first launch compiles Rust and
 
 - A small dark window, not a browser tab
 - **Mock Game · LIVE** at the top
+- The **Play** tab updates as the board does: what to do now, then a line after each play settles
 - Decks, Scouting, Matchup, and Coach panels filling in as the demo plays
 
 A tab at `localhost:1420` means the window never opened — quit that and run `./start` again.
@@ -67,6 +68,8 @@ A label in the bottom-right of the game tells you what is happening:
 - **enter a match** — you are still on the lobby
 
 If the extension was already loaded, click reload, then refresh the OneSimulator tab.
+
+Keep the HUD on **Play**. Life, phase, and the next move update as the extension reads the board. After a play settles, a short strategy line lands under **As you go**.
 
 ## No window, only a terminal
 

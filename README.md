@@ -70,7 +70,7 @@ A real OneSimulator match:
 ./start onesimulator
 ```
 
-Then load `browser-companion` as an unpacked Chrome extension and open a game.
+Then in Chrome: Load unpacked → the `browser-companion` folder. A label on the game page says whether it is reading the match.
 
 Walkthrough, real-match setup, and what success looks like: **[docs/MAC_RUN.md](docs/MAC_RUN.md)**.
 
