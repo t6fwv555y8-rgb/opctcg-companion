@@ -4,9 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc && node scripts/bundle.mjs",
-    "watch": "tsc --watch",
-    "test": "npm run build && node --test tests/*.test.mjs"
+    "build": "echo 'Chrome loads background.js and content.js in this folder. There is nothing to compile.' && exit 1",
+    "test": "node --test tests/simple-extension.test.mjs tests/service-worker.test.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.25.0",

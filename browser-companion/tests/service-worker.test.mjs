@@ -2,12 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-test("the service worker does not touch window", () => {
-  const bundle = readFileSync("dist/background.bundle.js", "utf8");
-  assert.equal(
-    bundle.includes("window.setTimeout"),
-    false,
-    "window.setTimeout crashes the MV3 service worker the first time the HUD is down"
-  );
-  assert.match(bundle, /globalThis\.setTimeout|setTimeout\(/);
+test("the loadable worker posts snapshots and never opens a WebSocket", () => {
+  const src = readFileSync("background.js", "utf8");
+  assert.equal(src.includes("new WebSocket"), false);
+  assert.equal(src.includes("ws://127.0.0.1:9003/ws"), false);
+  assert.equal(src.includes("window"), false);
+  assert.match(src, /127\.0\.0\.1:9003\/snapshot/);
 });

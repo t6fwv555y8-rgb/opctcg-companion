@@ -70,7 +70,7 @@ A real OneSimulator match:
 ./start onesimulator
 ```
 
-Then in Chrome: Load unpacked → the `browser-companion` folder. A label on the game page says whether it is reading the match.
+Then in Chrome: remove every old Companion card, Load unpacked → the `browser-companion` folder (not `dist`). The card should say version 0.2.1. A label on the game page says whether it is reading the match.
 
 Walkthrough, real-match setup, and what success looks like: **[docs/MAC_RUN.md](docs/MAC_RUN.md)**.
 

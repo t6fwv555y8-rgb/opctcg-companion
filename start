@@ -51,6 +51,8 @@ if [[ "$MODE" == "mock" || "$TERMINAL" -eq 1 ]]; then
 fi
 
 # The OneSimulator extension is two plain JS files. No build step.
+# A leftover dist/ is the old WebSocket worker — wipe it so it cannot be loaded.
+rm -rf "$ROOT/browser-companion/dist"
 
 export OPTCG_SOURCE="$MODE"
 
@@ -71,12 +73,14 @@ if [[ "$MODE" == "onesimulator" ]]; then
   say "OneSimulator — do these three things while the window compiles:"
   say ""
   say "  1. Chrome → chrome://extensions"
-  say "  2. Developer mode ON → Load unpacked → pick this folder:"
+  say "  2. Developer mode ON → remove every old Companion / Bridge card"
+  say "  3. Load unpacked → pick this folder (not dist):"
   say "       $ROOT/browser-companion"
-  say "  3. Open a match:  https://onesimulator.slidingcodes.com"
+  say "  4. The card should say OPTCG Companion  0.2.1"
+  say "  5. Open a match:  https://onesimulator.slidingcodes.com"
   say ""
   say "A label in the bottom-right of the game says if it is working."
-  say "If you already loaded the old extension, remove it, then Load unpacked again."
+  say "If Chrome shows dist/bridge.js or ws://127.0.0.1:9003, that is the old extension."
   say ""
   if command -v open >/dev/null 2>&1; then
     open "https://onesimulator.slidingcodes.com" 2>/dev/null || true

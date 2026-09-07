@@ -9,7 +9,7 @@
     "dev:tauri": "cd src-ui && npm run tauri:dev",
     "dev:stream": "python3 scripts/mock_stream.py --interval 2",
     "dev:ui": "cd src-ui && npm run dev",
-    "build": "cd browser-companion && npm run build && cd ../src-ui && npm run build",
+    "build": "cd src-ui && npm run build",
     "build:tauri": "cd src-ui && npm run tauri build",
     "install:all": "npm install && cd src-ui && npm install",
     "vision": "python3 scripts/vision_pipeline.py"

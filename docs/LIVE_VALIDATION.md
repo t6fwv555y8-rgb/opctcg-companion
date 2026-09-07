@@ -28,8 +28,6 @@ On Mac, **OneSimulator is the live path**. The Tauri HUD and Chrome/Edge extensi
 ```bash
 git checkout cursor/milestone-6-live-validation-4c31
 npm run install:all
-cd browser-companion && npm install && npm run build
-cd ..
 ```
 
 ### OneSimulator on Mac
@@ -87,7 +85,7 @@ cd src-ui && npm run tauri:dev
 | Symptom | Check |
 |---------|-------|
 | HUD stuck on SEARCHING | Companion running before OneSimulator; port **9003** free; allow firewall for the app |
-| Extension badge `!` | Companion not running, or rebuild + reload extension (`cd browser-companion && npm run build`) |
+| Extension badge `!` | Companion not running, or you loaded `dist` instead of `browser-companion` |
 | No debug panel | Use `tauri:dev` (dev builds only) |
 | OPTCGSim does nothing | Expected — live capture is Windows-only; use OneSimulator |
 
@@ -103,11 +101,7 @@ cd src-ui && npm run tauri:dev
 
 ### OneSimulator
 
-1. Build the browser companion:
-   ```bash
-   cd browser-companion && npm install && npm run build
-   ```
-2. Load the unpacked extension from `browser-companion/` (folder containing `manifest.json`) in Chrome/Edge.
+1. Load the unpacked extension from `browser-companion/` (folder containing `manifest.json`, not `dist`) in Chrome/Edge.
 3. Start the Tauri companion (`cd src-ui && npm run tauri:dev` or installed build).
 4. Open [OneSimulator](https://onesimulator.slidingcodes.com) and enter a match.
 5. Confirm HUD shows **ONESIMULATOR · LIVE** (or SYNCING briefly, then LIVE).
@@ -126,7 +120,7 @@ cd src-ui && npm run tauri:dev
 cd browser-companion && npm test
 ```
 
-All extract/combat/session tests should pass before live testing.
+That checks the two files Chrome loads. There is nothing to compile.
 
 ### OPTCGSim
 

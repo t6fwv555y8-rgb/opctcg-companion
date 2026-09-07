@@ -1,5 +1,7 @@
 // Forwards game snapshots from the OneSimulator tab to the local HUD.
 // Nothing else lives here — no WebSocket and no reconnect loop.
+// If Chrome shows dist/bridge.js or ws://127.0.0.1:9003, you loaded the old
+// extension. Remove it and Load unpacked → this folder (not dist).
 
 const HUD = "http://127.0.0.1:9003/snapshot";
 
