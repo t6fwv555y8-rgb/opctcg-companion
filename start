@@ -56,6 +56,19 @@ rm -rf "$ROOT/browser-companion/dist"
 
 export OPTCG_SOURCE="$MODE"
 
+# Optional local secrets. .env.local wins over .env. Neither is committed.
+load_env_file() {
+  local file="$1"
+  [[ -f "$file" ]] || return 0
+  say "Loading $(basename "$file")"
+  set -a
+  # shellcheck disable=SC1090
+  source "$file"
+  set +a
+}
+load_env_file "$ROOT/.env"
+load_env_file "$ROOT/.env.local"
+
 # A leftover Vite on :1420 makes Tauri refuse to start (strictPort).
 free_port() {
   local port="$1"
