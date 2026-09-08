@@ -49,10 +49,10 @@ function Seat({
   don?: number;
 }) {
   const meta = [
+    player && player !== "You" && player !== "Opponent" ? player : null,
     `${swings} ${swings === 1 ? "swing" : "swings"}`,
     hand != null ? `${hand} cards` : null,
     don != null ? `${don} DON` : null,
-    player || null,
   ]
     .filter(Boolean)
     .join(" · ");
