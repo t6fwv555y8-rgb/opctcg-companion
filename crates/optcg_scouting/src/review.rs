@@ -370,6 +370,7 @@ mod tests {
             your_leader_name: "Red Luffy".into(),
             life,
             play,
+            auto_reads: Vec::new(),
         }
     }
 
@@ -433,6 +434,7 @@ mod tests {
             your_leader_name: String::new(),
             life: LifeTrack::default(),
             play: PlayTrack::default(),
+            auto_reads: Vec::new(),
         };
         assert!(
             MatchReview::from_open(&idle, NOW).is_none(),

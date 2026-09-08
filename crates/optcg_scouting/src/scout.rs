@@ -100,6 +100,11 @@ impl Scout {
         self.watching = None;
     }
 
+    /// Keep an automatic read on the open game.
+    pub fn record_auto_read(&mut self, turn: u32, line: &str) -> bool {
+        self.ledger.record_auto_read(turn, line)
+    }
+
     /// Whether the open game has ended and should be folded now.
     fn should_finish(&self, state: &GameState) -> bool {
         let Some(open) = self.ledger.open.as_ref() else {
@@ -595,6 +600,16 @@ mod tests {
         assert_eq!(review.last_turn, 8);
         assert_eq!(review.leftover_don, 3);
         assert!(review.you_played.contains(&"ST01-002".to_string()));
+        let orders = &scout
+            .ledger()
+            .matchups
+            .record(YOUR_LEADER, LEADER)
+            .expect("the pairing exists")
+            .orders;
+        assert!(
+            orders.iter().any(|o| o.leak == "leftover_don"),
+            "a leftover-DON win should write a standing order: {orders:?}"
+        );
         assert!(
             scout.ledger().open.is_none(),
             "a decided game is folded as soon as life hits zero"

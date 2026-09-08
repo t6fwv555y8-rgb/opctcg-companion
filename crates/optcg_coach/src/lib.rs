@@ -21,6 +21,7 @@
 pub mod auto;
 pub mod grounding;
 pub mod llm_settings;
+pub mod prefs;
 pub mod offline;
 pub mod openai;
 pub mod provider;
@@ -29,6 +30,7 @@ pub mod sink;
 pub mod types;
 
 pub use auto::{AutoDecision, AutoTrigger, AutoTriggerConfig, AUTO_QUESTION};
+pub use prefs::{looks_like_what_now, CoachPrefs};
 pub use grounding::{
     build_context, estimate_counters, fingerprint, is_decision_point, is_urgent_decision,
     ContextScope,

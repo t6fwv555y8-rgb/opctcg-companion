@@ -128,6 +128,9 @@ pub struct MatchupReportDto {
     /// Share of finished games won, absent until a game has finished.
     pub win_rate: Option<f32>,
     pub notes: Vec<String>,
+    /// What last games said to do differently in this pairing.
+    #[serde(default)]
+    pub orders: Vec<String>,
 }
 
 /// How the last finished game went, for the HUD recap.

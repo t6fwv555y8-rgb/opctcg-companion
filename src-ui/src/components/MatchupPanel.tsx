@@ -60,6 +60,24 @@ export function MatchupPanel({ report }: Props) {
         </ul>
       )}
 
+      {(report.orders?.length ?? 0) > 0 && (
+        <div className="mt-2">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-amber-200/80">
+            Standing orders
+          </div>
+          <ul className="mt-1 space-y-1">
+            {report.orders?.map((order) => (
+              <li
+                key={order}
+                className="border-l border-amber-400/35 pl-3 text-[13px] leading-snug text-amber-50"
+              >
+                {order}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <p className="mt-2 text-xs leading-snug text-slate-500">
         Real results against this leader, never a prediction of this game.
       </p>

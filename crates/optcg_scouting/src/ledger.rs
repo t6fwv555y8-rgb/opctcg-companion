@@ -6,6 +6,7 @@
 //! evidence instead of nothing.
 
 use crate::matchup::{FinishedGame, LifeTrack, MatchupLedger, Outcome};
+use crate::orders::{clip_auto_read, AutoRead, MAX_AUTO_READS};
 use crate::review::{MatchReview, PlayTrack, MAX_REVIEWS};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -78,6 +79,9 @@ pub struct OpenGame {
     /// Your own play this game: cards shown, leftover DON, when you first hit.
     #[serde(default)]
     pub play: PlayTrack,
+    /// Automatic reads taken this game, used when the recap writes orders.
+    #[serde(default)]
+    pub auto_reads: Vec<AutoRead>,
 }
 
 impl OpenGame {
@@ -93,6 +97,7 @@ impl OpenGame {
             your_leader_name: String::new(),
             life: LifeTrack::default(),
             play: PlayTrack::default(),
+            auto_reads: Vec::new(),
         }
     }
 
@@ -372,6 +377,9 @@ impl ScoutingLedger {
                 },
                 now,
             );
+            if let Some(review) = MatchReview::from_open(&game, now) {
+                self.matchups.refresh_orders(&review, &game.auto_reads);
+            }
         }
         if !game.is_substantive() || game.leader_id.is_empty() {
             return;
@@ -481,6 +489,28 @@ impl ScoutingLedger {
         if let Some(open) = self.open.as_mut() {
             open.play.observe_strike(dealt, turn);
         }
+    }
+
+    /// Keep an automatic read so the recap can write standing orders.
+    ///
+    /// Returns whether the open game changed.
+    pub fn record_auto_read(&mut self, turn: u32, line: &str) -> bool {
+        let Some(open) = self.open.as_mut() else {
+            return false;
+        };
+        let line = clip_auto_read(line);
+        if line.is_empty() {
+            return false;
+        }
+        if open.auto_reads.last().is_some_and(|read| read.line == line) {
+            return false;
+        }
+        open.auto_reads.push(AutoRead { turn, line });
+        if open.auto_reads.len() > MAX_AUTO_READS {
+            let extra = open.auto_reads.len() - MAX_AUTO_READS;
+            open.auto_reads.drain(..extra);
+        }
+        true
     }
 
     /// The most recent recap, if any game has finished.
@@ -772,5 +802,18 @@ mod tests {
         assert!(ScoutingLedger::load(&path).profiles.is_empty());
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn an_automatic_read_stays_on_the_open_game() {
+        let mut ledger = ScoutingLedger::default();
+        ledger.begin_game("g1", "OP17-079", "Loki", NOW);
+        assert!(ledger.record_auto_read(4, "Attach DON to Rayleigh."));
+        assert!(!ledger.record_auto_read(4, "Attach DON to Rayleigh."));
+        assert_eq!(ledger.open.as_ref().unwrap().auto_reads.len(), 1);
+        assert_eq!(
+            ledger.open.as_ref().unwrap().auto_reads[0].line,
+            "Attach DON to Rayleigh."
+        );
     }
 }

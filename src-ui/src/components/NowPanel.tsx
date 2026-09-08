@@ -121,6 +121,7 @@ export function NowPanel({
     .slice(0, 3);
   const blockerOpen = Boolean(combat?.blocker_offered);
   const cover = deckStrategy?.vs_opponent?.trim() || "";
+  const orders = deckStrategy?.standing_orders?.filter((line) => line.trim()) ?? [];
 
   return (
     <div className="flex flex-col gap-3">
@@ -191,12 +192,26 @@ export function NowPanel({
         )}
       </section>
 
-      {cover && (
+      {(orders.length > 0 || cover) && (
         <section className="cover-them">
           <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-rose-200/80">
             Cover them
           </div>
-          <p className="mt-1.5 text-[13px] leading-relaxed text-rose-50/90">{cover}</p>
+          {orders.length > 0 && (
+            <ul className="mt-1.5 space-y-1.5">
+              {orders.map((order) => (
+                <li
+                  key={order}
+                  className="border-l border-rose-300/40 pl-3 text-[13px] leading-snug text-rose-50"
+                >
+                  {order}
+                </li>
+              ))}
+            </ul>
+          )}
+          {cover && (
+            <p className="mt-1.5 text-[13px] leading-relaxed text-rose-50/90">{cover}</p>
+          )}
         </section>
       )}
 

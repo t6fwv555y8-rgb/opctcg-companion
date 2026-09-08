@@ -272,6 +272,9 @@ pub struct MatchupRead {
     pub win_rate: Option<f32>,
     /// Plain statements of what was measured, each safe to show a user.
     pub notes: Vec<String>,
+    /// What last games said to do differently in this pairing.
+    #[serde(default)]
+    pub orders: Vec<String>,
 }
 
 impl MatchupRead {
@@ -348,6 +351,7 @@ impl MatchupRead {
             standing,
             win_rate,
             notes,
+            orders: record.orders.iter().map(|o| o.text.clone()).collect(),
         })
     }
 

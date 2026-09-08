@@ -21,6 +21,7 @@
 
 pub mod ledger;
 pub mod matchup;
+pub mod orders;
 pub mod report;
 pub mod review;
 pub mod scout;
@@ -30,6 +31,7 @@ pub use ledger::{
     LEDGER_VERSION, MAX_CARDS_PER_PROFILE, MAX_PROFILES,
 };
 pub use matchup::{LifeTrack, MatchupLedger, MatchupRecord, Outcome, MAX_MATCHUPS};
+pub use orders::{AutoRead, StandingOrder, MAX_ORDERS};
 pub use report::{
     DeckMap, MappedCard, MatchupRead, Pace, Reliability, Standing, StrategyRead,
     MIN_GAMES_FOR_PACE, MIN_GAMES_FOR_STANDING, STAPLE_CONFIDENCE,

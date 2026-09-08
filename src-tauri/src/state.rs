@@ -244,6 +244,31 @@ impl AppState {
         }
     }
 
+    /// Keep an automatic read on the open game so the recap can write orders.
+    pub fn record_coach_read(&self, turn: u32, line: &str) {
+        let learned = {
+            let mut scout = self.scout.write();
+            scout.record_auto_read(turn, line)
+        };
+        if learned {
+            self.persist_scouting();
+        }
+    }
+
+    /// Standing orders for this pairing, if any games have written them.
+    pub fn standing_orders_for(&self, your_leader: &str, their_leader: &str) -> Vec<String> {
+        if your_leader.is_empty() || their_leader.is_empty() {
+            return Vec::new();
+        }
+        self.scout
+            .read()
+            .ledger()
+            .matchups
+            .record(your_leader, their_leader)
+            .map(|record| record.orders.iter().map(|o| o.text.clone()).collect())
+            .unwrap_or_default()
+    }
+
     /// Fold the game being watched into its profile and save.
     ///
     /// Worth doing on shutdown, so a session that ends without another game
@@ -345,6 +370,7 @@ impl AppState {
             standing: read.standing.label().to_string(),
             win_rate: read.win_rate,
             notes: read.notes,
+            orders: read.orders,
         })
     }
 
@@ -892,6 +918,8 @@ impl AppState {
         let your_deck = self.deck_info_for(gs.player_one(), Side::You);
         let opponent_deck = self.deck_info_for(gs.player_two(), Side::Opponent);
         let mut deck_strategy = self.ensure_deck_strategy(&your_deck, &opponent_deck, &gs);
+        deck_strategy.standing_orders =
+            self.standing_orders_for(&your_deck.leader_id, &opponent_deck.leader_id);
         if let Some(ref battle) = combat_coach {
             if !battle.steps.is_empty() {
                 deck_strategy.this_turn = battle.steps.clone();
@@ -1452,6 +1480,7 @@ mod tests {
             )];
             gs.player_one_mut().life = 3;
             gs.player_two_mut().life = 5;
+            gs.player_one_mut().don_active = 4;
         }
         state.scout_position();
         board.write().player_two_mut().life = 0;
@@ -1462,6 +1491,11 @@ mod tests {
             .matchup_report("ST01-001", "OP17-079")
             .expect("a finished game belongs to a matchup");
         assert_eq!((report.wins, report.losses), (1, 0));
+        assert!(
+            report.orders.iter().any(|o| o.contains("DON")),
+            "leftover DON should become a standing order: {:?}",
+            report.orders
+        );
         assert_eq!(report.standing, "too early to call");
         assert!(state.build_update_payload(None).matchup.is_some());
         let review = state
