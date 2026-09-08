@@ -1,11 +1,11 @@
 use crate::dto::DeckOrigin;
 use crate::state::AppState;
 use optcg_coach::{
-    key_hint, key_source, provider_from_config, resolve_config, AutoDecision, AutoTrigger,
-    CancelReason, CancelToken, ChatMessage, ChatProvider, CoachError, CoachEvent, CoachSession,
-    CoachStreamEvent, CoalescingSink, ContextScope, DeckContext, EventSink, FlushTicker,
-    ListStanding, LlmKeySource, LlmSettings, OfflineProvider, ReviewBrief, StateFingerprint,
-    TurnKind, TurnSummary, DEFAULT_FLUSH_INTERVAL_MS, SYSTEM_PROMPT,
+    key_hint, key_source, looks_like_what_now, provider_from_config, resolve_config, AutoDecision,
+    AutoTrigger, CancelReason, CancelToken, ChatMessage, ChatProvider, CoachError, CoachEvent,
+    CoachPrefs, CoachSession, CoachStreamEvent, CoalescingSink, ContextScope, DeckContext,
+    EventSink, FlushTicker, ListStanding, LlmKeySource, LlmSettings, OfflineProvider, ReviewBrief,
+    StateFingerprint, TurnKind, TurnSummary, DEFAULT_FLUSH_INTERVAL_MS, SYSTEM_PROMPT,
 };
 use optcg_scouting::{DeckMap, StrategyRead};
 use parking_lot::Mutex;
@@ -32,6 +32,9 @@ pub struct CoachRuntime {
     session: Arc<Mutex<CoachSession>>,
     auto: Arc<Mutex<AutoTrigger>>,
     scope: Arc<Mutex<ContextScope>>,
+    prefs: Mutex<CoachPrefs>,
+    /// When the last automatic read finished, for timing nudges.
+    last_auto_at: Mutex<Option<Instant>>,
     /// Last match Rayleigh already started reading, so a new game_id resets.
     last_game: Mutex<Option<uuid::Uuid>>,
 }
@@ -39,6 +42,7 @@ pub struct CoachRuntime {
 impl CoachRuntime {
     pub fn new(data_dir: PathBuf) -> Self {
         let settings = LlmSettings::load(&data_dir);
+        let prefs = CoachPrefs::load(&data_dir);
         let provider = provider_from_config(resolve_config(&settings));
         tracing::info!(
             provider = %provider.label(),
@@ -51,8 +55,10 @@ impl CoachRuntime {
             settings: Mutex::new(settings),
             data_dir,
             session: Arc::new(Mutex::new(CoachSession::new())),
-            auto: Arc::new(Mutex::new(AutoTrigger::default())),
+            auto: Arc::new(Mutex::new(AutoTrigger::new(prefs.to_config(true)))),
             scope: Arc::new(Mutex::new(ContextScope::default())),
+            prefs: Mutex::new(prefs),
+            last_auto_at: Mutex::new(None),
             last_game: Mutex::new(None),
         }
     }
@@ -108,6 +114,19 @@ impl CoachRuntime {
         *self.settings.lock() = LlmSettings::default();
         self.reload_provider();
         Ok(self.llm_status())
+    }
+
+    fn apply_timing(&self) {
+        let prefs = self.prefs.lock().clone();
+        self.auto.lock().set_timing(prefs.to_config(true));
+    }
+
+    fn persist_prefs(&self) {
+        let prefs = self.prefs.lock().clone();
+        if let Err(e) = prefs.save(&self.data_dir) {
+            tracing::warn!(error = %e, "could not save coach prefs");
+        }
+        self.apply_timing();
     }
 
     pub fn status(&self) -> CoachStatusDto {
@@ -267,6 +286,7 @@ fn matchup_brief(
         losses: report.losses,
         standing: report.standing,
         notes: report.notes,
+        orders: report.orders,
     })
 }
 
@@ -373,6 +393,7 @@ async fn run_turn<G, F>(
     sink: EventSink,
     turn_id: u64,
     cancel: CancelToken,
+    app: Option<AppHandle>,
 ) where
     G: FnOnce(EventSink) -> F,
     F: std::future::Future<Output = Option<Briefing>>,
@@ -413,11 +434,17 @@ async fn run_turn<G, F>(
 
     let summary = match provider.stream_chat(&messages, &sink, &cancel).await {
         Ok(answer) => {
+            let kind = session.lock().active_kind();
             // A turn the user has already superseded must not append its answer
             // or emit a terminal frame over the newer one.
             if !session.lock().finish_turn(turn_id, &answer) {
                 tracing::debug!(turn_id, "dropping superseded coach turn");
                 return;
+            }
+            if kind == Some(TurnKind::Auto) {
+                if let Some(app) = app.as_ref() {
+                    remember_auto_read(app, &answer);
+                }
             }
             TurnSummary::complete(answer)
         }
@@ -449,9 +476,15 @@ async fn run_turn<G, F>(
                         .await
                     {
                         Ok(answer) => {
+                            let kind = session.lock().active_kind();
                             if !session.lock().finish_turn(turn_id, &answer) {
                                 tracing::debug!(turn_id, "dropping superseded coach turn");
                                 return;
+                            }
+                            if kind == Some(TurnKind::Auto) {
+                                if let Some(app) = app.as_ref() {
+                                    remember_auto_read(app, &answer);
+                                }
                             }
                             TurnSummary::complete(answer)
                         }
@@ -488,17 +521,30 @@ fn spawn_turn(app: AppHandle, coach: &CoachRuntime, turn_id: u64, cancel: Cancel
     let provider = coach.current_provider();
     let session = Arc::clone(&coach.session);
     tauri::async_runtime::spawn(async move {
+        let app_for_ground = app.clone();
         run_turn(
-            |sink| ground_turn(app, scope, sink),
+            move |sink| ground_turn(app_for_ground, scope, sink),
             provider,
             session,
             coalescing,
             sink,
             turn_id,
             cancel,
+            Some(app),
         )
         .await;
     });
+}
+
+fn remember_auto_read(app: &AppHandle, answer: &str) {
+    let Some(state) = app.try_state::<AppState>() else {
+        return;
+    };
+    let turn = state.game_state.read().turn_number;
+    state.record_coach_read(turn, answer);
+    if let Some(coach) = app.try_state::<CoachRuntime>() {
+        *coach.last_auto_at.lock() = Some(Instant::now());
+    }
 }
 
 /// Ask the coach a question. Returns as soon as the turn is registered; the
@@ -509,6 +555,22 @@ pub fn coach_send_message(
     coach: tauri::State<'_, CoachRuntime>,
     message: String,
 ) -> Result<CoachTurnDto, String> {
+    if looks_like_what_now(&message) {
+        let in_match = app
+            .try_state::<AppState>()
+            .is_some_and(|state| state.game_state.read().page_state == "match");
+        if in_match {
+            let last = *coach.last_auto_at.lock();
+            {
+                let mut prefs = coach.prefs.lock();
+                match last {
+                    Some(at) if at.elapsed() < Duration::from_secs(2) => prefs.ignored_call(),
+                    _ => prefs.asked_late(),
+                }
+            }
+            coach.persist_prefs();
+        }
+    }
     let (turn_id, cancel) = coach.session.lock().begin_turn(&message)?;
     spawn_turn(app, coach.inner(), turn_id, cancel);
     Ok(CoachTurnDto { turn_id })
@@ -639,9 +701,14 @@ pub fn interrupt_if_board_changed(app: &AppHandle) {
 
     // Bound in its own statement so the guard is released here rather than
     // being held for the body of the `if let`.
+    let kind = coach.session.lock().active_kind();
     let interrupted = coach.session.lock().interrupt_if_stale(&current);
     if let Some(turn_id) = interrupted {
         tracing::debug!(turn_id, position = %current.label, "board moved; interrupting coach turn");
+        if kind == Some(TurnKind::Auto) {
+            coach.prefs.lock().fired_early();
+            coach.persist_prefs();
+        }
     }
 }
 
@@ -1003,6 +1070,7 @@ mod tests {
             sink,
             turn_id,
             cancel,
+            None,
         )
         .await;
 
@@ -1064,6 +1132,7 @@ mod tests {
             sink,
             turn_id,
             cancel,
+            None,
         )
         .await;
 
@@ -1187,6 +1256,7 @@ mod tests {
             sink,
             turn_id,
             cancel,
+            None,
         )
         .await;
 

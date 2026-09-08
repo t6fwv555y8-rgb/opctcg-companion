@@ -33,6 +33,9 @@ pub struct DeckStrategyBrief {
     /// Card-specific lines derived from the pasted list (empty if none).
     #[serde(default)]
     pub list_notes: Vec<String>,
+    /// What last games against this leader said to do differently.
+    #[serde(default)]
+    pub standing_orders: Vec<String>,
     pub refreshed_at: String,
 }
 
@@ -65,6 +68,7 @@ impl DeckStrategyCoach {
             threats,
             priorities,
             list_notes,
+            standing_orders: Vec::new(),
             refreshed_at: chrono_now(),
         }
     }

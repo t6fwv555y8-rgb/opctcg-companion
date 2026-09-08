@@ -274,6 +274,9 @@ fn matchup_block(report: Option<&MatchupReportDto>) -> String {
     for note in report.notes.iter().take(4) {
         block.push_str(&line(note));
     }
+    for order in report.orders.iter().take(3) {
+        block.push_str(&line(order));
+    }
     block
 }
 

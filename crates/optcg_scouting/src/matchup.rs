@@ -12,6 +12,7 @@
 //! to be inferred from life reaching zero. That inference is allowed to fail,
 //! and when it does the game is filed as unfinished rather than guessed at.
 
+use crate::orders::StandingOrder;
 use serde::{Deserialize, Serialize};
 
 /// Cap on remembered matchups. Two hundred leaders against a handful of your
@@ -56,6 +57,9 @@ pub struct MatchupRecord {
     pub summed_their_life_left_on_loss: u32,
     pub first_played: String,
     pub last_played: String,
+    /// What last games said to do differently in this pairing.
+    #[serde(default)]
+    pub orders: Vec<StandingOrder>,
 }
 
 impl MatchupRecord {
@@ -79,6 +83,7 @@ impl MatchupRecord {
             summed_their_life_left_on_loss: 0,
             first_played: now.to_string(),
             last_played: now.to_string(),
+            orders: Vec::new(),
         }
     }
 
@@ -271,6 +276,23 @@ impl MatchupLedger {
             }
         };
         self.records[index].fold_in(game, now);
+    }
+
+    /// Rewrite this pairing's standing orders from the game that just closed.
+    pub fn refresh_orders(
+        &mut self,
+        review: &crate::review::MatchReview,
+        reads: &[crate::orders::AutoRead],
+    ) {
+        if review.your_leader.is_empty() || review.their_leader.is_empty() {
+            return;
+        }
+        let Some(record) = self.records.iter_mut().find(|r| {
+            r.your_leader == review.your_leader && r.their_leader == review.their_leader
+        }) else {
+            return;
+        };
+        record.orders = crate::orders::refresh_orders(&record.orders, review, reads);
     }
 
     pub(crate) fn prune(&mut self) {

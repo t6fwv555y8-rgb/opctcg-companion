@@ -86,6 +86,13 @@ impl AutoTrigger {
         self.config.enabled
     }
 
+    /// Replace the clocks without touching whether automatic reads are on.
+    pub fn set_timing(&mut self, config: AutoTriggerConfig) {
+        let enabled = self.config.enabled;
+        self.config = config;
+        self.config.enabled = enabled;
+    }
+
     /// Turn automatic reads on or off, discarding any in-progress settle.
     pub fn set_enabled(&mut self, enabled: bool) {
         self.config.enabled = enabled;

@@ -62,6 +62,8 @@ pub struct MatchupBrief {
     pub standing: String,
     /// Plain statements of what was measured.
     pub notes: Vec<String>,
+    /// What last games said to do differently in this pairing.
+    pub orders: Vec<String>,
 }
 
 /// How the last finished game actually went.
@@ -636,6 +638,12 @@ fn matchup_readout(matchup: &MatchupBrief) -> String {
 
     if !matchup.notes.is_empty() {
         lines.push(format!("Measured: {}", matchup.notes.join(" ")));
+    }
+    if !matchup.orders.is_empty() {
+        lines.push(format!(
+            "Standing orders from earlier games in this pairing: {}",
+            matchup.orders.join(" ")
+        ));
     }
 
     lines.push(
@@ -1632,6 +1640,7 @@ mod tests {
                 losses: 2,
                 standing: "favourable".into(),
                 notes: vec!["You are 6-2 in 8 finished games.".into()],
+                orders: vec!["Spend the DON. You have been leaving 4 unspent.".into()],
             }),
             ..Default::default()
         });
@@ -1639,6 +1648,10 @@ mod tests {
         assert!(prompt.contains("## Matchup record"));
         assert!(prompt.contains("6-2"));
         assert!(prompt.contains("favourable"));
+        assert!(
+            prompt.contains("Standing orders"),
+            "learned orders must reach the briefing: {prompt}"
+        );
         assert!(
             prompt.contains("Never tell the player they are likely to lose"),
             "a losing record must not become a prediction: {prompt}"

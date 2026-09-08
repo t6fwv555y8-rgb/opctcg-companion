@@ -156,6 +156,8 @@ export interface MatchupReportDto {
   standing: string;
   win_rate?: number | null;
   notes: string[];
+  /** What last games said to do differently in this pairing. */
+  orders?: string[];
 }
 
 export interface MatchReviewDto {
@@ -321,6 +323,7 @@ export interface DeckStrategyBrief {
   threats: string[];
   priorities: string[];
   list_notes?: string[];
+  standing_orders?: string[];
   refreshed_at: string;
 }
 
