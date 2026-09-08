@@ -115,10 +115,10 @@ export function battleDoThis(
 
   if (combat?.blocker_offered) {
     return {
-      line: "Blocker window — decide now.",
+      line: `They're swinging at ${target} — block, counter, or take it.`,
       steps: [
-        `They're swinging at ${target}.`,
-        "Block, counter, or take the hit.",
+        "Block if a ready character can eat this.",
+        "Otherwise counter or take the hit.",
       ],
     };
   }
