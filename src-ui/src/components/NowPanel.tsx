@@ -1,33 +1,38 @@
-import { useRef } from "react";
 import { battleDoThis } from "../battleDoThis";
-import { nextCoachPin, playByPlayLine, type CoachPin } from "../playByPlay";
 import type {
   CombatAnalysis,
   CombatDoThis,
   CombatState,
-  DeckStrategyBrief,
-  StrategyRecommendation,
 } from "../types/game";
 
 interface Props {
-  phaseCoach: string | null;
-  strategy: StrategyRecommendation | null;
-  options: StrategyRecommendation[];
-  deckStrategy: DeckStrategyBrief | null;
+  thisTurn: string[];
   combat: CombatState | null;
   analysis: CombatAnalysis | null;
   combatCoach?: CombatDoThis | null;
   paused: boolean;
-  /// Latest unprompted coach line, if one has landed.
-  coachLine: string | null;
-  coachBusy: boolean;
-  coachError?: string | null;
   pageState?: string;
-  gameId?: string;
 }
 
 function fmtPower(n: number): string {
   return n >= 1000 && n % 1000 === 0 ? `${n / 1000}k` : String(n);
+}
+
+function defending(
+  combat: CombatState | null,
+  analysis: CombatAnalysis | null,
+): boolean {
+  if (combat?.target_player === 0) return true;
+  if (combat?.target_player === 1) return false;
+  if (combat?.attacker_player === 1) return true;
+  if (combat?.attacker_player === 0) return false;
+  return Boolean(
+    analysis &&
+      combat?.target_is_leader &&
+      (analysis.lethal_to_leader ||
+        analysis.recommended_block ||
+        analysis.required_counter > 0),
+  );
 }
 
 function CombatStrip({ analysis }: { analysis: CombatAnalysis }) {
@@ -50,7 +55,7 @@ function CombatStrip({ analysis }: { analysis: CombatAnalysis }) {
 
   return (
     <div
-      className={`mt-2 flex items-center justify-between gap-3 rounded-lg px-2.5 py-1.5 text-[13px] ${tone}`}
+      className={`mb-2 flex items-center justify-between gap-3 rounded-lg px-2.5 py-1.5 text-[13px] ${tone}`}
     >
       <p className="min-w-0 tabular-nums">
         <span className="font-semibold text-sky-300">
@@ -75,146 +80,64 @@ function CombatStrip({ analysis }: { analysis: CombatAnalysis }) {
   );
 }
 
-/// Rayleigh's broadcast. Updates as the board does.
+function waitingLine(pageState?: string): string {
+  if (pageState === "queue") return "In queue — the next swing will land here.";
+  if (pageState === "lobby") return "In the lobby — queue a match.";
+  if (pageState === "ended") return "Final. Recap is on this tab when it lands.";
+  return "Watching the table.";
+}
+
+/// Attack and defense for the swing that is open. Nothing else.
 export function NowPanel({
-  phaseCoach,
-  strategy,
-  options,
-  deckStrategy,
+  thisTurn,
   combat,
   analysis,
   combatCoach,
   paused,
-  coachLine,
-  coachBusy,
-  coachError,
   pageState,
-  gameId,
 }: Props) {
-  const waiting =
-    pageState === "queue"
-      ? "In queue — the next call lands when the match starts."
-      : pageState === "lobby"
-        ? "In the lobby — queue a match and Rayleigh will call it."
-        : pageState === "ended"
-          ? "Final. The recap lands as soon as the result is readable."
-          : "Waiting for a readable position.";
-  const table = combatCoach ?? battleDoThis(combat, analysis);
   const fighting = Boolean(combat?.active || analysis);
+  const table = fighting
+    ? (battleDoThis(combat, analysis) ?? combatCoach)
+    : null;
+  const defend = fighting && defending(combat, analysis);
+  const title = fighting ? (defend ? "Defend" : "Attack") : "Plan";
   const line =
     table?.line?.trim() ||
-    (!fighting && strategy?.action.description?.trim()) ||
-    phaseCoach?.trim() ||
-    waiting;
-  // Keep Rayleigh's last read. Falling back the instant a turn ends was
-  // snapping Play-by-play to generic phase copy.
-  const pin = useRef<CoachPin | null>(null);
-  const game = gameId || pageState || "";
-  const incoming = coachLine?.trim() ?? "";
-  pin.current = nextCoachPin(pin.current, game, incoming);
-  const broadcast = playByPlayLine(pin.current.text, line);
-  const steps = (
-    table?.steps?.length ? table.steps : (deckStrategy?.this_turn ?? [])
-  ).slice(0, 3);
-  const alts = options
-    .filter((opt) => opt.action.description?.trim() && opt.action.description.trim() !== line)
-    .slice(0, 3);
-  const blockerOpen = Boolean(combat?.blocker_offered);
-  const cover = deckStrategy?.vs_opponent?.trim() || "";
-  const orders = deckStrategy?.standing_orders?.filter((line) => line.trim()) ?? [];
+    thisTurn[0]?.trim() ||
+    waitingLine(pageState);
+  const steps = table?.steps?.length
+    ? table.steps.slice(0, 3)
+    : thisTurn.slice(line === thisTurn[0] ? 1 : 0).slice(0, 3);
 
   return (
-    <div className="flex flex-col gap-3">
-      <section className="broadcast">
-        <div className="flex items-center justify-between gap-2">
-          <div className="broadcast-tag">Rayleigh · Play-by-play</div>
-          {blockerOpen && (
-            <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-100">
-              Blocker window
-            </span>
-          )}
+    <section className="hud-panel px-3.5 py-3">
+      <div className="best-line">
+        <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-amber-200">
+          {title}
         </div>
         {analysis && <CombatStrip analysis={analysis} />}
-        {coachBusy && !incoming && (
-          <p className="mt-2 animate-pulse text-[13px] text-amber-200/60">
-            Reading the new position…
-          </p>
-        )}
-        {coachError && (
-          <p className="mt-2 text-[13px] text-hud-danger">{coachError}</p>
-        )}
-        <p className="broadcast-copy">
-          {broadcast}
-          {coachBusy && incoming && (
-            <span className="ml-1 animate-pulse text-amber-300">▌</span>
-          )}
+        <p className="mt-1 text-[16px] font-semibold leading-snug text-amber-50">
+          {line}
         </p>
-        {paused && (
-          <p className="mt-2 text-[12px] text-hud-warn">
-            The read is shaky — treat this as provisional.
-          </p>
-        )}
-      </section>
-
-      <section className="hud-panel px-3.5 py-3">
-        <div className="best-line">
-          <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-amber-200">
-            The call
-          </div>
-          <p className="mt-1 text-[16px] font-semibold leading-snug text-amber-50">{line}</p>
-        </div>
-        {steps.length > 0 && (
-          <ul className="mt-3 space-y-2">
-            {steps.map((step) => (
-              <li
-                key={step}
-                className="border-l border-amber-400/35 pl-3 text-[13px] leading-snug text-slate-300"
-              >
-                {step}
-              </li>
-            ))}
-          </ul>
-        )}
-        {alts.length > 0 && (
-          <ul className="mt-3 space-y-1.5 border-t border-white/5 pt-3 text-[13px]">
-            {alts.map((opt, i) => (
-              <li
-                key={opt.action.description}
-                className={i === 0 ? "alt-line-1" : "alt-line-2"}
-              >
-                <span className="mr-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">
-                  {i === 0 ? "Next" : "Hold"}
-                </span>
-                {opt.action.description}
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      {(orders.length > 0 || cover) && (
-        <section className="cover-them">
-          <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-rose-200/80">
-            Cover them
-          </div>
-          {orders.length > 0 && (
-            <ul className="mt-1.5 space-y-1.5">
-              {orders.map((order) => (
-                <li
-                  key={order}
-                  className="border-l border-rose-300/40 pl-3 text-[13px] leading-snug text-rose-50"
-                >
-                  {order}
-                </li>
-              ))}
-            </ul>
-          )}
-          {cover && (
-            <p className="mt-1.5 text-[13px] leading-relaxed text-rose-50/90">{cover}</p>
-          )}
-        </section>
+      </div>
+      {steps.length > 0 && (
+        <ul className="mt-3 space-y-2">
+          {steps.map((step) => (
+            <li
+              key={step}
+              className="border-l border-amber-400/35 pl-3 text-[13px] leading-snug text-slate-300"
+            >
+              {step}
+            </li>
+          ))}
+        </ul>
       )}
-
-    </div>
+      {paused && (
+        <p className="mt-2 text-[12px] text-hud-warn">
+          The read is shaky — treat this as provisional.
+        </p>
+      )}
+    </section>
   );
 }

@@ -25,51 +25,6 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "setup", label: "Setup" },
 ];
 
-function colorHex(color?: string): string | undefined {
-  switch ((color || "").toLowerCase()) {
-    case "red":
-      return "#dc2626";
-    case "green":
-      return "#22c55e";
-    case "blue":
-      return "#38bdf8";
-    case "purple":
-      return "#c084fc";
-    case "black":
-      return "#e5e7eb";
-    case "yellow":
-      return "#facc15";
-    default:
-      return undefined;
-  }
-}
-
-/** Scoreboard identity is the leader on the table, never a presumed list. */
-function tableSide(
-  player:
-    | {
-        leader_observed?: boolean;
-        leader_name?: string;
-        leader_id?: string;
-      }
-    | undefined,
-  deck: { leader_name?: string; leader_id?: string; leader_color?: string } | null | undefined,
-): { leader: string; id: string; color?: string } {
-  const named = player?.leader_name?.trim() ?? "";
-  const fromTable = Boolean(player?.leader_observed) || named.length > 0;
-  if (!fromTable) {
-    return { leader: "—", id: "" };
-  }
-  const deckName = deck?.leader_name?.trim() ?? "";
-  const leader =
-    named ||
-    (deckName && deckName !== "Unknown leader" ? deckName : "") ||
-    player?.leader_id ||
-    "";
-  const id = player?.leader_id || (player?.leader_observed ? deck?.leader_id : "") || "";
-  return { leader, id, color: colorHex(deck?.leader_color) };
-}
-
 export default function App() {
   const bridge = useCompanionBridge();
   const coach = useCoachStream();
@@ -88,13 +43,6 @@ export default function App() {
     }
   }, [coach.status, coach.setAuto]);
 
-  const latestCoach = (() => {
-    const automatic = [...coach.messages]
-      .reverse()
-      .find((m) => m.role === "assistant" && m.automatic && m.content.trim());
-    return automatic?.content ?? null;
-  })();
-
   const pageState = gs?.page_state ?? "";
   const recap = bridge.snapshot?.review ?? null;
   const thisGame = Boolean(recap && gs?.game_id && recap.game_id === gs.game_id);
@@ -104,8 +52,6 @@ export default function App() {
   const theirPlayer =
     gs?.player_two.player_name?.trim() ||
     (queued ? "Waiting for opponent" : "Opponent");
-  const you = tableSide(gs?.player_one, bridge.snapshot?.your_deck);
-  const them = tableSide(gs?.player_two, bridge.snapshot?.opponent_deck);
 
   return (
     <div
@@ -116,12 +62,6 @@ export default function App() {
         gameState={gs}
         yourName={yourPlayer}
         theirName={theirPlayer}
-        yourLeader={you.leader}
-        theirLeader={them.leader}
-        yourLeaderId={you.id}
-        theirLeaderId={them.id}
-        yourColor={you.color}
-        theirColor={them.color}
         hudState={bridge.observation?.hud_state ?? null}
         sourceLabel={bridge.observation?.active_source ?? null}
       />
@@ -159,10 +99,7 @@ export default function App() {
                 <MatchReviewPanel review={recap} />
               ) : (
                 <NowPanel
-                  phaseCoach={bridge.snapshot?.phase_coach ?? null}
-                  strategy={bridge.snapshot?.strategy ?? null}
-                  options={bridge.snapshot?.options ?? []}
-                  deckStrategy={bridge.snapshot?.deck_strategy ?? null}
+                  thisTurn={bridge.snapshot?.deck_strategy?.this_turn ?? []}
                   combat={combat}
                   analysis={bridge.snapshot?.combat_analysis ?? null}
                   combatCoach={bridge.snapshot?.combat_coach ?? null}
@@ -170,11 +107,7 @@ export default function App() {
                     bridge.observation?.analysis?.mode === "paused" ||
                     bridge.observation?.hud_state === "lost"
                   }
-                  coachLine={latestCoach}
-                  coachBusy={coach.streaming}
-                  coachError={coach.error}
                   pageState={pageState}
-                  gameId={gs?.game_id}
                 />
               )
             )}

@@ -78,7 +78,7 @@ pub fn battle_do_this(
 
     if state.combat.blocker_offered {
         return Some(table.plan(
-            format!("{swing} Blocker window — decide now."),
+            format!("{swing} Block, counter, or take it."),
             table.your_blocker_steps(),
         ));
     }

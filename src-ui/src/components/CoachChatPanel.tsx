@@ -262,8 +262,8 @@ export function CoachChatPanel() {
             {coach.messages.length === 0 ? (
               <div className="space-y-1">
                 <p className="text-sm text-slate-400">
-                  Play is the broadcast. Ask only when you have a question —
-                  Rayleigh already has the live board and both leaders.
+                  Play is the attack and defense call. Ask only when you have
+                  a question — Rayleigh already has the live board.
                 </p>
                 <div className="flex flex-wrap gap-1">
                   {SUGGESTIONS.map((suggestion) => (
