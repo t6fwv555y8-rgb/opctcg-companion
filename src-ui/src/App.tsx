@@ -21,9 +21,54 @@ type Tab = "play" | "opp" | "ask" | "setup";
 const TABS: { id: Tab; label: string }[] = [
   { id: "play", label: "Play" },
   { id: "opp", label: "Opp" },
-  { id: "ask", label: "Rayleigh" },
+  { id: "ask", label: "Ask" },
   { id: "setup", label: "Setup" },
 ];
+
+function colorHex(color?: string): string | undefined {
+  switch ((color || "").toLowerCase()) {
+    case "red":
+      return "#dc2626";
+    case "green":
+      return "#22c55e";
+    case "blue":
+      return "#38bdf8";
+    case "purple":
+      return "#c084fc";
+    case "black":
+      return "#e5e7eb";
+    case "yellow":
+      return "#facc15";
+    default:
+      return undefined;
+  }
+}
+
+/** Scoreboard identity is the leader on the table, never a presumed list. */
+function tableSide(
+  player:
+    | {
+        leader_observed?: boolean;
+        leader_name?: string;
+        leader_id?: string;
+      }
+    | undefined,
+  deck: { leader_name?: string; leader_id?: string; leader_color?: string } | null | undefined,
+): { leader: string; id: string; color?: string } {
+  const named = player?.leader_name?.trim() ?? "";
+  const fromTable = Boolean(player?.leader_observed) || named.length > 0;
+  if (!fromTable) {
+    return { leader: "—", id: "" };
+  }
+  const deckName = deck?.leader_name?.trim() ?? "";
+  const leader =
+    named ||
+    (deckName && deckName !== "Unknown leader" ? deckName : "") ||
+    player?.leader_id ||
+    "";
+  const id = player?.leader_id || (player?.leader_observed ? deck?.leader_id : "") || "";
+  return { leader, id, color: colorHex(deck?.leader_color) };
+}
 
 export default function App() {
   const bridge = useCompanionBridge();
@@ -44,11 +89,10 @@ export default function App() {
   }, [coach.status, coach.setAuto]);
 
   const latestCoach = (() => {
-    const assistants = [...coach.messages]
+    const automatic = [...coach.messages]
       .reverse()
-      .filter((m) => m.role === "assistant" && m.content.trim());
-    const automatic = assistants.find((m) => m.automatic);
-    return (automatic ?? assistants[0])?.content ?? null;
+      .find((m) => m.role === "assistant" && m.automatic && m.content.trim());
+    return automatic?.content ?? null;
   })();
 
   const pageState = gs?.page_state ?? "";
@@ -60,62 +104,36 @@ export default function App() {
   const theirPlayer =
     gs?.player_two.player_name?.trim() ||
     (queued ? "Waiting for opponent" : "Opponent");
-  const yourLeader =
-    pageState === "match" ||
-    pageState === "ended" ||
-    (gs?.player_one.known_cards?.length ?? 0) > 0 ||
-    Boolean(gs?.player_one.leader_id) ||
-    Boolean(bridge.snapshot?.your_deck?.leader_id) ||
-    bridge.snapshot?.your_deck?.origin === "attached" ||
-    bridge.snapshot?.your_deck?.origin === "presumed"
-      ? (bridge.snapshot?.your_deck?.leader_name ?? gs?.player_one.leader_id ?? "")
-      : "";
-  const theirLeader =
-    pageState === "match" ||
-    pageState === "ended" ||
-    (gs?.player_two.known_cards?.length ?? 0) > 0 ||
-    Boolean(gs?.player_two.leader_id) ||
-    Boolean(bridge.snapshot?.opponent_deck?.leader_id) ||
-    bridge.snapshot?.opponent_deck?.origin === "attached" ||
-    bridge.snapshot?.opponent_deck?.origin === "presumed"
-      ? (bridge.snapshot?.opponent_deck?.leader_name ?? gs?.player_two.leader_id ?? "")
-      : "";
+  const you = tableSide(gs?.player_one, bridge.snapshot?.your_deck);
+  const them = tableSide(gs?.player_two, bridge.snapshot?.opponent_deck);
 
   return (
     <div
-      className="flex h-full min-h-0 w-full flex-col bg-slate-950 text-base text-white"
+      className="app-shell flex h-full min-h-0 w-full flex-col text-base text-white"
       style={{ opacity: bridge.overlay.opacity }}
     >
       <MatchBar
         gameState={gs}
         yourName={yourPlayer}
         theirName={theirPlayer}
-        yourLeader={yourLeader}
-        theirLeader={theirLeader}
-        yourLeaderId={
-          bridge.snapshot?.your_deck?.leader_id || gs?.player_one.leader_id || ""
-        }
-        theirLeaderId={
-          bridge.snapshot?.opponent_deck?.leader_id || gs?.player_two.leader_id || ""
-        }
-        yourLeaderText={bridge.snapshot?.your_deck?.leader_text}
-        theirLeaderText={bridge.snapshot?.opponent_deck?.leader_text}
+        yourLeader={you.leader}
+        theirLeader={them.leader}
+        yourLeaderId={you.id}
+        theirLeaderId={them.id}
+        yourColor={you.color}
+        theirColor={them.color}
         hudState={bridge.observation?.hud_state ?? null}
         sourceLabel={bridge.observation?.active_source ?? null}
       />
 
       <nav className="shrink-0 px-3 pt-2">
-        <div className="flex gap-1 rounded-xl bg-slate-900/70 p-1">
+        <div className="tab-bar">
           {TABS.map((item) => (
             <button
               key={item.id}
               type="button"
               onClick={() => setTab(item.id)}
-              className={`flex-1 rounded-lg py-1.5 text-[13px] font-medium ${
-                tab === item.id
-                  ? "bg-white/10 text-white"
-                  : "text-slate-500 hover:text-slate-200"
-              }`}
+              className={tab === item.id ? "on" : ""}
             >
               {item.label}
             </button>
@@ -156,6 +174,7 @@ export default function App() {
                   coachBusy={coach.streaming}
                   coachError={coach.error}
                   pageState={pageState}
+                  gameId={gs?.game_id}
                 />
               )
             )}

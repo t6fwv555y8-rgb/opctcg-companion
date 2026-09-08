@@ -137,6 +137,9 @@ pub struct MatchReviewDto {
     /// `won`, `lost`, or absent when the result was not readable.
     pub outcome: Option<String>,
     pub headline: String,
+    /// Rayleigh's line for this result — varies by game.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cheer: Option<String>,
     pub your_leader: String,
     pub their_leader: String,
     pub last_turn: u32,
@@ -187,6 +190,11 @@ impl From<&PastedDeckList> for PastedDeckDto {
 pub struct PlayerStateDto {
     pub player_index: u8,
     pub leader_id: String,
+    /// True when this leader was read off the table, not the default placeholder.
+    #[serde(default)]
+    pub leader_observed: bool,
+    #[serde(default)]
+    pub leader_name: String,
     pub leader_power: u32,
     pub life: u32,
     pub active_don: u32,
@@ -202,6 +210,9 @@ pub struct PlayerStateDto {
     pub player_name: String,
     #[serde(default)]
     pub known_cards: Vec<String>,
+    /// Attacks this player has declared this game.
+    #[serde(default)]
+    pub swings: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -217,7 +228,13 @@ impl From<&PlayerState> for PlayerStateDto {
     fn from(p: &PlayerState) -> Self {
         Self {
             player_index: p.player_index,
-            leader_id: p.leader.card_id.clone(),
+            leader_id: if p.leader.observed {
+                p.leader.card_id.clone()
+            } else {
+                String::new()
+            },
+            leader_observed: p.leader.observed,
+            leader_name: p.leader_name.clone(),
             leader_power: p.leader.effective_power(),
             life: p.life,
             active_don: p.don_active,
@@ -240,6 +257,7 @@ impl From<&PlayerState> for PlayerStateDto {
             deck_name: p.deck_name.clone(),
             player_name: p.player_name.clone(),
             known_cards: p.known_cards.clone(),
+            swings: p.swings,
         }
     }
 }
@@ -445,4 +463,20 @@ impl ConnectionStatusDto {
 pub struct OverlaySettings {
     pub click_through: bool,
     pub opacity: f64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use optcg_core::GameState;
+
+    #[test]
+    fn an_unread_board_hides_the_placeholder_leader() {
+        let gs = GameState::new();
+        let dto = GameStateDto::from(&gs);
+        assert!(!dto.player_one.leader_observed);
+        assert!(!dto.player_two.leader_observed);
+        assert!(dto.player_one.leader_id.is_empty());
+        assert!(dto.player_two.leader_id.is_empty());
+    }
 }

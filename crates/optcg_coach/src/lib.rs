@@ -30,7 +30,8 @@ pub mod types;
 
 pub use auto::{AutoDecision, AutoTrigger, AutoTriggerConfig, AUTO_QUESTION};
 pub use grounding::{
-    build_context, estimate_counters, fingerprint, is_decision_point, ContextScope,
+    build_context, estimate_counters, fingerprint, is_decision_point, is_urgent_decision,
+    ContextScope,
     CounterEstimate, DeckContext, GroundedContext, ListStanding, MatchupBrief, ReviewBrief,
     ScoutingBrief, SYSTEM_PROMPT,
 };

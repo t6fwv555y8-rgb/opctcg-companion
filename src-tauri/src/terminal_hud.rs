@@ -250,6 +250,9 @@ fn review_block(review: Option<&crate::dto::MatchReviewDto>) -> String {
         return line("No finished game to recap yet.");
     };
     let mut block = line(&review.headline);
+    if let Some(cheer) = review.cheer.as_deref() {
+        block.push_str(&line(cheer));
+    }
     for note in review.notes.iter().take(4) {
         block.push_str(&line(note));
     }

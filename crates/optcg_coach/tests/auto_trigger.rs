@@ -5,7 +5,10 @@
 //! when a play happens and holds still when it does not, and that
 //! `is_decision_point` gates the moments the player has no say in.
 
-use optcg_coach::{fingerprint, is_decision_point, AutoDecision, AutoTrigger, AutoTriggerConfig};
+use optcg_coach::{
+    fingerprint, is_decision_point, is_urgent_decision, AutoDecision, AutoTrigger,
+    AutoTriggerConfig,
+};
 use optcg_core::{GameState, Phase};
 use std::time::{Duration, Instant};
 
@@ -17,6 +20,8 @@ fn trigger() -> AutoTrigger {
         enabled: true,
         settle: SETTLE,
         min_interval: FLOOR,
+        urgent_settle: Duration::from_millis(400),
+        urgent_min_interval: Duration::from_millis(1_200),
     })
 }
 
@@ -31,7 +36,13 @@ fn poll_until_settled(
     let mut now = from;
     while now <= from + window {
         let position = fingerprint(state);
-        if trigger.observe(&position, is_decision_point(state), now) == AutoDecision::Fire {
+        if trigger.observe_at(
+            &position,
+            is_decision_point(state),
+            is_urgent_decision(state),
+            now,
+        ) == AutoDecision::Fire
+        {
             return true;
         }
         now += Duration::from_millis(500);
@@ -111,7 +122,13 @@ fn a_burst_of_changes_produces_one_read_of_the_finished_position() {
     for life in [4u32, 3, 2] {
         state.players[0].life = life;
         let position = fingerprint(&state);
-        if trigger.observe(&position, is_decision_point(&state), now) == AutoDecision::Fire {
+        if trigger.observe_at(
+            &position,
+            is_decision_point(&state),
+            is_urgent_decision(&state),
+            now,
+        ) == AutoDecision::Fire
+        {
             reads += 1;
         }
         now += Duration::from_millis(300);
@@ -147,7 +164,12 @@ fn churn_that_does_not_change_the_position_never_triggers_a_read() {
 
         let position = fingerprint(&state);
         assert_eq!(
-            trigger.observe(&position, is_decision_point(&state), now),
+            trigger.observe_at(
+                &position,
+                is_decision_point(&state),
+                is_urgent_decision(&state),
+                now,
+            ),
             AutoDecision::Idle,
             "event churn must not trigger a read"
         );
@@ -177,7 +199,13 @@ fn the_floor_between_reads_holds_across_a_run_of_real_plays() {
         state.players[0].life = life;
         for _ in 0..3 {
             let position = fingerprint(&state);
-            if trigger.observe(&position, is_decision_point(&state), now) == AutoDecision::Fire {
+            if trigger.observe_at(
+                &position,
+                is_decision_point(&state),
+                is_urgent_decision(&state),
+                now,
+            ) == AutoDecision::Fire
+            {
                 reads += 1;
             }
             now += Duration::from_millis(500);

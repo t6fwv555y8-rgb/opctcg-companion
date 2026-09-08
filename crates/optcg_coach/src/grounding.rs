@@ -294,6 +294,18 @@ pub fn is_decision_point(state: &GameState) -> bool {
     false
 }
 
+/// DON attach, an open swing, or a blocker window — fire the automatic
+/// read on the short clock instead of waiting out a main-phase sequence.
+pub fn is_urgent_decision(state: &GameState) -> bool {
+    if !is_decision_point(state) {
+        return false;
+    }
+    if state.combat.active || state.combat.blocker_offered {
+        return true;
+    }
+    state.active_player == YOU && state.phase == optcg_core::Phase::Don
+}
+
 /// Identify the board position an answer is grounded on.
 ///
 /// Only fields that would make advice wrong are included, so the turn is not
@@ -1891,6 +1903,16 @@ mod tests {
         // Their attack on their own board is not your decision.
         state.combat.target_player = Some(1);
         assert!(!is_decision_point(&state));
+
+        state.active_player = 0;
+        state.combat.active = false;
+        state.phase = Phase::Don;
+        assert!(is_urgent_decision(&state));
+        state.phase = Phase::Main;
+        assert!(!is_urgent_decision(&state));
+        state.combat.active = true;
+        state.combat.target_player = Some(0);
+        assert!(is_urgent_decision(&state));
     }
 
     #[test]

@@ -390,6 +390,7 @@ impl AppState {
                 optcg_scouting::Outcome::Lost => "lost".into(),
             }),
             headline: review.headline(),
+            cheer: review.cheer(),
             your_leader: name(&review.your_leader, &review.your_leader_name),
             their_leader: name(&review.their_leader, &review.their_leader_name),
             last_turn: review.last_turn,
@@ -413,7 +414,31 @@ impl AppState {
     /// from play: a leader we hold exactly one saved list for brings that list
     /// back as a presumed reading, and anything else leaves us with just the
     /// leader and whatever cards the table has revealed.
-    fn resolve_deck(&self, side: Side, leader_id: &str) -> ResolvedDeck {
+    fn resolve_deck(&self, side: Side, leader_id: &str, observed: bool) -> ResolvedDeck {
+        // A placeholder leader is not a read. Attaching or presuming a list
+        // against it would paint the wrong deck on the scoreboard.
+        if !observed || leader_id.is_empty() {
+            let attached = {
+                let collection = self.deck_collection.read();
+                collection
+                    .attached(side)
+                    .map(|deck| (deck.id.clone(), deck.name.clone(), deck.raw.clone()))
+            };
+            if let Some((id, name, raw)) = attached {
+                if let Some(list) = self.parsed_list(&id, &name, &raw) {
+                    return ResolvedDeck {
+                        list: Some(list),
+                        origin: DeckOrigin::Attached,
+                        deck_id: Some(id),
+                    };
+                }
+            }
+            return ResolvedDeck {
+                list: None,
+                origin: DeckOrigin::Observed,
+                deck_id: None,
+            };
+        }
         let (attached, presumed) = {
             let collection = self.deck_collection.read();
             let attached = collection
@@ -658,6 +683,7 @@ impl AppState {
             leader_id: deck.leader_id.clone(),
             leader_name: deck.leader_name.clone(),
             leader_color: deck.leader_color.clone(),
+            leader_text: deck.leader_text.clone(),
             known_card_ids: deck.known_cards.iter().map(|c| c.card_id.clone()).collect(),
             known_card_names: deck.known_cards.iter().map(|c| c.name.clone()).collect(),
             list_entries: deck.list_entries.clone(),
@@ -715,26 +741,33 @@ impl AppState {
 
     fn deck_info_for(&self, player: &optcg_core::PlayerState, side: Side) -> DeckInfoDto {
         let repo = self.repo();
-        let mut leader_id = player.leader.card_id.clone();
+        let table_read = player.leader.observed;
+        let table_id = if table_read {
+            player.leader.card_id.clone()
+        } else {
+            String::new()
+        };
         let ResolvedDeck {
             list: pasted,
             origin,
             deck_id,
-        } = self.resolve_deck(side, &leader_id);
+        } = self.resolve_deck(side, &table_id, table_read);
 
-        if leader_id.is_empty() {
-            if let Some(ref p) = pasted {
-                if let Some(ref lid) = p.leader_id {
-                    leader_id = lid.clone();
-                }
+        // The table leader wins. An attached list may name a leader for Setup
+        // and the coach before kickoff — the scoreboard ignores that until
+        // `leader_observed` is set.
+        let mut leader_id = table_id;
+        if leader_id.is_empty() && origin == DeckOrigin::Attached {
+            if let Some(id) = pasted.as_ref().and_then(|p| p.leader_id.clone()) {
+                leader_id = id;
             }
         }
 
-        let observed = player.leader_name.trim();
+        let printed = player.leader_name.trim();
         let (leader_name, leader_color, leader_text) = match repo.get_by_id(&leader_id) {
             Ok(def) => {
-                let name = if def.name.is_empty() && !observed.is_empty() {
-                    observed.to_string()
+                let name = if def.name.is_empty() && !printed.is_empty() {
+                    printed.to_string()
                 } else if def.name.is_empty() {
                     leader_id.clone()
                 } else {
@@ -743,19 +776,19 @@ impl AppState {
                 (name, def.color, def.rules_text)
             }
             Err(_) => {
-                if let Some(def) = (!observed.is_empty())
-                    .then(|| repo.search_by_name(observed, 6).ok())
+                if let Some(def) = (!printed.is_empty())
+                    .then(|| repo.search_by_name(printed, 6).ok())
                     .flatten()
                     .and_then(|hits| {
                         hits.into_iter().find(|d| {
                             d.card_type == optcg_core::CardType::Leader
-                                && d.name.eq_ignore_ascii_case(observed)
+                                && d.name.eq_ignore_ascii_case(printed)
                         })
                     })
                 {
                     (def.name, def.color, def.rules_text)
-                } else if !observed.is_empty() {
-                    (observed.to_string(), String::new(), String::new())
+                } else if !printed.is_empty() {
+                    (printed.to_string(), String::new(), String::new())
                 } else if leader_id.is_empty() {
                     ("Unknown leader".into(), String::new(), String::new())
                 } else {
@@ -809,25 +842,28 @@ impl AppState {
 
         known_cards.sort_by(|a, b| a.name.cmp(&b.name));
 
-        let name = if let Some(n) = paste_name {
-            if !n.trim().is_empty() {
-                n
-            } else if !player.deck_name.trim().is_empty() {
-                player.deck_name.clone()
-            } else if !leader_color.is_empty() && leader_name != "Unknown leader" {
-                format!("{leader_color} {leader_name}")
-            } else {
-                "Pasted deck".into()
-            }
-        } else if !player.deck_name.trim().is_empty() {
-            player.deck_name.clone()
-        } else if !leader_color.is_empty() && leader_name != "Unknown leader" {
-            format!("{leader_color} {leader_name}")
-        } else if !leader_id.is_empty() {
-            format!("Deck · {leader_id}")
-        } else {
-            "Deck unknown".into()
-        };
+        // A saved list name is the Setup / coach label. The scoreboard reads
+        // `leader_name` / `leader_id` from the table, not this field.
+        let name = paste_name
+            .filter(|n| !n.trim().is_empty())
+            .or_else(|| {
+                let n = player.deck_name.trim();
+                (!n.is_empty()).then(|| n.to_string())
+            })
+            .unwrap_or_else(|| {
+                if !leader_color.is_empty()
+                    && leader_name != "Unknown leader"
+                    && !leader_name.is_empty()
+                {
+                    format!("{leader_color} {leader_name}")
+                } else if leader_name != "Unknown leader" && !leader_name.is_empty() {
+                    leader_name.clone()
+                } else if !leader_id.is_empty() {
+                    format!("Deck · {leader_id}")
+                } else {
+                    "Deck unknown".into()
+                }
+            });
 
         DeckInfoDto {
             name,
@@ -1058,7 +1094,7 @@ mod tests {
     }
 
     fn set_opponent_leader(board: &Arc<RwLock<optcg_core::GameState>>, card_id: &str) {
-        board.write().player_two_mut().leader.card_id = card_id.to_string();
+        board.write().player_two_mut().set_leader_id(card_id);
     }
 
     #[test]
@@ -1076,6 +1112,45 @@ mod tests {
         );
         assert!(opponent.list_entries.is_empty());
 
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn an_unread_table_does_not_invent_starter_luffy() {
+        let dir = temp_data_dir("no-invent-luffy");
+        let (state, _) = app_state_with_board(&dir);
+        let (you, them) = state.deck_infos();
+        assert!(
+            you.leader_id.is_empty(),
+            "placeholder ST01-001 is not a read: {}",
+            you.leader_id
+        );
+        assert!(
+            them.leader_id.is_empty(),
+            "placeholder ST01-001 is not a read: {}",
+            them.leader_id
+        );
+        assert_ne!(you.leader_name, "Monkey.D.Luffy");
+        assert_ne!(them.leader_name, "Monkey.D.Luffy");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn an_attached_list_does_not_name_an_unread_leader() {
+        let dir = temp_data_dir("no-paint-list");
+        let (state, _) = app_state_with_board(&dir);
+        state.save_deck(Side::You, None, None, LUFFY).unwrap();
+        let dto = GameStateDto::from(&*state.game_state.read());
+        assert!(
+            !dto.player_one.leader_observed && dto.player_one.leader_id.is_empty(),
+            "a saved list is not the card on the table: {:?}",
+            dto.player_one.leader_id
+        );
+        assert!(
+            !dto.player_two.leader_observed && dto.player_two.leader_id.is_empty(),
+            "the far side stays unread: {:?}",
+            dto.player_two.leader_id
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -1140,8 +1215,11 @@ mod tests {
         let (_, opponent) = state.deck_infos();
         assert_eq!(opponent.origin, DeckOrigin::Presumed);
         assert!(
-            opponent.known_cards.is_empty(),
-            "guessed cards must stay out of what the table has revealed: {:?}",
+            opponent
+                .known_cards
+                .iter()
+                .all(|card| card.card_id == "OP17-079"),
+            "guessed list cards must stay out of what the table has revealed: {:?}",
             opponent.known_cards
         );
 
@@ -1172,7 +1250,7 @@ mod tests {
     fn saving_their_list_leaves_your_own_side_alone() {
         let dir = temp_data_dir("save-opponent");
         let (state, board) = app_state_with_board(&dir);
-        board.write().player_one_mut().leader.card_id = "ST01-001".into();
+        board.write().player_one_mut().set_leader_id("ST01-001");
         set_opponent_leader(&board, "OP17-079");
         let yours = state.save_deck(Side::You, None, None, LUFFY).unwrap();
 
@@ -1197,7 +1275,7 @@ mod tests {
         let (state, board) = app_state_with_board(&dir);
         set_opponent_leader(&board, "OP17-079");
         state.save_deck(Side::You, None, None, ELBAPH).unwrap();
-        board.write().player_one_mut().leader.card_id = "ST01-001".into();
+        board.write().player_one_mut().set_leader_id("ST01-001");
 
         state.set_deck_source(Side::You, None).unwrap();
 
@@ -1266,7 +1344,7 @@ mod tests {
             let mut gs = board.write();
             gs.game_id = uuid::Uuid::from_u128(game);
             gs.turn_number = turn;
-            gs.player_two_mut().leader.card_id = leader.to_string();
+            gs.player_two_mut().set_leader_id(leader);
             gs.player_two_mut().characters = cards
                 .iter()
                 .map(|id| optcg_core::CardInstance::new(*id, 1, optcg_core::Zone::Character))
@@ -1365,8 +1443,8 @@ mod tests {
             let mut gs = board.write();
             gs.game_id = uuid::Uuid::from_u128(1);
             gs.turn_number = 6;
-            gs.player_one_mut().leader.card_id = "ST01-001".into();
-            gs.player_two_mut().leader.card_id = "OP17-079".into();
+            gs.player_one_mut().set_leader_id("ST01-001");
+            gs.player_two_mut().set_leader_id("OP17-079");
             gs.player_two_mut().characters = vec![optcg_core::CardInstance::new(
                 "OP17-080",
                 1,

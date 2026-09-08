@@ -74,6 +74,13 @@ impl ObservationReconciler {
                 });
             }
             if let Some(page_state) = parse_page_state_raw(raw) {
+                if matches!(page_state.as_str(), "queue" | "lobby")
+                    && session.state.page_state == "match"
+                {
+                    for player in &mut session.state.players {
+                        player.swings = 0;
+                    }
+                }
                 session.state.page_state = page_state;
                 return Ok(ReconcileOutcome {
                     applied: true,
@@ -607,6 +614,23 @@ mod tests {
             .known_cards
             .iter()
             .any(|c| c == "ST01-002"));
+    }
+
+    #[test]
+    fn leaving_a_match_for_queue_clears_swings() {
+        let mut reconciler = ObservationReconciler::default();
+        let mut session = GameSession::new(ObservationSource::BrowserSimulator);
+        session.state.page_state = "match".into();
+        session.state.player_one_mut().swings = 4;
+        session.state.player_two_mut().swings = 2;
+        let page = ObservationEvent::StructuredRaw {
+            raw: "PAGE_STATE|queue".into(),
+            source: ObservationSource::BrowserSimulator,
+            confidence: 0.9,
+        };
+        assert!(reconciler.reconcile(&mut session, &page).unwrap().applied);
+        assert_eq!(session.state.player_one().swings, 0);
+        assert_eq!(session.state.player_two().swings, 0);
     }
 
     #[test]

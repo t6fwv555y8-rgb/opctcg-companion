@@ -42,8 +42,14 @@ body {
   background: rgba(148, 163, 184, 0.7);
 }
 
+.app-shell {
+  background:
+    radial-gradient(1200px 400px at 50% -10%, rgba(212, 160, 23, 0.12), transparent 55%),
+    linear-gradient(180deg, #0a1628 0%, #071018 42%, #0b1220 100%);
+}
+
 .hud-panel {
-  @apply rounded-xl border border-white/[0.07] bg-slate-900/55 shadow-none backdrop-blur-md;
+  @apply rounded-xl border border-amber-200/10 bg-slate-950/55 shadow-none backdrop-blur-md;
 }
 
 .hud-title {
@@ -99,4 +105,183 @@ body {
 
 .win-banner {
   @apply rounded-lg border border-emerald-300/40 bg-emerald-400/10 px-2.5 py-2 text-emerald-100;
+}
+
+.loss-banner {
+  @apply rounded-lg border border-rose-300/30 bg-rose-400/10 px-2.5 py-2 text-rose-100;
+}
+
+.scoreboard {
+  flex-shrink: 0;
+  border-bottom: 2px solid rgba(212, 160, 23, 0.35);
+  background:
+    repeating-linear-gradient(
+      90deg,
+      rgba(212, 160, 23, 0.08) 0 10px,
+      transparent 10px 18px
+    ),
+    repeating-linear-gradient(
+      0deg,
+      transparent 0 22px,
+      rgba(245, 215, 110, 0.04) 22px 23px
+    ),
+    linear-gradient(180deg, #10261a 0%, #0a1a12 55%, #07140e 100%);
+  box-shadow: inset 0 -8px 18px rgba(0, 0, 0, 0.35);
+}
+
+.scoreboard::after {
+  content: "";
+  display: block;
+  height: 5px;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      #8b5a2b 0 8px,
+      #d4a017 8px 10px,
+      #5b3a1a 10px 18px
+    );
+}
+
+.scoreboard-ticker {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 12px;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(212, 160, 23, 0.7);
+}
+
+.scoreboard-brand {
+  font-weight: 700;
+  color: #f5d76e;
+}
+
+.scoreboard-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 10px 6px;
+}
+
+.scoreboard-seat {
+  min-width: 0;
+}
+
+.scoreboard-seat.them {
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(248, 250, 252, 0.06);
+}
+
+.scoreboard-seat.you {
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: rgba(212, 160, 23, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(212, 160, 23, 0.22);
+}
+
+.scoreboard-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.scoreboard-role {
+  font-size: 8px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(148, 163, 184, 0.7);
+}
+
+.scoreboard-seat.you .scoreboard-role {
+  color: #f5d76e;
+}
+
+.scoreboard-leader {
+  margin-top: 1px;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.15;
+  color: #f8fafc;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scoreboard-life {
+  flex-shrink: 0;
+  min-width: 1.2em;
+  font-variant-numeric: tabular-nums;
+  font-size: 22px;
+  font-weight: 800;
+  line-height: 1;
+  text-align: right;
+  color: #f5d76e;
+}
+
+.scoreboard-meta {
+  margin-top: 1px;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(226, 232, 240, 0.5);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.broadcast {
+  @apply rounded-xl px-3.5 py-3;
+  border: 1px solid rgba(212, 160, 23, 0.28);
+  background:
+    linear-gradient(180deg, rgba(20, 16, 8, 0.72), rgba(10, 14, 22, 0.72));
+}
+
+.broadcast-tag {
+  @apply text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-200;
+}
+
+.broadcast-copy {
+  margin-top: 8px;
+  font-size: 15px;
+  line-height: 1.45;
+  color: #f8fafc;
+}
+
+.cover-them {
+  @apply rounded-xl px-3.5 py-3;
+  border: 1px solid rgba(248, 113, 113, 0.28);
+  background: rgba(69, 10, 10, 0.28);
+}
+
+.tab-bar {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 12px;
+  background: rgba(8, 12, 18, 0.7);
+  border: 1px solid rgba(212, 160, 23, 0.16);
+}
+
+.tab-bar button {
+  flex: 1;
+  border-radius: 8px;
+  padding: 7px 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(226, 232, 240, 0.45);
+}
+
+.tab-bar button:hover {
+  color: rgba(245, 215, 110, 0.85);
+}
+
+.tab-bar button.on {
+  background: linear-gradient(180deg, rgba(212, 160, 23, 0.32), rgba(212, 160, 23, 0.12));
+  color: #f5d76e;
+  box-shadow: inset 0 0 0 1px rgba(212, 160, 23, 0.28);
 }

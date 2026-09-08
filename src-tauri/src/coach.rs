@@ -566,11 +566,12 @@ pub fn poll_auto_trigger(app: &AppHandle) {
         return;
     };
 
-    let (position, at_decision_point, game_id) = {
+    let (position, at_decision_point, urgent, game_id) = {
         let game_state = state.game_state.read();
         (
             optcg_coach::fingerprint(&game_state),
             optcg_coach::is_decision_point(&game_state),
+            optcg_coach::is_urgent_decision(&game_state),
             game_state.game_id,
         )
     };
@@ -587,7 +588,7 @@ pub fn poll_auto_trigger(app: &AppHandle) {
     let decision = coach
         .auto
         .lock()
-        .observe(&position, at_decision_point, Instant::now());
+        .observe_at(&position, at_decision_point, urgent, Instant::now());
     if decision != AutoDecision::Fire {
         return;
     }
@@ -725,7 +726,7 @@ mod tests {
                 let mut gs = board.write();
                 gs.game_id = uuid::Uuid::from_u128(game);
                 gs.turn_number = 3;
-                gs.player_two_mut().leader.card_id = "OP17-079".into();
+                gs.player_two_mut().set_leader_id("OP17-079");
                 gs.player_two_mut().characters = vec![optcg_core::CardInstance::new(
                     card,
                     1,
@@ -797,8 +798,8 @@ mod tests {
         {
             let mut gs = board.write();
             gs.game_id = uuid::Uuid::from_u128(1);
-            gs.player_one_mut().leader.card_id = "ST01-001".into();
-            gs.player_two_mut().leader.card_id = "OP17-079".into();
+            gs.player_one_mut().set_leader_id("ST01-001");
+            gs.player_two_mut().set_leader_id("OP17-079");
             gs.player_two_mut().characters = vec![optcg_core::CardInstance::new(
                 "OP17-080",
                 1,

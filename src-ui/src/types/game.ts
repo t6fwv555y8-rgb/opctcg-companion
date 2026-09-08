@@ -58,6 +58,8 @@ export interface LastEventInfo {
 export interface PlayerStateDto {
   player_index: number;
   leader_id: string;
+  leader_observed?: boolean;
+  leader_name?: string;
   leader_power: number;
   life: number;
   active_don: number;
@@ -70,6 +72,7 @@ export interface PlayerStateDto {
   deck_name?: string;
   player_name?: string;
   known_cards?: string[];
+  swings?: number;
 }
 
 /// Where a side's deck list came from.
@@ -159,6 +162,8 @@ export interface MatchReviewDto {
   game_id: string;
   outcome?: string | null;
   headline: string;
+  /** Rayleigh's line for this result — varies by game. */
+  cheer?: string | null;
   your_leader: string;
   their_leader: string;
   last_turn: number;

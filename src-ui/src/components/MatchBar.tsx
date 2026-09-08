@@ -8,14 +8,10 @@ interface Props {
   theirLeader: string;
   yourLeaderId?: string;
   theirLeaderId?: string;
-  yourLeaderText?: string;
-  theirLeaderText?: string;
+  yourColor?: string;
+  theirColor?: string;
   hudState: HudOperatingStateKind | null;
   sourceLabel: string | null;
-}
-
-function whoseTurn(gs: GameStateDto): string {
-  return gs.active_player === 0 ? "Your turn" : "Their turn";
 }
 
 function formatLeader(
@@ -24,51 +20,63 @@ function formatLeader(
 ): string {
   const n = name?.trim() ?? "";
   const card = id?.trim() ?? "";
-  if (n && n !== "Unknown leader" && card && n !== card) return `${n} · ${card}`;
+  if (n && n !== "Unknown leader" && n !== "—" && card && n !== card) {
+    return `${n}  ${card}`;
+  }
   if (n && n !== "Unknown leader") return n;
   return card;
 }
 
-function Side({
-  life,
-  name,
-  leader,
-  text,
-  don,
+function Seat({
   you,
+  seat,
+  player,
+  leader,
+  color,
+  life,
+  swings,
+  hand,
+  don,
 }: {
-  life: string | number;
-  name: string;
-  leader: string;
-  text?: string;
-  don: number | null;
   you?: boolean;
+  seat: string;
+  player: string;
+  leader: string;
+  color?: string;
+  life: number | string;
+  swings: number;
+  hand?: number;
+  don?: number;
 }) {
+  const meta = [
+    player && player !== "You" && player !== "Opponent" ? player : null,
+    `${swings} ${swings === 1 ? "swing" : "swings"}`,
+    hand != null ? `${hand} cards` : null,
+    don != null ? `${don} DON` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
   return (
-    <div className={`flex items-baseline gap-2 ${you ? "" : "opacity-80"}`}>
-      <span
-        className={`shrink-0 font-semibold tabular-nums leading-none ${
-          you ? "text-[26px] text-white" : "text-[22px] text-slate-200"
-        }`}
-      >
-        {life}
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className={`truncate text-[13px] ${you ? "text-slate-200" : "text-slate-400"}`}>
-          {name}
-        </div>
-        {leader && (
-          <div className="truncate text-[11px] text-amber-100/80">{leader}</div>
-        )}
-        {text && (
-          <div className="mt-0.5 line-clamp-2 text-[10px] leading-snug text-slate-500">
-            {text}
+    <div className={`scoreboard-seat ${you ? "you" : "them"}`}>
+      <div className="scoreboard-row">
+        <div className="min-w-0">
+          <div className="scoreboard-role">{seat}</div>
+          <div
+            className="scoreboard-leader"
+            style={color ? { color } : undefined}
+          >
+            {leader || (you ? "Your leader" : "Their leader")}
           </div>
-        )}
+          <div className="scoreboard-meta">{meta}</div>
+        </div>
+        <div
+          className="scoreboard-life"
+          aria-label={`${life} life`}
+        >
+          {life}
+        </div>
       </div>
-      {don != null && (
-        <span className="shrink-0 text-[11px] tabular-nums text-slate-500">{don} DON</span>
-      )}
     </div>
   );
 }
@@ -81,67 +89,65 @@ export function MatchBar({
   theirLeader,
   yourLeaderId,
   theirLeaderId,
-  yourLeaderText,
-  theirLeaderText,
+  yourColor,
+  theirColor,
   hudState,
   sourceLabel,
 }: Props) {
   const page = gameState?.page_state ?? "";
   const queued = page === "queue";
   const live = hudState === "live" || queued;
-  const you = queued ? "–" : (gameState?.player_one.life ?? "–");
-  const them = queued ? "–" : (gameState?.player_two.life ?? "–");
+  const youLife = queued ? "–" : (gameState?.player_one.life ?? "–");
+  const themLife = queued ? "–" : (gameState?.player_two.life ?? "–");
   const youLeader = formatLeader(yourLeader, yourLeaderId);
   const themLeader = formatLeader(theirLeader, theirLeaderId);
   const inMatch = (page === "match" || page === "ended") && !queued;
-
-  const status = queued
-    ? "In queue"
+  const yourTurn = gameState?.active_player === 0;
+  const clock = queued
+    ? "QUEUE"
     : page === "lobby"
-      ? "In lobby"
+      ? "LOBBY"
       : page === "ended"
-        ? "Game over"
-        : page === "match" && hudState === "live"
-          ? "Live"
-          : hudState && hudState !== "live"
-            ? hudState
-            : null;
+        ? "END"
+        : gameState
+          ? `TURN ${gameState.turn_number} · ${gameState.phase}`
+          : "—";
+  const whose = !inMatch ? "" : yourTurn ? "Your turn" : "Their turn";
 
   return (
-    <header className="shrink-0 border-b border-white/[0.06] px-3 py-2">
-      <div className="flex items-center justify-between gap-2 text-[11px] text-slate-500">
+    <header className="scoreboard">
+      <div className="scoreboard-ticker">
         <span className="flex items-center gap-1.5">
           <span className={`pulse-dot ${live ? "connected" : "disconnected"}`} />
           {sourceLabel ?? "Searching"}
-          {status ? ` · ${status}` : ""}
         </span>
-        {gameState && page === "match" && (
-          <span className="font-medium text-slate-300">
-            {whoseTurn(gameState)} · {gameState.phase}
-          </span>
-        )}
-        {page === "ended" && (
-          <span className="font-medium text-slate-300">Match finished</span>
-        )}
-        {queued && (
-          <span className="font-medium text-hud-accent">Waiting for a match</span>
-        )}
+        <span className="scoreboard-brand">
+          {clock}
+          {whose ? ` · ${whose}` : ""}
+        </span>
+        <span>Life</span>
       </div>
-      <div className="mt-1.5 flex flex-col gap-1.5">
-        <Side
-          life={them}
-          name={theirName || "Opponent"}
+      <div className="scoreboard-stack">
+        <Seat
+          seat="Them"
+          player={theirName || "Opponent"}
           leader={themLeader}
-          text={inMatch ? theirLeaderText : undefined}
-          don={inMatch ? (gameState?.player_two.active_don ?? 0) : null}
+          color={theirColor}
+          life={themLife}
+          swings={gameState?.player_two.swings ?? 0}
+          hand={inMatch ? gameState?.player_two.hand_count : undefined}
+          don={inMatch ? gameState?.player_two.active_don : undefined}
         />
-        <Side
-          life={you}
-          name={yourName || "You"}
-          leader={youLeader}
-          text={inMatch ? yourLeaderText : undefined}
-          don={inMatch ? (gameState?.player_one.active_don ?? 0) : null}
+        <Seat
           you
+          seat="You"
+          player={yourName || "You"}
+          leader={youLeader}
+          color={yourColor}
+          life={youLife}
+          swings={gameState?.player_one.swings ?? 0}
+          hand={inMatch ? gameState?.player_one.hand_count : undefined}
+          don={inMatch ? gameState?.player_one.active_don : undefined}
         />
       </div>
     </header>
