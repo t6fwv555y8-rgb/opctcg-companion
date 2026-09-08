@@ -89,11 +89,10 @@ export default function App() {
   }, [coach.status, coach.setAuto]);
 
   const latestCoach = (() => {
-    const assistants = [...coach.messages]
+    const automatic = [...coach.messages]
       .reverse()
-      .filter((m) => m.role === "assistant" && m.content.trim());
-    const automatic = assistants.find((m) => m.automatic);
-    return (automatic ?? assistants[0])?.content ?? null;
+      .find((m) => m.role === "assistant" && m.automatic && m.content.trim());
+    return automatic?.content ?? null;
   })();
 
   const pageState = gs?.page_state ?? "";
@@ -175,6 +174,7 @@ export default function App() {
                   coachBusy={coach.streaming}
                   coachError={coach.error}
                   pageState={pageState}
+                  gameId={gs?.game_id}
                 />
               )
             )}

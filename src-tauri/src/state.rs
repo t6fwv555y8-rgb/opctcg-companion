@@ -390,6 +390,7 @@ impl AppState {
                 optcg_scouting::Outcome::Lost => "lost".into(),
             }),
             headline: review.headline(),
+            cheer: review.cheer(),
             your_leader: name(&review.your_leader, &review.your_leader_name),
             their_leader: name(&review.their_leader, &review.their_leader_name),
             last_turn: review.last_turn,

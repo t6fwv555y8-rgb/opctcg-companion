@@ -137,6 +137,9 @@ pub struct MatchReviewDto {
     /// `won`, `lost`, or absent when the result was not readable.
     pub outcome: Option<String>,
     pub headline: String,
+    /// Rayleigh's line for this result — varies by game.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cheer: Option<String>,
     pub your_leader: String,
     pub their_leader: String,
     pub last_turn: u32,

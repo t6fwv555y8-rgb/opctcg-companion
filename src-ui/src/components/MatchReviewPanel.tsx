@@ -24,13 +24,23 @@ export function MatchReviewPanel({ review }: Props) {
           </span>
         )}
       </div>
-      {review.outcome === "won" && (
-        <div className="win-banner mt-2">
-          <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-200">
+      {review.cheer && (
+        <div
+          className={`mt-2 ${review.outcome === "lost" ? "loss-banner" : "win-banner"}`}
+        >
+          <div
+            className={`text-[10px] font-semibold uppercase tracking-[0.16em] ${
+              review.outcome === "lost" ? "text-rose-200" : "text-emerald-200"
+            }`}
+          >
             Rayleigh
           </div>
-          <p className="mt-1 text-[16px] font-semibold leading-snug text-emerald-50">
-            You won. That is how you get stronger.
+          <p
+            className={`mt-1 text-[16px] font-semibold leading-snug ${
+              review.outcome === "lost" ? "text-rose-50" : "text-emerald-50"
+            }`}
+          >
+            {review.cheer}
           </p>
         </div>
       )}

@@ -139,21 +139,95 @@ impl MatchReview {
     pub fn headline(&self) -> String {
         match self.outcome {
             Some(Outcome::Won) => format!(
-                "You won on turn {} — {} life left. Rayleigh is proud of that one.",
+                "You won on turn {} — {} life left.",
                 self.last_turn.max(1),
                 self.your_life
             ),
             Some(Outcome::Lost) => format!(
-                "Lost on turn {} — they had {} life",
+                "Lost on turn {} — they had {} life.",
                 self.last_turn.max(1),
                 self.their_life
             ),
             None => format!(
-                "Game stopped on turn {} at {}–{}",
+                "Game stopped on turn {} at {}–{}.",
                 self.last_turn.max(1),
                 self.your_life,
                 self.their_life
             ),
+        }
+    }
+
+    /// Rayleigh's line for this result. Stable for a game, different across games.
+    pub fn cheer(&self) -> Option<String> {
+        match self.outcome {
+            Some(Outcome::Won) => Some(pick(&self.cheer_seed(), self.win_bank()).to_string()),
+            Some(Outcome::Lost) => Some(pick(&self.cheer_seed(), self.loss_bank()).to_string()),
+            None => None,
+        }
+    }
+
+    fn cheer_seed(&self) -> String {
+        format!(
+            "{}:{}:{}:{}",
+            self.game_id, self.last_turn, self.your_life, self.their_life
+        )
+    }
+
+    fn win_bank(&self) -> &'static [&'static str] {
+        if self.your_life <= 1 {
+            &[
+                "One life. That's nerve — and a little luck. Bank the nerve.",
+                "You left it on 1. I still call that a win.",
+                "Held by a thread. Next time, keep a counter for the last swing.",
+                "Close. The Dark King likes a student who doesn't flinch.",
+            ]
+        } else if self.your_life >= 4 {
+            &[
+                "They never got a look-in. That's how you get stronger.",
+                "Comfortable. Don't let the next opponent sit that still.",
+                "You made it look easy. Stay greedy on life.",
+                "Clean. They were playing catch-up the whole way.",
+            ]
+        } else if self.last_turn > 0 && self.last_turn <= 5 {
+            &[
+                "Over early. That's the race they couldn't run.",
+                "You closed the door before they sat down.",
+                "Fast. Don't get sloppy just because they folded.",
+            ]
+        } else {
+            &[
+                "You won. That is how you get stronger.",
+                "Solid. The Dark King is proud of that one.",
+                "Good. You saw the board and you finished.",
+                "That's a win. Don't get drunk on it — the next one is waiting.",
+                "Clean work. That's the standard.",
+                "You earned that. Same discipline next game.",
+                "They folded. You didn't. That's the whole game.",
+                "Well fought. I taught you better than they learned.",
+            ]
+        }
+    }
+
+    fn loss_bank(&self) -> &'static [&'static str] {
+        if self.their_life <= 1 {
+            &[
+                "You had them. The next game is about finishing.",
+                "One life short. Remember the swing you passed.",
+                "Close. Don't let that one sit in your chest.",
+            ]
+        } else if self.their_life >= 4 {
+            &[
+                "They stayed high. You never got the race going.",
+                "A blowout. Change the first three turns, not the last one.",
+                "They dictated it. Read the recap, then queue.",
+            ]
+        } else {
+            &[
+                "You dropped that one. Read it, then queue.",
+                "They were better this game. Fix the leak.",
+                "A loss. The next one is where you answer.",
+                "Not your night. The Dark King still expects the next one.",
+            ]
         }
     }
 
@@ -244,6 +318,18 @@ impl MatchReview {
     }
 }
 
+fn pick<'a>(seed: &str, bank: &[&'a str]) -> &'a str {
+    if bank.is_empty() {
+        return "";
+    }
+    let mut hash: u32 = 2_166_136_261;
+    for byte in seed.bytes() {
+        hash ^= u32::from(byte);
+        hash = hash.wrapping_mul(16_777_619);
+    }
+    bank[(hash as usize) % bank.len()]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -296,9 +382,8 @@ mod tests {
             review.headline()
         );
         assert!(
-            review.headline().contains("Rayleigh is proud"),
-            "{}",
-            review.headline()
+            review.cheer().is_some_and(|line| !line.is_empty()),
+            "a win should get a Rayleigh line"
         );
         assert_eq!(review.outcome, Some(Outcome::Won));
         assert!(review.you_played.contains(&"ST01-002".into()));
@@ -352,6 +437,22 @@ mod tests {
         assert!(
             MatchReview::from_open(&idle, NOW).is_none(),
             "an idle HUD must not invent a recap"
+        );
+    }
+
+    #[test]
+    fn wins_get_different_rayleigh_lines() {
+        let base = MatchReview::from_open(&open(Outcome::Won), NOW).unwrap();
+        let lines: std::collections::BTreeSet<String> = (0..40)
+            .map(|i| {
+                let mut review = base.clone();
+                review.game_id = format!("game-{i}");
+                review.cheer().expect("win cheer")
+            })
+            .collect();
+        assert!(
+            lines.len() >= 3,
+            "expected varied congratulations, got {lines:?}"
         );
     }
 

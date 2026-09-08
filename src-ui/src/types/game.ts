@@ -162,6 +162,8 @@ export interface MatchReviewDto {
   game_id: string;
   outcome?: string | null;
   headline: string;
+  /** Rayleigh's line for this result — varies by game. */
+  cheer?: string | null;
   your_leader: string;
   their_leader: string;
   last_turn: number;

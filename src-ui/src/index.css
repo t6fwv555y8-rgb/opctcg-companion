@@ -107,6 +107,10 @@ body {
   @apply rounded-lg border border-emerald-300/40 bg-emerald-400/10 px-2.5 py-2 text-emerald-100;
 }
 
+.loss-banner {
+  @apply rounded-lg border border-rose-300/30 bg-rose-400/10 px-2.5 py-2 text-rose-100;
+}
+
 .scoreboard {
   flex-shrink: 0;
   border-bottom: 2px solid rgba(212, 160, 23, 0.35);
@@ -157,8 +161,8 @@ body {
 .scoreboard-stack {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 8px 12px 10px;
+  gap: 4px;
+  padding: 4px 10px 6px;
 }
 
 .scoreboard-seat {
@@ -171,15 +175,22 @@ body {
 }
 
 .scoreboard-seat.you {
-  padding: 6px 8px;
-  border-radius: 8px;
+  padding: 4px 6px;
+  border-radius: 6px;
   background: rgba(212, 160, 23, 0.08);
   box-shadow: inset 0 0 0 1px rgba(212, 160, 23, 0.22);
 }
 
+.scoreboard-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
 .scoreboard-role {
-  font-size: 9px;
-  letter-spacing: 0.2em;
+  font-size: 8px;
+  letter-spacing: 0.18em;
   text-transform: uppercase;
   color: rgba(148, 163, 184, 0.7);
 }
@@ -189,82 +200,36 @@ body {
 }
 
 .scoreboard-leader {
-  margin-top: 2px;
-  font-size: 16px;
-  font-weight: 800;
-  line-height: 1.2;
-  color: #f8fafc;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-}
-
-.scoreboard-player {
   margin-top: 1px;
-  font-size: 10px;
-  color: rgba(226, 232, 240, 0.55);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.15;
+  color: #f8fafc;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.life-pips {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  margin-top: 6px;
-}
-
-.life-pips .pip {
-  width: 12px;
-  height: 12px;
-  border-radius: 999px;
-  border: 1px solid rgba(245, 215, 110, 0.35);
-  background: transparent;
-}
-
-.life-pips .pip.on {
-  background: #f5d76e;
-  box-shadow: 0 0 8px rgba(245, 215, 110, 0.35);
-}
-
-.life-count {
-  margin-left: 4px;
+.scoreboard-life {
+  flex-shrink: 0;
+  min-width: 1.2em;
   font-variant-numeric: tabular-nums;
-  font-size: 18px;
+  font-size: 22px;
   font-weight: 800;
   line-height: 1;
+  text-align: right;
   color: #f5d76e;
 }
 
 .scoreboard-meta {
-  margin-top: 3px;
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: rgba(226, 232, 240, 0.55);
-}
-
-.scoreboard-mid {
-  text-align: center;
-  padding: 2px 0;
-}
-
-.scoreboard-clock {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: #e2e8f0;
-}
-
-.scoreboard-poss {
-  margin-top: 2px;
+  margin-top: 1px;
   font-size: 9px;
-  letter-spacing: 0.16em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: #86efac;
+  color: rgba(226, 232, 240, 0.5);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .broadcast {

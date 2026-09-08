@@ -27,19 +27,6 @@ function formatLeader(
   return card;
 }
 
-function LifePips({ life }: { life: number | string }) {
-  const n = typeof life === "number" ? life : 0;
-  const slots = Math.max(5, n);
-  return (
-    <div className="life-pips" aria-label={`${n} life`}>
-      {Array.from({ length: slots }, (_, i) => (
-        <span key={i} className={i < n ? "pip on" : "pip"} />
-      ))}
-      <span className="life-count">{typeof life === "number" ? n : life}</span>
-    </div>
-  );
-}
-
 function Seat({
   you,
   seat,
@@ -61,22 +48,34 @@ function Seat({
   hand?: number;
   don?: number;
 }) {
+  const meta = [
+    `${swings} ${swings === 1 ? "swing" : "swings"}`,
+    hand != null ? `${hand} cards` : null,
+    don != null ? `${don} DON` : null,
+    player || null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
   return (
     <div className={`scoreboard-seat ${you ? "you" : "them"}`}>
-      <div className="scoreboard-role">{seat}</div>
-      <div className="scoreboard-leader" style={color ? { color } : undefined}>
-        {leader || (you ? "Your leader" : "Their leader")}
-      </div>
-      <div className="scoreboard-player">{player}</div>
-      <LifePips life={life} />
-      <div className="scoreboard-meta">
-        {swings} {swings === 1 ? "swing" : "swings"}
-        {hand != null && don != null && (
-          <>
-            <span className="mx-1.5 opacity-40">·</span>
-            {hand} cards · {don} DON
-          </>
-        )}
+      <div className="scoreboard-row">
+        <div className="min-w-0">
+          <div className="scoreboard-role">{seat}</div>
+          <div
+            className="scoreboard-leader"
+            style={color ? { color } : undefined}
+          >
+            {leader || (you ? "Your leader" : "Their leader")}
+          </div>
+          <div className="scoreboard-meta">{meta}</div>
+        </div>
+        <div
+          className="scoreboard-life"
+          aria-label={`${life} life`}
+        >
+          {life}
+        </div>
       </div>
     </div>
   );
@@ -122,12 +121,15 @@ export function MatchBar({
           <span className={`pulse-dot ${live ? "connected" : "disconnected"}`} />
           {sourceLabel ?? "Searching"}
         </span>
-        <span className="scoreboard-brand">OPTCG · LIFE</span>
-        <span>{clock}</span>
+        <span className="scoreboard-brand">
+          {clock}
+          {whose ? ` · ${whose}` : ""}
+        </span>
+        <span>Life</span>
       </div>
       <div className="scoreboard-stack">
         <Seat
-          seat="Them · top of table"
+          seat="Them"
           player={theirName || "Opponent"}
           leader={themLeader}
           color={theirColor}
@@ -136,13 +138,9 @@ export function MatchBar({
           hand={inMatch ? gameState?.player_two.hand_count : undefined}
           don={inMatch ? gameState?.player_two.active_don : undefined}
         />
-        <div className="scoreboard-mid">
-          <div className="scoreboard-clock">{clock}</div>
-          {whose && <div className="scoreboard-poss">{whose}</div>}
-        </div>
         <Seat
           you
-          seat="You · bottom of table"
+          seat="You"
           player={yourName || "You"}
           leader={youLeader}
           color={yourColor}

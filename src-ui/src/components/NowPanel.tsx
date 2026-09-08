@@ -1,4 +1,6 @@
+import { useRef } from "react";
 import { battleDoThis } from "../battleDoThis";
+import { nextCoachPin, playByPlayLine, type CoachPin } from "../playByPlay";
 import type {
   CombatAnalysis,
   CombatDoThis,
@@ -21,6 +23,7 @@ interface Props {
   coachBusy: boolean;
   coachError?: string | null;
   pageState?: string;
+  gameId?: string;
 }
 
 function fmtPower(n: number): string {
@@ -72,45 +75,6 @@ function CombatStrip({ analysis }: { analysis: CombatAnalysis }) {
   );
 }
 
-function RosterColumn({
-  title,
-  rows,
-}: {
-  title: string;
-  rows: string[];
-}) {
-  return (
-    <div>
-      <div className="text-[10px] font-medium uppercase tracking-[0.16em] text-amber-200/50">
-        {title}
-      </div>
-      {rows.length === 0 ? (
-        <p className="mt-1.5 text-[12px] text-slate-600">Empty</p>
-      ) : (
-        <ul className="mt-1.5 space-y-1">
-          {rows.map((row, i) => {
-            const meta = /\bDON\b|\bin hand\b|\brest\b/.test(row) && !/\(ST/i.test(row);
-            return (
-              <li
-                key={`${i}-${row}`}
-                className={`text-[12px] leading-snug ${
-                  meta
-                    ? "text-slate-500"
-                    : i === 0
-                      ? "font-medium text-slate-200"
-                      : "text-slate-400"
-                }`}
-              >
-                {row}
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </div>
-  );
-}
-
 /// Rayleigh's broadcast. Updates as the board does.
 export function NowPanel({
   phaseCoach,
@@ -125,6 +89,7 @@ export function NowPanel({
   coachBusy,
   coachError,
   pageState,
+  gameId,
 }: Props) {
   const waiting =
     pageState === "queue"
@@ -141,14 +106,16 @@ export function NowPanel({
     (!fighting && strategy?.action.description?.trim()) ||
     phaseCoach?.trim() ||
     waiting;
-  // Follow the board. A finished coach line must not freeze the call
-  // on an earlier position.
-  const broadcast = coachBusy && coachLine?.trim() ? coachLine.trim() : line;
+  // Keep Rayleigh's last read. Falling back the instant a turn ends was
+  // snapping Play-by-play to generic phase copy.
+  const pin = useRef<CoachPin | null>(null);
+  const game = gameId || pageState || "";
+  const incoming = coachLine?.trim() ?? "";
+  pin.current = nextCoachPin(pin.current, game, incoming);
+  const broadcast = playByPlayLine(pin.current.text, line);
   const steps = (
     table?.steps?.length ? table.steps : (deckStrategy?.this_turn ?? [])
   ).slice(0, 3);
-  const you = table?.you ?? [];
-  const them = table?.them ?? [];
   const alts = options
     .filter((opt) => opt.action.description?.trim() && opt.action.description.trim() !== line)
     .slice(0, 3);
@@ -167,7 +134,7 @@ export function NowPanel({
           )}
         </div>
         {analysis && <CombatStrip analysis={analysis} />}
-        {coachBusy && !coachLine && (
+        {coachBusy && !incoming && (
           <p className="mt-2 animate-pulse text-[13px] text-amber-200/60">
             Reading the new position…
           </p>
@@ -177,7 +144,7 @@ export function NowPanel({
         )}
         <p className="broadcast-copy">
           {broadcast}
-          {coachBusy && coachLine && (
+          {coachBusy && incoming && (
             <span className="ml-1 animate-pulse text-amber-300">▌</span>
           )}
         </p>
@@ -233,12 +200,6 @@ export function NowPanel({
         </section>
       )}
 
-      {(you.length > 0 || them.length > 0) && (
-        <div className="flex flex-col gap-3 px-0.5">
-          <RosterColumn title="Them · top" rows={them} />
-          <RosterColumn title="You · bottom" rows={you} />
-        </div>
-      )}
     </div>
   );
 }
