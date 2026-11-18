@@ -33,7 +33,6 @@ function DeckRow({
   onActivate,
   onEdit,
   onDelete,
-  onRename,
 }: {
   deck: SavedDeckDto;
   editing: boolean;
@@ -41,24 +40,13 @@ function DeckRow({
   onActivate: () => void;
   onEdit: () => void;
   onDelete: () => void;
-  onRename: (name: string) => void;
 }) {
-  const [renaming, setRenaming] = useState(false);
-  const [renameDraft, setRenameDraft] = useState(deck.name);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   // Reset transient row UI when the deck underneath changes identity or name.
   useEffect(() => {
-    setRenaming(false);
     setConfirmingDelete(false);
-    setRenameDraft(deck.name);
   }, [deck.id, deck.name]);
-
-  const commitRename = () => {
-    const next = renameDraft.trim();
-    setRenaming(false);
-    if (next && next !== deck.name) onRename(next);
-  };
 
   return (
     <li
@@ -68,30 +56,7 @@ function DeckRow({
           : "border-slate-700/60 bg-slate-900/40"
       }`}
     >
-      {renaming ? (
-        <div className="flex items-center gap-1">
-          <input
-            autoFocus
-            value={renameDraft}
-            onChange={(e) => setRenameDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") commitRename();
-              if (e.key === "Escape") {
-                setRenameDraft(deck.name);
-                setRenaming(false);
-              }
-            }}
-            className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950/80 px-1 py-0.5 text-[10px] text-slate-100 focus:border-hud-accent/50 focus:outline-none"
-          />
-          <button
-            type="button"
-            onClick={commitRename}
-            className="rounded border border-hud-accent/40 px-1.5 py-0.5 text-[9px] text-hud-accent hover:bg-hud-accent/20"
-          >
-            Save
-          </button>
-        </div>
-      ) : (
+      {(
         <div className="flex items-start justify-between gap-1">
           <button
             type="button"
@@ -112,7 +77,7 @@ function DeckRow({
                 {deck.name}
               </span>
             </div>
-            <div className="truncate font-mono text-[9px] text-slate-500">
+            <div className="truncate font-mono text-[10px] text-slate-500">
               {leaderLine(deck) || "Leader ?"}
               {deck.total_cards > 0 ? ` · ${deck.total_cards} cards` : ""}
             </div>
@@ -124,7 +89,7 @@ function DeckRow({
                 type="button"
                 onClick={onActivate}
                 disabled={busy}
-                className="rounded border border-slate-600/60 px-1.5 py-0.5 text-[9px] text-slate-300 hover:bg-slate-800/60 disabled:opacity-50"
+                className="rounded border border-slate-600/60 px-1.5 py-0.5 text-[10px] text-slate-300 hover:bg-slate-800/60 disabled:opacity-50"
               >
                 Use
               </button>
@@ -132,12 +97,12 @@ function DeckRow({
             <button
               type="button"
               onClick={onEdit}
-              className={`rounded border px-1.5 py-0.5 text-[9px] ${
+              className={`rounded border px-1.5 py-0.5 text-[10px] ${
                 editing
                   ? "border-hud-accent/50 text-hud-accent"
                   : "border-slate-600/60 text-slate-300 hover:bg-slate-800/60"
               }`}
-              title="Load this list into the editor"
+              title="Edit this deck (you can rename it here too)"
             >
               Edit
             </button>
@@ -147,14 +112,14 @@ function DeckRow({
                   type="button"
                   onClick={onDelete}
                   disabled={busy}
-                  className="rounded border border-hud-danger/50 bg-hud-danger/10 px-1.5 py-0.5 text-[9px] text-hud-danger hover:bg-hud-danger/20 disabled:opacity-50"
+                  className="rounded border border-hud-danger/50 bg-hud-danger/10 px-1.5 py-0.5 text-[10px] text-hud-danger hover:bg-hud-danger/20 disabled:opacity-50"
                 >
                   Confirm
                 </button>
                 <button
                   type="button"
                   onClick={() => setConfirmingDelete(false)}
-                  className="rounded border border-slate-600/60 px-1.5 py-0.5 text-[9px] text-slate-400 hover:bg-slate-800/60"
+                  className="rounded border border-slate-600/60 px-1.5 py-0.5 text-[10px] text-slate-400 hover:bg-slate-800/60"
                 >
                   No
                 </button>
@@ -163,16 +128,8 @@ function DeckRow({
               <>
                 <button
                   type="button"
-                  onClick={() => setRenaming(true)}
-                  className="rounded border border-slate-600/60 px-1.5 py-0.5 text-[9px] text-slate-300 hover:bg-slate-800/60"
-                  title="Rename deck"
-                >
-                  Name
-                </button>
-                <button
-                  type="button"
                   onClick={() => setConfirmingDelete(true)}
-                  className="rounded border border-slate-600/60 px-1.5 py-0.5 text-[9px] text-slate-400 hover:bg-hud-danger/20 hover:text-hud-danger"
+                  className="rounded border border-slate-600/60 px-1.5 py-0.5 text-[10px] text-slate-400 hover:bg-hud-danger/20 hover:text-hud-danger"
                   title="Delete deck"
                 >
                   ×
@@ -193,7 +150,6 @@ export function DeckCollectionPanel({
   onSave,
   onActivate,
   onDelete,
-  onRename,
   onClearActive,
 }: Props) {
   const decks = collection?.decks ?? [];
@@ -260,7 +216,7 @@ export function DeckCollectionPanel({
   return (
     <div className="space-y-2 border-t border-slate-700/50 pt-2">
       <div className="flex items-center justify-between gap-2">
-        <div className="text-[9px] uppercase tracking-wide text-slate-500">
+        <div className="text-[10px] uppercase tracking-wide text-slate-500">
           My decks {decks.length > 0 && `(${decks.length}${maxDecks ? `/${maxDecks}` : ""})`}
         </div>
         {onClearActive && collection?.active_id && (
@@ -268,10 +224,10 @@ export function DeckCollectionPanel({
             type="button"
             onClick={() => onClearActive()}
             disabled={busy}
-            className="rounded border border-slate-600/60 px-1.5 py-0.5 text-[9px] text-slate-400 hover:bg-slate-800/60 disabled:opacity-50"
+            className="rounded border border-slate-600/60 px-1.5 py-0.5 text-[10px] text-slate-400 hover:bg-slate-800/60 disabled:opacity-50"
             title="Stop using the active deck (keeps it saved)"
           >
-            Deselect
+            Stop using
           </button>
         )}
       </div>
@@ -287,7 +243,6 @@ export function DeckCollectionPanel({
               onActivate={() => onActivate(deck.id)}
               onEdit={() => startEdit(deck)}
               onDelete={() => onDelete(deck.id)}
-              onRename={(name) => onRename(deck.id, name)}
             />
           ))}
         </ul>
@@ -299,14 +254,14 @@ export function DeckCollectionPanel({
 
       <div className="space-y-1.5 border-t border-slate-700/40 pt-2">
         <div className="flex items-center justify-between gap-2">
-          <div className="text-[9px] uppercase tracking-wide text-slate-500">
+          <div className="text-[10px] uppercase tracking-wide text-slate-500">
             {editingDeck ? `Editing ${editingDeck.name}` : "Add a deck"}
           </div>
           {editingDeck && (
             <button
               type="button"
               onClick={resetEditor}
-              className="rounded border border-slate-600/60 px-1.5 py-0.5 text-[9px] text-slate-400 hover:bg-slate-800/60"
+              className="rounded border border-slate-600/60 px-1.5 py-0.5 text-[10px] text-slate-400 hover:bg-slate-800/60"
             >
               New deck
             </button>
@@ -316,30 +271,28 @@ export function DeckCollectionPanel({
         <input
           value={draftName}
           onChange={(e) => setDraftName(e.target.value)}
-          placeholder="Deck name (optional — taken from the list otherwise)"
+          placeholder="Deck name (optional)"
           className="w-full rounded border border-slate-700 bg-slate-950/80 px-2 py-1 text-[10px] text-slate-200 placeholder:text-slate-600 focus:border-hud-accent/50 focus:outline-none"
         />
         <textarea
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           placeholder={PLACEHOLDER}
-          rows={7}
+          rows={6}
           className="w-full resize-y rounded border border-slate-700 bg-slate-950/80 px-2 py-1 font-mono text-[10px] leading-snug text-slate-200 placeholder:text-slate-600 focus:border-hud-accent/50 focus:outline-none"
         />
-        <p className="text-[9px] leading-snug text-slate-500">
-          Formats: <span className="font-mono">4x ST01-002</span>,{" "}
-          <span className="font-mono">ST01-012 x4</span>,{" "}
-          <span className="font-mono">Leader: ST01-001</span>,{" "}
-          <span className="font-mono">Deck: Name</span>
+        <p className="text-[10px] leading-snug text-slate-500">
+          One card per line, like <span className="font-mono">4x ST01-002</span>. Add{" "}
+          <span className="font-mono">Leader: ST01-001</span> for your leader.
         </p>
 
         {warnings.length > 0 && (
-          <p className="text-[9px] text-hud-warn">
+          <p className="text-[10px] text-hud-warn">
             {warnings.slice(0, 3).join(" · ")}
           </p>
         )}
         {atCapacity && (
-          <p className="text-[9px] text-hud-warn">
+          <p className="text-[10px] text-hud-warn">
             Collection is full ({maxDecks}). Delete a deck to add another.
           </p>
         )}
@@ -362,7 +315,7 @@ export function DeckCollectionPanel({
                 ? nameChanged
                   ? "Update & rename"
                   : "Update deck"
-                : "Save & use"}
+                : "Save & use this deck"}
           </button>
           {editingDeck && (
             <button

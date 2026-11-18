@@ -1,4 +1,5 @@
 import { memo, useEffect, useRef, useState } from "react";
+import { GlossaryText } from "./Glossary";
 import { useCoachStream } from "../hooks/useCoachStream";
 import type {
   CoachChatMessage,
@@ -6,6 +7,8 @@ import type {
   FinishReason,
   ToolRun,
 } from "../types/coach";
+
+const DEV = Boolean((import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV);
 
 const SUGGESTIONS = [
   "What should I do this turn?",
@@ -46,7 +49,11 @@ const Bubble = memo(function Bubble({
             <span className="animate-pulse text-slate-400">Thinking…</span>
           ) : (
             <>
-              {message.content}
+              {isUser || message.streaming ? (
+                message.content
+              ) : (
+                <GlossaryText text={message.content} />
+              )}
               {message.streaming && (
                 <span className="ml-0.5 animate-pulse text-hud-accent">▌</span>
               )}
@@ -55,7 +62,7 @@ const Bubble = memo(function Bubble({
         </div>
         {!isUser &&
           (message.automatic || message.groundedOn || message.endedBecause) && (
-          <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[8px] text-slate-500">
+          <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[10px] text-slate-500">
             {message.automatic && (
               <span
                 title="Read automatically when the board settled"
@@ -106,13 +113,13 @@ function AutoToggle({
       disabled={disabled}
       onClick={() => onChange(!enabled)}
       title={title}
-      className={`rounded border px-1.5 py-0.5 font-mono text-[8px] disabled:opacity-40 ${
+      className={`rounded border px-1.5 py-0.5 text-[10px] disabled:opacity-40 ${
         enabled
           ? "border-hud-accent/50 bg-hud-accent/15 text-hud-accent"
           : "border-slate-600/60 text-slate-500 enabled:hover:text-slate-300"
       }`}
     >
-      auto
+      Auto-read
     </button>
   );
 }
@@ -145,9 +152,9 @@ function ContextPills({
   ];
 
   return (
-    <div className="flex flex-wrap items-center gap-1 text-[9px]">
+    <div className="flex flex-wrap items-center gap-1 text-[10px]">
       <span className="text-slate-500">
-        {scope.board || scope.deck ? "Sharing" : "Sharing nothing"}
+        {scope.board || scope.deck ? "Sending to AI:" : "Sending nothing"}
       </span>
       {items.map(({ key, label, title }) => {
         const on = scope[key];
@@ -162,7 +169,7 @@ function ContextPills({
             className={`rounded border px-1 py-px ${
               on
                 ? "border-hud-accent/40 bg-hud-accent/10 text-hud-accent"
-                : "border-slate-700/60 text-slate-600 line-through hover:text-slate-400"
+                : "border-slate-700/60 text-slate-400 line-through hover:text-slate-200"
             }`}
           >
             {label}
@@ -170,7 +177,7 @@ function ContextPills({
         );
       })}
       {!scope.board && !scope.deck && (
-        <span className="text-slate-600">— rules answers only</span>
+        <span className="text-slate-400">— general rules answers only</span>
       )}
     </div>
   );
@@ -184,7 +191,7 @@ function ToolChips({ tools }: { tools: ToolRun[] }) {
         <span
           key={`${tool.tool}-${i}`}
           title={tool.summary}
-          className="rounded bg-slate-800/70 px-1 py-0.5 font-mono text-[8px] text-slate-400"
+          className="rounded bg-slate-800/70 px-1 py-0.5 font-mono text-[10px] text-slate-400"
         >
           {tool.tool}
         </span>
@@ -196,7 +203,9 @@ function ToolChips({ tools }: { tools: ToolRun[] }) {
 export function CoachChatPanel() {
   const coach = useCoachStream();
   const [draft, setDraft] = useState("");
-  const [open, setOpen] = useState(false);
+  // Until the player chooses, follow the coach: open when an AI model answers,
+  // collapsed to a one-line note in Basic mode where chat adds little.
+  const [userOpen, setUserOpen] = useState<boolean | null>(null);
   const scroller = useRef<HTMLDivElement | null>(null);
 
   // Follow the stream as text arrives.
@@ -214,26 +223,20 @@ export function CoachChatPanel() {
   };
 
   const provider = coach.status?.provider ?? "…";
+  const live = coach.status?.live === true;
+  const open = userOpen ?? live;
+  const setOpen = (v: boolean) => setUserOpen(v);
 
   return (
     <div className="hud-panel p-3">
       <div className="flex items-center justify-between gap-2">
-        <div className="hud-title">Ask the Coach</div>
+        <div
+          className="hud-title"
+          title={live ? `Answers from ${provider}` : undefined}
+        >
+          Ask the Coach
+        </div>
         <div className="flex items-center gap-1">
-          <span
-            title={
-              coach.status?.live
-                ? `Answers from ${provider}`
-                : "No model API key set — answering from the rules engine. Set OPTCG_LLM_API_KEY for conversational answers."
-            }
-            className={`rounded px-1.5 py-0.5 font-mono text-[8px] ${
-              coach.status?.live
-                ? "bg-hud-success/20 text-hud-success"
-                : "bg-slate-700/60 text-slate-400"
-            }`}
-          >
-            {provider}
-          </span>
           <AutoToggle
             enabled={coach.status?.auto_enabled ?? false}
             disabled={coach.status ? !coach.status.context.board : true}
@@ -244,13 +247,19 @@ export function CoachChatPanel() {
           />
           <button
             type="button"
-            onClick={() => setOpen((v) => !v)}
+            onClick={() => setOpen(!open)}
             className="rounded border border-slate-600/60 px-2 py-0.5 text-[10px] text-slate-300 hover:bg-slate-800/60"
           >
-            {open ? "Hide" : "Open"}
+            {open ? "Hide" : "Show"}
           </button>
         </div>
       </div>
+
+      {!live && coach.status && (
+        <p className="mt-1 text-[11px] text-slate-400">
+          Basic mode — add an API key for conversational answers
+        </p>
+      )}
 
       {open && (
         <div className="mt-2 space-y-1.5">
@@ -261,8 +270,7 @@ export function CoachChatPanel() {
             {coach.messages.length === 0 ? (
               <div className="space-y-1">
                 <p className="text-[10px] text-slate-500">
-                  Ask about the live board. The coach reads your game state,
-                  deck list, and the rules engine before answering.
+                  Ask anything about your game. Try one of these:
                 </p>
                 <div className="flex flex-wrap gap-1">
                   {SUGGESTIONS.map((suggestion) => (
@@ -270,7 +278,7 @@ export function CoachChatPanel() {
                       key={suggestion}
                       type="button"
                       onClick={() => submit(suggestion)}
-                      className="rounded border border-slate-700/60 px-1.5 py-0.5 text-left text-[9px] text-slate-400 hover:border-hud-accent/40 hover:text-hud-accent"
+                      className="rounded border border-slate-700/60 px-1.5 py-0.5 text-left text-[10px] text-slate-400 hover:border-hud-accent/40 hover:text-hud-accent"
                     >
                       {suggestion}
                     </button>
@@ -284,20 +292,16 @@ export function CoachChatPanel() {
             )}
           </div>
 
-          {(coach.activity || coach.tools.length > 0) && (
-            <div className="space-y-1 border-t border-slate-700/40 pt-1">
-              {coach.activity && (
-                <div className="flex items-center gap-1 text-[9px] text-slate-400">
-                  <span className="h-1 w-1 animate-pulse rounded-full bg-hud-accent" />
-                  {coach.activity}…
-                </div>
-              )}
-              <ToolChips tools={coach.tools} />
+          {coach.activity && (
+            <div className="flex items-center gap-1 text-[10px] text-slate-400">
+              <span className="h-1 w-1 animate-pulse rounded-full bg-hud-accent" />
+              {coach.activity}…
             </div>
           )}
+          {DEV && <ToolChips tools={coach.tools} />}
 
           {coach.error && (
-            <p className="text-[9px] text-hud-danger">{coach.error}</p>
+            <p className="text-[10px] text-hud-danger">{coach.error}</p>
           )}
 
           {coach.status && (
@@ -346,7 +350,7 @@ export function CoachChatPanel() {
                 <button
                   type="button"
                   onClick={() => void coach.reset()}
-                  className="rounded border border-slate-600/60 px-2 py-0.5 text-[9px] text-slate-400 hover:bg-slate-800/60"
+                  className="rounded border border-slate-600/60 px-2 py-0.5 text-[10px] text-slate-400 hover:bg-slate-800/60"
                 >
                   Clear
                 </button>

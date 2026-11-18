@@ -74,6 +74,42 @@ impl ObservationReconciler {
                     confidence,
                 });
             }
+            if let Some(word) = raw.strip_prefix("GAME_OVER|") {
+                session.state.outcome = Some(match word {
+                    "WIN" => "win".to_string(),
+                    "LOSS" => "loss".to_string(),
+                    _ => "over".to_string(),
+                });
+                return Ok(ReconcileOutcome {
+                    applied: true,
+                    game_events: vec![],
+                    corrected: false,
+                    rejection_reason: None,
+                    confidence,
+                });
+            }
+            if raw == "COMBAT_CLEARED" {
+                session.state.combat = optcg_core::CombatState::default();
+                return Ok(ReconcileOutcome {
+                    applied: true,
+                    game_events: vec![],
+                    corrected: false,
+                    rejection_reason: None,
+                    confidence,
+                });
+            }
+            if let Some((player_idx, cards)) = parse_hand_raw(raw) {
+                if let Some(p) = session.state.player_mut(player_idx) {
+                    p.set_observed_hand(&cards);
+                }
+                return Ok(ReconcileOutcome {
+                    applied: true,
+                    game_events: vec![],
+                    corrected: false,
+                    rejection_reason: None,
+                    confidence,
+                });
+            }
             if let Some((player_idx, card_id)) = parse_note_card_raw(raw) {
                 if let Some(p) = session.state.player_mut(player_idx) {
                     p.note_card(&card_id);
@@ -280,6 +316,7 @@ impl ObservationReconciler {
                 }
             }
             ObservationEvent::AttackObserved {
+                attacker_player,
                 attacker_card_id,
                 target,
                 observed_power,
@@ -288,7 +325,7 @@ impl ObservationReconciler {
                 if let (Some(atk), Some(tgt)) = (attacker_card_id, target) {
                     vec![GameEvent::AttackDeclared {
                         attacker: atk.clone(),
-                        attacker_player: PlayerId::Player1,
+                        attacker_player: attacker_player.unwrap_or(PlayerId::Player1),
                         target: tgt.clone(),
                         power: observed_power.unwrap_or(0),
                     }]
@@ -482,6 +519,69 @@ mod tests {
     }
 
     #[test]
+    fn an_opponent_attack_starts_combat_against_you_and_clears_after() {
+        let mut reconciler = ObservationReconciler::default();
+        let mut session = GameSession::new(ObservationSource::BrowserSimulator);
+        let attack = ObservationEvent::AttackObserved {
+            attacker: None,
+            attacker_player: Some(PlayerId::Player2),
+            attacker_card_id: Some("ST01-002".into()),
+            target: Some(optcg_core::AttackTarget::Leader { player: PlayerId::Player1 }),
+            observed_power: Some(6000),
+            confidence: 0.9,
+        };
+        assert!(reconciler.reconcile(&mut session, &attack).unwrap().applied);
+        assert!(session.state.combat.active);
+        assert_eq!(session.state.combat.attacker_player, Some(1));
+        assert_eq!(session.state.combat.target_player, Some(0));
+
+        let clear = ObservationEvent::StructuredRaw {
+            raw: "COMBAT_CLEARED".into(),
+            source: ObservationSource::BrowserSimulator,
+            confidence: 0.9,
+        };
+        reconciler.reconcile(&mut session, &clear).unwrap();
+        assert!(!session.state.combat.active);
+    }
+
+    #[test]
+    fn game_over_records_the_outcome() {
+        let mut reconciler = ObservationReconciler::default();
+        let mut session = GameSession::new(ObservationSource::BrowserSimulator);
+        for (raw, expected) in [("GAME_OVER|UNKNOWN", "over"), ("GAME_OVER|WIN", "win"), ("GAME_OVER|LOSS", "loss")] {
+            let obs = ObservationEvent::StructuredRaw {
+                raw: raw.into(),
+                source: ObservationSource::BrowserSimulator,
+                confidence: 0.95,
+            };
+            assert!(reconciler.reconcile(&mut session, &obs).unwrap().applied);
+            assert_eq!(session.state.outcome.as_deref(), Some(expected));
+        }
+    }
+
+    #[test]
+    fn hand_structured_raw_replaces_the_visible_hand() {
+        let mut reconciler = ObservationReconciler::default();
+        let mut session = GameSession::new(ObservationSource::BrowserSimulator);
+        for raw in ["HAND|PLAYER_1|ST01-002,ST01-002,ST01-010", "HAND|PLAYER_1|ST01-010"] {
+            let obs = ObservationEvent::StructuredRaw {
+                raw: raw.into(),
+                source: ObservationSource::BrowserSimulator,
+                confidence: 0.95,
+            };
+            assert!(reconciler.reconcile(&mut session, &obs).unwrap().applied);
+        }
+        let hand: Vec<_> = session
+            .state
+            .player_one()
+            .hand
+            .iter()
+            .map(|c| c.card_id.as_str())
+            .collect();
+        assert_eq!(hand, vec!["ST01-010"]);
+    }
+
+    #[test]
     fn note_card_structured_raw_applied() {
         let mut reconciler = ObservationReconciler::default();
         let mut session = GameSession::new(ObservationSource::BrowserSimulator);
@@ -516,6 +616,25 @@ fn parse_deck_name_raw(raw: &str) -> Option<(u8, String)> {
         return None;
     }
     Some((idx, name.to_string()))
+}
+
+fn parse_hand_raw(raw: &str) -> Option<(u8, Vec<String>)> {
+    let parts: Vec<&str> = raw.splitn(3, '|').collect();
+    if parts.len() != 3 || parts[0] != "HAND" {
+        return None;
+    }
+    let idx = match parts[1] {
+        "PLAYER_1" | "P1" | "0" => 0u8,
+        "PLAYER_2" | "P2" | "1" => 1u8,
+        _ => return None,
+    };
+    let cards = parts[2]
+        .split(',')
+        .map(str::trim)
+        .filter(|c| !c.is_empty())
+        .map(str::to_string)
+        .collect();
+    Some((idx, cards))
 }
 
 fn parse_note_card_raw(raw: &str) -> Option<(u8, String)> {

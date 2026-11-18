@@ -8,9 +8,18 @@ use optcg_rules::{
     BeamSearch, BeamSearchConfig, CombatMath, DeckCollection, DeckProfile, DeckStrategyBrief,
     DeckStrategyCoach, MctsConfig, MctsEngine, PastedDeckList, RulesEngine, SavedDeck, MAX_DECKS,
 };
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use std::path::PathBuf;
 use std::sync::Arc;
+
+/// What the Game plan is computed from, cached per matchup.
+#[derive(Clone)]
+struct StrategyData {
+    key: String,
+    you: Option<optcg_rules::LeaderStats>,
+    opponent: Option<optcg_rules::LeaderStats>,
+    comparison: Option<optcg_rules::DeckComparison>,
+}
 
 pub struct AppState {
     pub database: Database,
@@ -26,6 +35,22 @@ pub struct AppState {
     pub deck_collection: RwLock<DeckCollection>,
     pasted_deck_path: PathBuf,
     collection_path: PathBuf,
+    /// The leader the saved-deck match was last run for, so the library is
+    /// only searched when the game shows a different leader.
+    last_matched_leader: Mutex<String>,
+    /// Tournament top-cut lists from `scripts/sync_meta.py`, when downloaded.
+    meta: RwLock<Option<optcg_rules::MetaData>>,
+    meta_path: PathBuf,
+    /// Standard-format ban list, pair bans and rotation (`banlist.json`).
+    banlist: RwLock<Option<optcg_rules::BanList>>,
+    banlist_path: PathBuf,
+    /// Watches the observed game and says when a match ended.
+    match_tracker: Mutex<optcg_rules::MatchTracker>,
+    /// Winning-list statistics for the current matchup, rebuilt only when the
+    /// Leaders, your list, or the downloaded data change.
+    strategy_cache: Mutex<Option<StrategyData>>,
+    /// Finished matches, kept on this machine only.
+    match_store: optcg_rules::MatchStore,
 }
 
 impl AppState {
@@ -56,7 +81,16 @@ impl AppState {
             deck_collection: RwLock::new(DeckCollection::default()),
             pasted_deck_path,
             collection_path,
+            last_matched_leader: Mutex::new(String::new()),
+            meta: RwLock::new(None),
+            meta_path: data_dir.join("meta_decks.json"),
+            banlist: RwLock::new(None),
+            banlist_path: data_dir.join("banlist.json"),
+            match_tracker: Mutex::new(optcg_rules::MatchTracker::default()),
+            strategy_cache: Mutex::new(None),
+            match_store: optcg_rules::MatchStore::new(data_dir.join("matches.jsonl")),
         };
+        state.reload_meta();
         state.load_collection_from_disk();
         state
     }
@@ -358,59 +392,119 @@ impl AppState {
         }
     }
 
-    /// Rebuild detailed deck-vs-deck strategy for the current matchup.
+    /// Winning-list statistics for both Leaders and your list's comparison.
+    fn strategy_data(&self, you: &DeckInfoDto, opponent: &DeckInfoDto) -> StrategyData {
+        let meta = self.meta.read();
+        let banlist = self.banlist.read();
+        let key = format!(
+            "{}|{}|{}|{}|{}|{}",
+            you.leader_id,
+            opponent.leader_id,
+            you.name,
+            you.list_total_cards,
+            meta.as_ref().map(|m| m.generated_at.as_str()).unwrap_or(""),
+            banlist.as_ref().map(|b| b.last_updated.as_str()).unwrap_or("")
+        );
+        if let Some(cached) = self.strategy_cache.lock().as_ref() {
+            if cached.key == key {
+                return cached.clone();
+            }
+        }
+        let repo = self.repo();
+        let stats = |leader: &str| {
+            let meta = meta.as_ref()?;
+            (!leader.is_empty()).then(|| {
+                optcg_rules::leader_stats(meta, &repo, banlist.as_ref(), leader, None)
+            })
+        };
+        let comparison = meta.as_ref().and_then(|meta| {
+            if you.leader_id.is_empty() {
+                return None;
+            }
+            let cards: std::collections::HashMap<String, u8> = you
+                .list_entries
+                .iter()
+                .filter(|e| e.card_type != "leader" && !e.card_id.eq_ignore_ascii_case(&you.leader_id))
+                .map(|e| (e.card_id.to_uppercase(), e.quantity))
+                .collect();
+            Some(optcg_rules::meta::compare(
+                meta,
+                &you.leader_id,
+                &cards,
+                &repo,
+                None,
+                None,
+                banlist.as_ref(),
+            ))
+        });
+        let data = StrategyData {
+            key,
+            you: stats(&you.leader_id),
+            opponent: stats(&opponent.leader_id),
+            comparison,
+        };
+        *self.strategy_cache.lock() = Some(data.clone());
+        data
+    }
+
+    fn build_brief(
+        &self,
+        gs: &optcg_core::GameState,
+        your_deck: &DeckInfoDto,
+        opponent_deck: &DeckInfoDto,
+    ) -> DeckStrategyBrief {
+        let data = self.strategy_data(your_deck, opponent_deck);
+        let repo = self.repo();
+        let ctx = optcg_rules::StrategyContext {
+            repo: &repo,
+            you: data.you.as_ref(),
+            opponent: data.opponent.as_ref(),
+            comparison: data.comparison.as_ref(),
+        };
+        DeckStrategyCoach::brief(
+            gs,
+            &self.profile_from_deck(your_deck),
+            &self.profile_from_deck(opponent_deck),
+            &ctx,
+        )
+    }
+
+    /// Rebuild the Game plan for the current matchup.
     pub fn refresh_deck_strategy(&self) -> DeckStrategyBrief {
         let gs = self.game_state.read();
         let your_deck = self.deck_info_for(gs.player_one(), true);
         let opponent_deck = self.deck_info_for(gs.player_two(), false);
-        let brief = DeckStrategyCoach::brief(
-            &gs,
-            &self.profile_from_deck(&your_deck),
-            &self.profile_from_deck(&opponent_deck),
-        );
+        let brief = self.build_brief(&gs, &your_deck, &opponent_deck);
         *self.deck_strategy.write() = Some(brief.clone());
         brief
     }
 
+    /// The Game plan for right now. It includes what is in your hand and on
+    /// the board, so it is rebuilt each time; the heavy statistics behind it
+    /// are cached per matchup.
     fn ensure_deck_strategy(
         &self,
         your_deck: &DeckInfoDto,
         opponent_deck: &DeckInfoDto,
         gs: &optcg_core::GameState,
     ) -> DeckStrategyBrief {
-        let paste_sig = your_deck.list_total_cards;
-        let matchup = format!(
-            "{} vs {}|paste:{paste_sig}",
-            your_deck.name, opponent_deck.name
-        );
-        let mut cache = self.deck_strategy.write();
-        let needs_refresh = match cache.as_ref() {
-            None => true,
-            // Remap: store matchup field without paste sig; compare via list presence + name.
-            Some(existing) => {
-                existing.matchup != format!("{} vs {}", your_deck.name, opponent_deck.name)
-                    || existing.list_notes.is_empty() != your_deck.list_entries.is_empty()
-            }
-        };
-        let _ = matchup; // used for clarity above
-        if needs_refresh {
-            let brief = DeckStrategyCoach::brief(
-                gs,
-                &self.profile_from_deck(your_deck),
-                &self.profile_from_deck(opponent_deck),
-            );
-            *cache = Some(brief.clone());
-            brief
-        } else {
-            cache.as_ref().unwrap().clone()
-        }
+        let brief = self.build_brief(gs, your_deck, opponent_deck);
+        *self.deck_strategy.write() = Some(brief.clone());
+        brief
     }
 
     fn deck_info_for(&self, player: &optcg_core::PlayerState, is_you: bool) -> DeckInfoDto {
         let repo = self.repo();
-        let mut leader_id = player.leader.card_id.clone();
+        let mut leader_id = player.observed_leader().unwrap_or_default().to_string();
         let pasted = if is_you {
-            self.pasted_deck.read().clone()
+            // A saved list built around a different Leader is not the deck
+            // being played; showing it would coach the wrong deck.
+            self.pasted_deck.read().clone().filter(|list| {
+                match (list.leader_id.as_deref(), leader_id.as_str()) {
+                    (Some(listed), observed) if !observed.is_empty() => listed == observed,
+                    _ => true,
+                }
+            })
         } else {
             None
         };
@@ -518,10 +612,445 @@ impl AppState {
         }
     }
 
+    /// Feed the current game to the match recorder. Returns true when the
+    /// saved matches changed, so the HUD can refresh its history.
+    pub fn track_match(&self) -> bool {
+        let observed = {
+            let gs = self.game_state.read();
+            optcg_rules::Observed {
+                now_ms: chrono::Utc::now().timestamp_millis(),
+                your_leader: gs.player_one().observed_leader().map(str::to_string),
+                opponent_leader: gs.player_two().observed_leader().map(str::to_string),
+                turn: gs.turn_number,
+                active_player: gs.active_player,
+                your_deck: String::new(),
+                your_cards: gs.player_one().known_cards.clone(),
+                // Public cards only: what has been on the table, never a hand.
+                opponent_cards: gs.player_two().known_cards.clone(),
+                outcome: gs.outcome.clone(),
+            }
+        };
+        let mut observed = observed;
+        if let (Some(leader), Some(list)) = (&observed.your_leader, self.pasted_deck.read().as_ref()) {
+            if list.leader_id.as_deref() == Some(leader.as_str()) {
+                observed.your_deck = list.name.clone().unwrap_or_default();
+            }
+        }
+
+        let step = self.match_tracker.lock().observe(observed);
+        let mut changed = false;
+        if let Some(record) = &step.finished {
+            match self.match_store.append(record) {
+                Ok(()) => changed = true,
+                Err(e) => tracing::warn!(error = %e, "could not save the match"),
+            }
+        }
+        if let Some((id, result)) = &step.result_update {
+            changed |= self
+                .match_store
+                .set_result(id, Some(result), "page")
+                .unwrap_or(false);
+        }
+        if step.new_game {
+            // The last game's outcome must not leak into the next one.
+            self.game_state.write().outcome = None;
+        }
+        changed
+    }
+
+    /// Where OPTCGSim keeps its decks and combat logs on this computer.
+    fn optcgsim_dir() -> Option<PathBuf> {
+        if let Ok(custom) = std::env::var("OPTCG_SIM_DIR") {
+            return Some(PathBuf::from(custom));
+        }
+        dirs::data_dir().map(|d| d.join("com.Batsu.OPTCGSim"))
+    }
+
+    /// Add your OPTCGSim decks to your deck lists. Your active deck is left as it is.
+    pub fn import_optcgsim_decks(&self) -> Result<crate::dto::ImportSummaryDto, String> {
+        let dir = Self::optcgsim_dir()
+            .filter(|d| d.is_dir())
+            .ok_or("OPTCGSim's folder was not found on this computer.")?;
+        let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
+            .map_err(|e| e.to_string())?
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "txt"))
+            .collect();
+        files.sort();
+
+        let mut out = crate::dto::ImportSummaryDto { found: files.len(), ..Default::default() };
+        let previously_active = self.deck_collection.read().active_id.clone();
+        for path in files {
+            let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").trim().to_string();
+            // The simulator's built-in starter decks are not yours.
+            let is_starter = name.len() > 7 && name.starts_with("ST") && name.get(4..7) == Some(" - ");
+            let raw = std::fs::read_to_string(&path).unwrap_or_default();
+            if name.is_empty() || is_starter || raw.trim().is_empty() {
+                out.skipped += 1;
+                continue;
+            }
+            let Ok(list) = self.parse_deck_raw(&raw) else {
+                out.skipped += 1;
+                continue;
+            };
+            if list.total_cards < 40 {
+                out.skipped += 1; // an unfinished deck
+                continue;
+            }
+            let existing = self
+                .deck_collection
+                .read()
+                .decks
+                .iter()
+                .find(|d| d.name.eq_ignore_ascii_case(&name))
+                .map(|d| d.raw.trim() == raw.trim());
+            if existing == Some(true) {
+                out.already_saved += 1;
+                continue;
+            }
+            let result = self.deck_collection.write().upsert(
+                None,
+                &name,
+                raw.trim(),
+                list.leader_id.clone(),
+                list.total_cards,
+                &now_rfc3339(),
+            );
+            match result {
+                Ok(_) => out.imported += 1,
+                Err(_) => out.skipped += 1,
+            }
+        }
+        {
+            let mut collection = self.deck_collection.write();
+            collection.active_id = previously_active;
+            self.persist_collection(&collection);
+        }
+        out.message = format!(
+            "Imported {} deck{} from OPTCGSim ({} already saved, {} skipped: starter decks, empty or unfinished lists).",
+            out.imported,
+            if out.imported == 1 { "" } else { "s" },
+            out.already_saved,
+            out.skipped
+        );
+        Ok(out)
+    }
+
+    /// Add finished OPTCGSim games to your match history from its saved logs.
+    ///
+    /// Only what both players could see is read; the opponent's hand and name
+    /// in those logs are ignored.
+    pub fn import_optcgsim_games(&self) -> Result<crate::dto::ImportSummaryDto, String> {
+        let logs_dir = Self::optcgsim_dir()
+            .map(|d| d.join("CombatLogs"))
+            .filter(|d| d.is_dir())
+            .ok_or("OPTCGSim's combat logs were not found on this computer.")?;
+        // (normalised start time, text, modified time). A game saved both by
+        // hand and automatically shares a start time; keep the longer copy.
+        let mut games: std::collections::BTreeMap<String, (String, i64)> = std::collections::BTreeMap::new();
+        for dir in [logs_dir.clone(), logs_dir.join("AutoSaved")] {
+            let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+            for path in entries.flatten().map(|e| e.path()).filter(|p| p.is_file()) {
+                let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").replace(':', ".");
+                let Ok(bytes) = std::fs::read(&path) else { continue };
+                let text = String::from_utf8_lossy(&bytes).to_string();
+                let modified = path
+                    .metadata()
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_millis() as i64)
+                    .unwrap_or(0);
+                match games.get(&stem) {
+                    Some((old, _)) if old.len() >= text.len() => {}
+                    _ => {
+                        games.insert(stem, (text, modified));
+                    }
+                }
+            }
+        }
+
+        let mut out = crate::dto::ImportSummaryDto { found: games.len(), ..Default::default() };
+        let texts: Vec<&str> = games.values().map(|(t, _)| t.as_str()).collect();
+        let Some(me) = optcg_rules::optcgsim_log::detect_player(&texts) else {
+            out.message = "Could not tell which player is you (needs at least two saved games).".into();
+            return Ok(out);
+        };
+        let have: std::collections::HashSet<String> =
+            self.match_store.load().into_iter().map(|r| r.id).collect();
+        let mut fresh = Vec::new();
+        for (stem, (text, modified)) in &games {
+            let id = format!("sim-{stem}");
+            if have.contains(&id) {
+                out.already_saved += 1;
+                continue;
+            }
+            let Some(game) = optcg_rules::optcgsim_log::parse_combat_log(text, &me) else {
+                out.skipped += 1;
+                continue;
+            };
+            let started = stem_to_millis(stem).unwrap_or(*modified);
+            fresh.push(optcg_rules::MatchRecord {
+                id,
+                started_ms: started,
+                ended_ms: (*modified).max(started),
+                your_leader: game.your_leader,
+                opponent_leader: game.opponent_leader,
+                went_first: game.went_first,
+                turns: game.turns,
+                result_source: if game.result.is_some() { "OPTCGSim log".into() } else { String::new() },
+                result: game.result,
+                your_deck: String::new(),
+                opponent_cards_seen: game.opponent_cards_seen,
+                your_cards_seen: game.your_cards_seen,
+            });
+        }
+        fresh.sort_by_key(|r| r.started_ms);
+        for record in &fresh {
+            match self.match_store.append(record) {
+                Ok(()) => out.imported += 1,
+                Err(_) => out.skipped += 1,
+            }
+        }
+        let unknown = fresh.iter().filter(|r| r.result.is_none()).count();
+        out.message = format!(
+            "Imported {} game{} from OPTCGSim ({} already saved, {} skipped). {} had no result in the log: set them in My games.",
+            out.imported,
+            if out.imported == 1 { "" } else { "s" },
+            out.already_saved,
+            out.skipped,
+            unknown
+        );
+        Ok(out)
+    }
+
+    /// Recent matches, newest first, and totals with Leader names.
+    pub fn match_history(&self, limit: usize) -> crate::dto::MatchHistoryDto {
+        let mut records = self.match_store.load();
+        let stats = optcg_rules::summarize(&records);
+        records.reverse();
+        records.truncate(limit);
+        let repo = self.repo();
+        let mut names = std::collections::BTreeMap::new();
+        let ids = stats
+            .by_your_leader
+            .iter()
+            .chain(stats.by_opponent_leader.iter())
+            .map(|t| t.leader.clone())
+            .chain(records.iter().flat_map(|r| [r.your_leader.clone(), r.opponent_leader.clone()]));
+        for id in ids {
+            if !names.contains_key(&id) {
+                let name = repo.get_by_id(&id).map(|d| d.name).unwrap_or_else(|_| id.clone());
+                names.insert(id, name);
+            }
+        }
+        crate::dto::MatchHistoryDto { recent: records, stats, names }
+    }
+
+    pub fn set_match_result(&self, id: &str, result: Option<&str>) -> Result<(), String> {
+        match self.match_store.set_result(id, result, "you") {
+            Ok(true) => Ok(()),
+            Ok(false) => Err("No such match".into()),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    pub fn delete_match(&self, id: &str) -> Result<(), String> {
+        match self.match_store.delete(id) {
+            Ok(true) => Ok(()),
+            Ok(false) => Err("No such match".into()),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    /// (Re)read the downloaded tournament lists. Returns how many lists loaded.
+    pub fn reload_meta(&self) -> usize {
+        *self.strategy_cache.lock() = None;
+        *self.banlist.write() = optcg_rules::BanList::load(&self.banlist_path);
+        let loaded = optcg_rules::MetaData::load(&self.meta_path);
+        let count = loaded.as_ref().map(|m| m.decks.len()).unwrap_or(0);
+        *self.meta.write() = loaded;
+        count
+    }
+
+    /// Leaders with enough winning lists to build a deck from.
+    pub fn generator_leaders(&self, format: Option<&str>) -> Vec<(String, String, usize)> {
+        let meta = self.meta.read();
+        match meta.as_ref() {
+            Some(meta) => optcg_rules::generatable_leaders(meta, &self.repo(), format),
+            None => Vec::new(),
+        }
+    }
+
+    /// A 50-card list built from the winning lists for one build of a Leader.
+    pub fn generate_deck(
+        &self,
+        leader_id: &str,
+        format: Option<&str>,
+        variant: Option<usize>,
+    ) -> Result<optcg_rules::GeneratedDeck, String> {
+        let meta = self.meta.read();
+        let Some(meta) = meta.as_ref() else {
+            return Err("No winning-deck data yet. Run scripts/sync_meta.py, then tap Reload.".into());
+        };
+        let banlist = self.banlist.read();
+        optcg_rules::generate(meta, &self.repo(), banlist.as_ref(), leader_id, format, variant)
+    }
+
+    /// One line on what tournament top-cut lists with this Leader play, for the
+    /// coach. `None` without enough data (so the coach is never told something
+    /// thin as if it were a trend).
+    pub fn winners_summary(&self, leader_id: &str) -> Option<String> {
+        if leader_id.is_empty() {
+            return None;
+        }
+        let meta = self.meta.read();
+        let meta = meta.as_ref()?;
+        let banlist = self.banlist.read();
+        let cmp = optcg_rules::meta::compare(
+            meta,
+            leader_id,
+            &std::collections::HashMap::new(),
+            &self.repo(),
+            None,
+            None,
+            banlist.as_ref(),
+        );
+        if !cmp.enough_data || cmp.popular.is_empty() {
+            return None;
+        }
+        let cards = cmp
+            .popular
+            .iter()
+            .take(12)
+            .map(|c| {
+                format!(
+                    "{} ({} of {} lists, usually {:.0}x)",
+                    c.name, c.in_lists, cmp.lists, c.avg_copies
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        Some(format!(
+            "{} recent tournament top-cut lists ({}): {cards}",
+            cmp.lists, cmp.format
+        ))
+    }
+
+    /// How your active deck compares with what is winning, or why it cannot.
+    pub fn compare_active_deck_to_meta(
+        &self,
+        format: Option<&str>,
+        events: Option<&str>,
+    ) -> Result<optcg_rules::DeckComparison, String> {
+        let meta = self.meta.read();
+        let Some(meta) = meta.as_ref() else {
+            return Err(
+                "No winning-deck data yet. Run scripts/sync_meta.py, then tap Reload.".into(),
+            );
+        };
+        let pasted = self.pasted_deck.read().clone();
+        let observed = self
+            .game_state
+            .read()
+            .player_one()
+            .observed_leader()
+            .map(str::to_string)
+            .unwrap_or_default();
+        // The game's Leader wins over a saved list built around another one.
+        let list = pasted.filter(|l| {
+            observed.is_empty() || l.leader_id.as_deref() == Some(observed.as_str())
+        });
+        let leader = list
+            .as_ref()
+            .and_then(|l| l.leader_id.clone())
+            .or_else(|| (!observed.is_empty()).then_some(observed));
+        let Some(leader) = leader else {
+            return Err("Waiting to see your Leader in a game, or add your deck list.".into());
+        };
+        let cards: std::collections::HashMap<String, u8> = list
+            .map(|l| {
+                l.entries
+                    .iter()
+                    .filter(|e| e.card_type != "leader" && !e.card_id.eq_ignore_ascii_case(&leader))
+                    .map(|e| (e.card_id.to_uppercase(), e.quantity))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let banlist = self.banlist.read();
+        Ok(optcg_rules::meta::compare(
+            meta,
+            &leader,
+            &cards,
+            &self.repo(),
+            format,
+            events,
+            banlist.as_ref(),
+        ))
+    }
+
+    /// Follow the deck the game is actually playing.
+    ///
+    /// The saved deck that is "active" is only a guess made before the match.
+    /// Once the game shows your Leader, switch to the saved deck built around
+    /// that Leader; when none matches, `deck_info_for` stops presenting the
+    /// active list as yours. Runs at most once per observed Leader, so a deck
+    /// you pick by hand afterwards is not overridden.
+    pub fn follow_game_leader(&self) {
+        let observed = self
+            .game_state
+            .read()
+            .player_one()
+            .observed_leader()
+            .map(str::to_string)
+            .unwrap_or_default();
+        if observed.is_empty() {
+            return;
+        }
+        {
+            let mut last = self.last_matched_leader.lock();
+            if *last == observed {
+                return;
+            }
+            *last = observed.clone();
+        }
+        let already = self
+            .pasted_deck
+            .read()
+            .as_ref()
+            .and_then(|list| list.leader_id.clone());
+        if already.as_deref() == Some(observed.as_str()) {
+            return;
+        }
+        let candidate = {
+            let repo = self.repo();
+            let collection = self.deck_collection.read();
+            collection
+                .decks
+                .iter()
+                .find(|deck| {
+                    // Older saves predate the full card list and may have no
+                    // leader recorded; read it from the list itself.
+                    let leader = deck
+                        .leader_id
+                        .clone()
+                        .or_else(|| PastedDeckList::parse(&deck.raw, &repo).leader_id);
+                    leader.as_deref() == Some(observed.as_str())
+                })
+                .map(|deck| deck.id.clone())
+        };
+        if let Some(id) = candidate {
+            tracing::info!(leader = %observed, deck = %id, "switching to the saved deck for this Leader");
+            let _ = self.activate_deck(&id);
+        }
+    }
+
     pub fn build_update_payload(
         &self,
         observation: Option<ObservationStatusDto>,
     ) -> StateUpdatePayload {
+        self.follow_game_leader();
         let gs = self.game_state.read();
         let repo = self.repo();
         let combat_analysis = CombatMath::analyze_current_combat(&gs, &repo);
@@ -702,6 +1231,117 @@ mod tests {
             .read()
             .as_ref()
             .and_then(|list| list.name.clone())
+    }
+
+    const SUPER: &str = "Deck: Super Luffy\nLeader: OP17-079\n4x ST01-003";
+
+    fn show_leader(state: &AppState, leader_id: &str) {
+        state.game_state.write().player_one_mut().set_leader_id(leader_id);
+    }
+
+    #[test]
+    fn a_game_that_ends_is_recorded_once_and_the_result_can_be_set_later() {
+        let dir = temp_data_dir("matches");
+        let state = app_state(&dir);
+        {
+            let mut gs = state.game_state.write();
+            gs.player_one_mut().set_leader_id("OP17-079");
+            gs.player_two_mut().set_leader_id("OP09-062");
+            gs.turn_number = 1;
+        }
+        assert!(!state.track_match(), "still playing");
+        state.game_state.write().turn_number = 6;
+        assert!(!state.track_match());
+        state.game_state.write().outcome = Some("over".into());
+        assert!(state.track_match(), "the end of the game was saved");
+        assert!(!state.track_match(), "and not saved twice");
+
+        let history = state.match_history(10);
+        assert_eq!(history.recent.len(), 1);
+        assert_eq!(history.recent[0].your_leader, "OP17-079");
+        assert_eq!(history.recent[0].result, None);
+        assert_eq!(history.stats.unknown, 1);
+
+        let id = history.recent[0].id.clone();
+        state.set_match_result(&id, Some("win")).unwrap();
+        let history = state.match_history(10);
+        assert_eq!(history.recent[0].result.as_deref(), Some("win"));
+        assert_eq!(history.recent[0].result_source, "you");
+        assert_eq!(history.stats.wins, 1);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn optcgsim_decks_and_games_are_imported_without_touching_the_active_deck() {
+        let dir = temp_data_dir("sim-import");
+        let sim = dir.join("sim");
+        std::fs::create_dir_all(sim.join("CombatLogs/AutoSaved")).unwrap();
+        let deck = (1..=13).map(|i| format!("4xST01-{i:03}")).collect::<Vec<_>>().join("\n");
+        std::fs::write(sim.join("MY DECK.txt"), format!("1xST01-001\n{deck}")).unwrap();
+        std::fs::write(sim.join("ST01 - Strawhat.txt"), "1xST01-001").unwrap();
+        std::fs::write(sim.join("EMPTY.txt"), "").unwrap();
+        let log = |me: &str, foe: &str| {
+            format!(
+                "[{me}] Leader is A [OP01-001]\n[{foe}] Leader is B [OP02-001]\n[{me}] Chose to go First\n\
+                 [{me}] End Turn\n[{foe}] End Turn\n[{me}] End Turn\n[{foe}] Concedes!\n"
+            )
+        };
+        std::fs::write(sim.join("CombatLogs/2026-09-01T10:00:00.txt"), log("Me#1", "A#2")).unwrap();
+        // The same game saved automatically: must not be counted twice.
+        std::fs::write(sim.join("CombatLogs/AutoSaved/2026-09-01T10.00.00.log"), log("Me#1", "A#2")).unwrap();
+        std::fs::write(sim.join("CombatLogs/AutoSaved/2026-09-02T10.00.00.log"), log("Me#1", "B#3")).unwrap();
+        std::env::set_var("OPTCG_SIM_DIR", &sim);
+
+        let state = app_state(&dir);
+        state.save_deck(None, Some("Mine"), &format!("Leader: ST01-001\n{deck}")).unwrap();
+        let active_before = state.deck_collection_dto().active_id;
+
+        let decks = state.import_optcgsim_decks().unwrap();
+        assert_eq!(decks.imported, 1, "{}", decks.message);
+        assert_eq!(state.deck_collection_dto().active_id, active_before, "active deck unchanged");
+        assert_eq!(state.import_optcgsim_decks().unwrap().already_saved, 1, "second run adds nothing");
+
+        let games = state.import_optcgsim_games().unwrap();
+        assert_eq!(games.imported, 2, "the duplicate save collapses: {}", games.message);
+        let history = state.match_history(10);
+        assert_eq!(history.stats.wins, 2);
+        assert_eq!(history.recent[0].went_first, Some(true));
+        assert_eq!(state.import_optcgsim_games().unwrap().imported, 0, "no repeats");
+        std::env::remove_var("OPTCG_SIM_DIR");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn the_deck_follows_the_leader_the_game_shows() {
+        let dir = temp_data_dir("follow");
+        let state = app_state(&dir);
+        state.save_deck(None, None, LUFFY).unwrap();
+        state.save_deck(None, None, SUPER).unwrap(); // most recent is active
+        assert_eq!(active_list_name(&state).as_deref(), Some("Super Luffy"));
+
+        show_leader(&state, "ST01-001");
+        state.follow_game_leader();
+        assert_eq!(active_list_name(&state).as_deref(), Some("Red Luffy Aggro"));
+
+        let (yours, _) = state.deck_infos();
+        assert_eq!(yours.name, "Red Luffy Aggro");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_saved_list_for_another_leader_is_not_presented_as_yours() {
+        let dir = temp_data_dir("mismatch");
+        let state = app_state(&dir);
+        state.save_deck(None, None, SUPER).unwrap();
+
+        // The game shows a Leader none of the saved decks were built around.
+        show_leader(&state, "ST01-001");
+        state.follow_game_leader();
+        let (yours, _) = state.deck_infos();
+        assert!(!yours.from_paste, "the mismatched list must not be shown");
+        assert!(yours.list_entries.is_empty());
+        assert_ne!(yours.name, "Super Luffy");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
@@ -989,4 +1629,15 @@ mod tests {
 
         std::fs::remove_dir_all(&dir).ok();
     }
+}
+
+/// "2026-08-26T01.36.33" (a log's file name) as milliseconds, read as local-clock digits in UTC.
+fn stem_to_millis(stem: &str) -> Option<i64> {
+    let (date, time) = stem.split_once('T')?;
+    let day = optcg_rules::variants::day_number(date)?;
+    let mut parts = time.split('.');
+    let h: i64 = parts.next()?.parse().ok()?;
+    let m: i64 = parts.next()?.parse().ok()?;
+    let s: i64 = parts.next().unwrap_or("0").parse().ok()?;
+    Some(day * 86_400_000 + (h * 3600 + m * 60 + s) * 1000)
 }

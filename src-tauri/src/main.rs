@@ -41,6 +41,17 @@ fn main() {
         }
     };
     let _ = AssetParser::seed_defaults(&database);
+    // Full card list with printed rules text, written by scripts/sync_cards.py.
+    // Loaded after the starter set so real data wins where both have a card.
+    let full_cards = data_dir.join("cards_full.json");
+    if full_cards.exists() {
+        match AssetParser::load_file_and_sync(&database, &full_cards.to_string_lossy()) {
+            Ok(n) => tracing::info!(cards = n, "loaded full card list"),
+            Err(e) => eprintln!("could not load {}: {e}", full_cards.display()),
+        }
+    } else {
+        eprintln!("no card list at {}; run scripts/sync_cards.py for full card text", full_cards.display());
+    }
 
     let game_state = Arc::new(RwLock::new(optcg_core::GameState::new()));
     let pipeline = Arc::new(ObservationPipeline::new(
@@ -71,6 +82,15 @@ fn main() {
             commands::set_pasted_deck,
             commands::clear_pasted_deck,
             commands::get_deck_collection,
+            commands::compare_deck_to_meta,
+            commands::get_generator_leaders,
+            commands::generate_deck,
+            commands::import_optcgsim_decks,
+            commands::import_optcgsim_games,
+            commands::get_match_history,
+            commands::set_match_result,
+            commands::delete_match,
+            commands::reload_meta_data,
             commands::save_deck,
             commands::activate_deck,
             commands::delete_deck,
@@ -130,11 +150,8 @@ fn main() {
             };
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = start_pipeline.start(initial_source, result_tx).await {
-                    tracing::warn!(error = %e, "pipeline start failed");
-                    let (tx, _rx) = tokio::sync::mpsc::channel(8);
-                    if let Err(e2) = start_pipeline.start(SourceSelection::Mock, tx).await {
-                        tracing::error!(error = %e2, "mock fallback also failed");
-                    }
+                    // Never fall back to the mock feed: a fake game that looks real is worse than none.
+                    tracing::warn!(error = %e, "pipeline start failed; pick a source in Settings");
                 }
             });
 

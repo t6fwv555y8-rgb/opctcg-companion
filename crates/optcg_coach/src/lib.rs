@@ -47,7 +47,12 @@ pub use types::{
 /// Returning the offline provider rather than an error means the HUD always has
 /// a working coach; the UI shows which one is active.
 pub fn provider_from_env() -> std::sync::Arc<dyn ChatProvider> {
-    let config = OpenAiConfig::from_env();
+    provider_from_config(OpenAiConfig::from_env())
+}
+
+/// Like [`provider_from_env`], for a caller that assembled the config itself
+/// (for example from a saved settings file).
+pub fn provider_from_config(config: OpenAiConfig) -> std::sync::Arc<dyn ChatProvider> {
     if config.is_configured() {
         match OpenAiProvider::new(config) {
             Ok(provider) => return std::sync::Arc::new(provider),

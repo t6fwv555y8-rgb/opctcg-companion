@@ -28,7 +28,19 @@ impl SnapshotDiffer {
             }
         }
 
-        if let Some(turn) = snapshot.turn {
+        // Trust the page's own "whose turn" wording. Turn parity is only a
+        // fallback: it is wrong whenever the opponent goes first.
+        let stated = snapshot.active_player.as_deref().and_then(|a| match a {
+            "self" => Some(PlayerId::Player1),
+            "opponent" => Some(PlayerId::Player2),
+            _ => None,
+        });
+        let prev_stated = prev.and_then(|p| p.active_player.as_deref());
+        if let Some(player) = stated {
+            if prev_stated != snapshot.active_player.as_deref() || prev.is_none() {
+                events.push(ObservationEvent::TurnObserved { player, confidence });
+            }
+        } else if let Some(turn) = snapshot.turn {
             let changed = prev.and_then(|p| p.turn) != Some(turn);
             if changed || prev.is_none() {
                 let player = if turn % 2 == 1 {
@@ -58,29 +70,88 @@ impl SnapshotDiffer {
             ));
         }
 
-        if let Some(combat) = &snapshot.combat {
-            let prev_combat = prev.and_then(|p| p.combat.as_ref());
-            let changed = prev_combat.map(|c| c.displayed_power) != Some(combat.displayed_power)
-                || prev_combat.and_then(|c| c.attacker.as_ref().and_then(|a| a.card_id.clone()))
-                    != combat.attacker.as_ref().and_then(|a| a.card_id.clone());
-            if changed || prev.is_none() {
-                if combat.attacker.is_some()
+        match (&snapshot.combat, prev.and_then(|p| p.combat.as_ref())) {
+            (Some(combat), prev_combat) => {
+                let has_signal = combat.attacker.is_some()
                     || combat.target.is_some()
-                    || combat.displayed_power.is_some()
-                {
-                    events.push(ObservationEvent::AttackObserved {
-                        attacker: None,
-                        attacker_card_id: combat.attacker.as_ref().and_then(|c| c.card_id.clone()),
-                        target: combat
+                    || combat.displayed_power.is_some();
+                let key = |c: &crate::bridge_protocol::BrowserCombatSnapshot| {
+                    (
+                        c.attacker.as_ref().and_then(|a| a.card_id.clone()),
+                        c.attacker_owner.clone(),
+                        c.target.as_ref().and_then(|t| t.card_id.clone()),
+                        c.target_owner.clone(),
+                        c.displayed_power,
+                    )
+                };
+                let changed = prev_combat.map(key) != Some(key(combat));
+                if has_signal && (changed || prev.is_none()) {
+                    let owner = |o: &Option<String>| match o.as_deref() {
+                        Some("self") => Some(PlayerId::Player1),
+                        Some("opponent") => Some(PlayerId::Player2),
+                        _ => None,
+                    };
+                    let attacker_player = owner(&combat.attacker_owner);
+                    // The defender is whoever is not attacking. Assume the
+                    // opponent when the page did not say who attacked, which
+                    // is the only case the old code handled.
+                    let defender = owner(&combat.target_owner).unwrap_or_else(|| {
+                        match attacker_player {
+                            Some(PlayerId::Player2) => PlayerId::Player1,
+                            _ => PlayerId::Player2,
+                        }
+                    });
+                    // An attack with no visible target is most often aimed at
+                    // the Leader; say so with a lower confidence.
+                    let target_seen = combat.target.is_some();
+                    let target = if combat.target_is_leader.unwrap_or(!target_seen) {
+                        Some(optcg_core::AttackTarget::Leader { player: defender })
+                    } else {
+                        combat
                             .target
                             .as_ref()
-                            .map(|_| optcg_core::AttackTarget::Leader {
-                                player: PlayerId::Player2,
-                            }),
+                            .and_then(|t| t.card_id.clone())
+                            .map(|card_id| optcg_core::AttackTarget::Character {
+                                player: defender,
+                                card_id,
+                            })
+                    };
+                    events.push(ObservationEvent::AttackObserved {
+                        attacker: None,
+                        attacker_player,
+                        attacker_card_id: combat.attacker.as_ref().and_then(|c| c.card_id.clone()),
+                        target,
                         observed_power: combat.displayed_power,
-                        confidence,
+                        confidence: if target_seen { confidence } else { confidence * 0.7 },
                     });
                 }
+            }
+            (None, Some(_)) => {
+                // The battle UI went away: the attack is over.
+                events.push(ObservationEvent::StructuredRaw {
+                    raw: "COMBAT_CLEARED".into(),
+                    source: ObservationSource::BrowserSimulator,
+                    confidence,
+                });
+            }
+            (None, None) => {}
+        }
+
+        // Report the end of a game once, and again if the result shows up later.
+        if snapshot.game_over == Some(true) {
+            let was_over = prev.is_some_and(|p| p.game_over == Some(true));
+            let result_changed = prev.map(|p| p.result.clone()) != Some(snapshot.result.clone());
+            if !was_over || result_changed {
+                let word = match snapshot.result.as_deref() {
+                    Some("win") => "WIN",
+                    Some("loss") => "LOSS",
+                    _ => "UNKNOWN",
+                };
+                events.push(ObservationEvent::StructuredRaw {
+                    raw: format!("GAME_OVER|{word}"),
+                    source: ObservationSource::BrowserSimulator,
+                    confidence,
+                });
             }
         }
 
@@ -139,6 +210,20 @@ fn diff_player(
             events.push(ObservationEvent::HandCountObserved {
                 player,
                 count: hand as usize,
+                confidence,
+            });
+        }
+    }
+
+    if let Some(hand) = &side.hand {
+        if prev.and_then(|p| p.hand.as_ref()) != Some(hand) {
+            let label = match player {
+                PlayerId::Player1 => "PLAYER_1",
+                PlayerId::Player2 => "PLAYER_2",
+            };
+            events.push(ObservationEvent::StructuredRaw {
+                raw: format!("HAND|{label}|{}", hand.join(",")),
+                source: ObservationSource::BrowserSimulator,
                 confidence,
             });
         }
@@ -257,6 +342,136 @@ fn zone_from_instance_key(key: Option<&str>) -> Zone {
 mod tests {
     use super::*;
     use crate::bridge_protocol::{BrowserPlayerSnapshot, ObservedCard};
+
+    #[test]
+    fn hand_contents_are_reported_once_and_again_when_they_change() {
+        let mut differ = SnapshotDiffer::new(ConfidenceConfig::default());
+        let snap = |hand: &[&str]| BrowserGameSnapshot {
+            timestamp: 1,
+            self_player: Some(BrowserPlayerSnapshot {
+                hand: Some(hand.iter().map(|c| c.to_string()).collect()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let raws = |events: Vec<ObservationEvent>| {
+            events
+                .into_iter()
+                .filter_map(|e| match e {
+                    ObservationEvent::StructuredRaw { raw, .. } if raw.starts_with("HAND|") => {
+                        Some(raw)
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            raws(differ.diff(&snap(&["ST01-002", "ST01-002"]))),
+            vec!["HAND|PLAYER_1|ST01-002,ST01-002"]
+        );
+        assert!(raws(differ.diff(&snap(&["ST01-002", "ST01-002"]))).is_empty());
+        assert_eq!(raws(differ.diff(&snap(&["ST01-002"]))).len(), 1);
+    }
+
+    fn combat_snapshot(
+        attacker_owner: &str,
+        target_owner: &str,
+        target_is_leader: bool,
+    ) -> BrowserGameSnapshot {
+        use crate::bridge_protocol::BrowserCombatSnapshot;
+        let card = |id: &str| ObservedCard {
+            card_id: Some(id.into()),
+            ..Default::default()
+        };
+        BrowserGameSnapshot {
+            timestamp: 1,
+            combat: Some(BrowserCombatSnapshot {
+                attacker: Some(card("ST01-002")),
+                target: Some(card("ST01-001")),
+                displayed_power: Some(6000),
+                attacker_owner: Some(attacker_owner.into()),
+                target_owner: Some(target_owner.into()),
+                target_is_leader: Some(target_is_leader),
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn an_opponent_attack_on_your_leader_is_not_read_as_your_own() {
+        let mut differ = SnapshotDiffer::new(ConfidenceConfig::default());
+        let events = differ.diff(&combat_snapshot("opponent", "self", true));
+        let attack = events
+            .iter()
+            .find_map(|e| match e {
+                ObservationEvent::AttackObserved {
+                    attacker_player,
+                    target,
+                    ..
+                } => Some((*attacker_player, target.clone())),
+                _ => None,
+            })
+            .expect("attack event");
+        assert_eq!(attack.0, Some(PlayerId::Player2));
+        assert!(matches!(
+            attack.1,
+            Some(optcg_core::AttackTarget::Leader { player: PlayerId::Player1 })
+        ));
+    }
+
+    #[test]
+    fn combat_is_cleared_when_the_battle_ui_goes_away() {
+        let mut differ = SnapshotDiffer::new(ConfidenceConfig::default());
+        differ.diff(&combat_snapshot("opponent", "self", true));
+        let events = differ.diff(&BrowserGameSnapshot {
+            timestamp: 2,
+            ..Default::default()
+        });
+        assert!(events.iter().any(|e| matches!(
+            e,
+            ObservationEvent::StructuredRaw { raw, .. } if raw == "COMBAT_CLEARED"
+        )));
+    }
+
+    #[test]
+    fn game_over_is_reported_once_and_again_when_the_result_appears() {
+        let mut differ = SnapshotDiffer::new(ConfidenceConfig::default());
+        let snap = |over: bool, result: Option<&str>| BrowserGameSnapshot {
+            timestamp: 1,
+            game_over: Some(over),
+            result: result.map(str::to_string),
+            ..Default::default()
+        };
+        let raws = |events: Vec<ObservationEvent>| -> Vec<String> {
+            events
+                .into_iter()
+                .filter_map(|e| match e {
+                    ObservationEvent::StructuredRaw { raw, .. } if raw.starts_with("GAME_OVER") => Some(raw),
+                    _ => None,
+                })
+                .collect()
+        };
+        assert!(raws(differ.diff(&snap(false, None))).is_empty());
+        assert_eq!(raws(differ.diff(&snap(true, None))), vec!["GAME_OVER|UNKNOWN"]);
+        assert!(raws(differ.diff(&snap(true, None))).is_empty(), "no repeat");
+        assert_eq!(raws(differ.diff(&snap(true, Some("win")))), vec!["GAME_OVER|WIN"]);
+    }
+
+    #[test]
+    fn stated_active_player_beats_turn_parity() {
+        let mut differ = SnapshotDiffer::new(ConfidenceConfig::default());
+        // Turn 1 would be Player1 by parity, but the page says it is the opponent's.
+        let events = differ.diff(&BrowserGameSnapshot {
+            timestamp: 1,
+            turn: Some(1),
+            active_player: Some("opponent".into()),
+            ..Default::default()
+        });
+        assert!(events.iter().any(|e| matches!(
+            e,
+            ObservationEvent::TurnObserved { player: PlayerId::Player2, .. }
+        )));
+    }
 
     #[test]
     fn diff_detects_life_change() {

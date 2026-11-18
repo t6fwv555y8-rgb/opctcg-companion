@@ -88,7 +88,30 @@ fn detect_windows() -> Vec<DetectedApplication> {
 
 #[cfg(target_os = "macos")]
 fn detect_macos() -> Vec<DetectedApplication> {
-    Vec::new()
+    // `ps` lists every process with its program path; keep simulator-looking ones.
+    let Ok(out) = std::process::Command::new("/bin/ps").args(["-axo", "pid=,comm="]).output() else {
+        return Vec::new();
+    };
+    let window = crate::macsim::find_sim_window();
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            let (pid, path) = line.split_once(' ')?;
+            let path = path.trim();
+            let lower = path.to_ascii_lowercase();
+            if !SIMULATOR_PROCESS_HINTS.iter().any(|h| lower.contains(h)) || lower.contains("optcg-companion") {
+                return None;
+            }
+            let name = std::path::Path::new(path).file_name()?.to_string_lossy().to_string();
+            Some(DetectedApplication {
+                process_name: name,
+                process_id: pid.parse().ok(),
+                window_title: window.as_ref().map(|w| w.title.clone()).filter(|t| !t.is_empty()),
+                executable_path: Some(PathBuf::from(path)),
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]

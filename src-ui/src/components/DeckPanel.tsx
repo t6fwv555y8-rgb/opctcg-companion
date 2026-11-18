@@ -5,6 +5,7 @@ import type {
   PastedDeckDto,
   SavedDeckDto,
 } from "../types/game";
+import { ImportButton } from "./ImportButton";
 import { DeckCollectionPanel } from "./DeckCollectionPanel";
 
 interface Props {
@@ -22,6 +23,8 @@ interface Props {
   onDeleteDeck?: (id: string) => void | Promise<void>;
   onRenameDeck?: (id: string, name: string) => void | Promise<void>;
   onClearPaste?: () => void | Promise<void>;
+  /** Called after decks are imported, so the list is re-read. */
+  onImported?: () => void;
 }
 
 function Side({
@@ -34,10 +37,10 @@ function Side({
   if (!deck) {
     return (
       <div>
-        <div className="text-[9px] uppercase tracking-wide text-slate-500">
+        <div className="text-[10px] uppercase tracking-wide text-slate-500">
           {label}
         </div>
-        <div className="mt-0.5 text-[10px] text-slate-500">Waiting…</div>
+        <div className="mt-0.5 text-[10px] text-slate-500">Not detected yet</div>
       </div>
     );
   }
@@ -50,10 +53,10 @@ function Side({
 
   return (
     <div>
-      <div className="flex items-center gap-1 text-[9px] uppercase tracking-wide text-slate-500">
+      <div className="flex items-center gap-1 text-[10px] uppercase tracking-wide text-slate-500">
         <span>{label}</span>
         {deck.from_paste && (
-          <span className="rounded bg-hud-accent/20 px-1 text-[8px] text-hud-accent">
+          <span className="rounded bg-hud-accent/20 px-1 text-[10px] text-hud-accent">
             pasted
           </span>
         )}
@@ -64,43 +67,34 @@ function Side({
       <div className="mt-0.5 font-mono text-[10px] text-slate-300">
         {deck.leader_color ? `${deck.leader_color} · ` : ""}
         {deck.leader_name || deck.leader_id || "Leader ?"}
-        {deck.leader_id ? ` · ${deck.leader_id}` : ""}
       </div>
-      {list ? (
-        <ul className="mt-1 max-h-28 space-y-0.5 overflow-y-auto">
-          {list.slice(0, 16).map((c) => (
-            <li
-              key={c.card_id}
-              className="truncate text-[10px] text-slate-400"
-              title={`${c.card_id} · ${c.card_type}${c.rush ? " · rush" : ""}${c.blocker ? " · blocker" : ""}`}
-            >
-              <span className="font-mono text-hud-accent">{c.quantity}×</span>{" "}
-              <span className="text-slate-200">{c.name}</span>
-              <span className="ml-1 font-mono text-slate-500">{c.card_id}</span>
-            </li>
-          ))}
-          {(deck.list_total_cards ?? 0) > 0 && (
-            <li className="text-[9px] text-slate-500">
-              {deck.list_total_cards} cards in list
-            </li>
-          )}
-        </ul>
-      ) : known.length > 0 ? (
-        <ul className="mt-1 max-h-24 space-y-0.5 overflow-y-auto">
-          {known.map((c) => (
-            <li
-              key={c.card_id}
-              className="truncate text-[10px] text-slate-400"
-              title={`${c.card_id} · ${c.card_type}`}
-            >
-              <span className="text-slate-200">{c.name}</span>
-              <span className="ml-1 font-mono text-slate-500">{c.card_id}</span>
-            </li>
-          ))}
-          {extra > 0 && (
-            <li className="text-[10px] text-slate-500">+{extra} more seen</li>
-          )}
-        </ul>
+      {list || known.length > 0 ? (
+        <details className="mt-1">
+          <summary className="cursor-pointer select-none text-[10px] text-slate-400">
+            Cards ({list ? deck.list_total_cards || list.length : deck.known_cards.length}
+            {list ? "" : " seen"})
+          </summary>
+          <ul className="mt-1 max-h-28 space-y-0.5 overflow-y-auto">
+            {(list
+              ? list.slice(0, 16).map((c) => ({ ...c, qty: c.quantity as number | null }))
+              : known.map((c) => ({ ...c, qty: null as number | null }))
+            ).map((c) => (
+              <li
+                key={c.card_id}
+                className="truncate text-[10px] text-slate-400"
+                title={c.card_id}
+              >
+                {c.qty !== null && (
+                  <span className="font-mono text-hud-accent">{c.qty}× </span>
+                )}
+                <span className="text-slate-200">{c.name}</span>
+              </li>
+            ))}
+            {!list && extra > 0 && (
+              <li className="text-[10px] text-slate-500">+{extra} more seen</li>
+            )}
+          </ul>
+        </details>
       ) : (
         <div className="mt-1 text-[10px] text-slate-500">
           No cards identified yet
@@ -126,6 +120,7 @@ export function DeckPanel({
   onDeleteDeck,
   onRenameDeck,
   onClearPaste,
+  onImported,
 }: Props) {
   const [open, setOpen] = useState(false);
   const manageable =
@@ -137,29 +132,47 @@ export function DeckPanel({
   const savedCount = collection?.decks.length ?? 0;
 
   return (
-    <div className="hud-panel p-3">
-      <div className="flex items-center justify-between gap-2">
-        <div className="hud-title">Decks</div>
+    <details className="hud-panel">
+      <summary className="flex cursor-pointer select-none items-center justify-between gap-2 px-3 py-2">
+        <span className="hud-title">Your deck</span>
+        <span className="min-w-0 truncate text-[10px] text-slate-400">
+          {active ? active.name : yourDeck?.name ?? "Read from your game"}
+        </span>
+      </summary>
+      <div className="p-3 pt-0">
+      <div className="flex items-center justify-end gap-2">
         {manageable && (
           <button
             type="button"
             onClick={() => setOpen((v) => !v)}
             className="rounded border border-slate-600/60 px-2 py-0.5 text-[10px] text-slate-300 hover:bg-slate-800/60"
           >
-            {open ? "Hide decks" : savedCount > 0 ? `My decks (${savedCount})` : "Add deck"}
+            {open ? "Hide" : savedCount > 0 ? `My deck lists (${savedCount})` : "Add a deck list"}
           </button>
         )}
       </div>
 
-      {active && !open && (
-        <div className="mt-1 truncate text-[9px] text-slate-500">
-          Using <span className="text-hud-accent">{active.name}</span>
+      {active && !open ? (
+        <div className="mt-1 truncate text-[10px] text-slate-400">
+          Using <span className="text-slate-100">{active.name}</span>
         </div>
+      ) : (
+        !active &&
+        !open && (
+          <p className="mt-1 text-[10px] leading-snug text-slate-400">
+            The coach reads your Leader and cards from the game. Adding your deck list is
+            optional: it lets the coach and the winning-deck comparison know your exact 50 cards.
+          </p>
+        )
       )}
 
       <div className="mt-2 grid grid-cols-2 gap-3">
         <Side label="You" deck={yourDeck} />
         <Side label="Opponent" deck={opponentDeck} />
+      </div>
+
+      <div className="mt-2">
+        <ImportButton command="import_optcgsim_decks" label="Import my decks from OPTCGSim" onDone={onImported} />
       </div>
 
       {open && onSaveDeck && onActivateDeck && onDeleteDeck && onRenameDeck && (
@@ -176,6 +189,7 @@ export function DeckPanel({
           />
         </div>
       )}
-    </div>
+      </div>
+    </details>
   );
 }

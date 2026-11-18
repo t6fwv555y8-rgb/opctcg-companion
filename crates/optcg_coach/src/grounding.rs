@@ -17,6 +17,10 @@ pub struct DeckContext {
     pub opponent_leader: String,
     pub plan: Option<String>,
     pub vs_opponent: Option<String>,
+    /// What recent tournament top-cut lists with your Leader play most.
+    pub your_leader_staples: Option<String>,
+    /// The same for the opponent's Leader: what they are likely to hold.
+    pub opponent_leader_staples: Option<String>,
 }
 
 /// Which parts of the live context a turn may send.
@@ -288,6 +292,18 @@ player's simulator and is the only reliable source of board state. If the \
 briefing does not contain what you need, say what is missing instead of \
 inventing a board, a card, or an opponent's hand.
 
+The briefing labels the two sides: \"You\" is the person asking, and \
+\"Opponent\" is who they are playing. Quote and use the exact printed card \
+text in the briefing (types, costs, DON!! requirements, once-per-turn limits, \
+triggers) and look for combos between the cards in your hand and on the \
+table: type synergies, effects that enable one another, and what the \
+opponent's revealed cards can do to you. If a card is marked as missing from \
+the database, say you cannot see its text rather than guessing it.
+
+Use the official One Piece Card Game terms, and remember the player may be \
+new: the first time you use a keyword or slang word (Blocker, Counter, \
+swing, tempo), add a few plain words saying what it means.
+
 Answer like a coach mid-match: lead with the recommendation, then give the \
 short reason. Prefer concrete lines ('attack the leader with Zoro, hold Usopp \
 to block') over general theory. Be brief; the HUD is a narrow overlay. Never \
@@ -312,6 +328,19 @@ pub fn build_context(
         let board = board_readout(state);
         sink(CoachEvent::tool("board_readout", board_summary(state)));
         context.push("Board", board);
+
+        if let Some(hand) = hand_readout(state, repo) {
+            sink(CoachEvent::tool(
+                "hand_readout",
+                format!("{} cards", state.player_one().hand.len()),
+            ));
+            context.push("Your hand", hand);
+        }
+
+        if let Some(table) = table_readout(state, repo) {
+            sink(CoachEvent::tool("card_text", "cards on the table".to_string()));
+            context.push("Card text", table);
+        }
 
         if let Some(actions) = recent_actions(state) {
             sink(CoachEvent::tool(
@@ -440,6 +469,7 @@ fn board_readout(state: &GameState) -> String {
     let you = state.player_one();
     let opp = state.player_two();
     let mut lines = vec![
+        "You are the HUD player (\"You\"). \"Opponent\" is the other player. Never mix the two sides up.".to_string(),
         format!(
             "Turn {}, {:?} phase, active player: {}",
             state.turn_number,
@@ -475,6 +505,126 @@ fn board_readout(state: &GameState) -> String {
         ));
     }
     lines.join("\n")
+}
+
+/// One card as the model needs to read it: identity, numbers, keywords and
+/// the exact printed text (which already carries Type and Trigger lines).
+fn card_line(def: &optcg_core::CardDefinition) -> String {
+    let mut tags = Vec::new();
+    if def.keywords.rush {
+        tags.push("Rush");
+    }
+    if def.keywords.blocker {
+        tags.push("Blocker");
+    }
+    if def.keywords.double_attack {
+        tags.push("Double Attack");
+    }
+    if def.keywords.banish {
+        tags.push("Banish");
+    }
+    let mut line = format!(
+        "{} — {} ({:?}, cost {}, power {}",
+        def.card_id, def.name, def.card_type, def.cost, def.power
+    );
+    if def.counter > 0 {
+        line.push_str(&format!(", counter +{}", def.counter));
+    }
+    line.push(')');
+    if !tags.is_empty() {
+        line.push_str(&format!(" [{}]", tags.join(", ")));
+    }
+    let text = def.rules_text.trim();
+    if !text.is_empty() {
+        // Newlines separate Type / Attribute / effect / trigger lines.
+        line.push_str(&format!(": {}", text.replace('\n', " | ")));
+    }
+    line
+}
+
+const UNKNOWN_CARD: &str = "not in the card database; rules text unknown";
+
+/// Your own hand with each card's rules, or `None` when it was not read.
+///
+/// This is what turn advice mostly depends on: what can be played, at what
+/// cost, and what it does. Cards missing from the database are still listed by
+/// id and marked, so the model does not invent text for them.
+fn hand_readout(state: &GameState, repo: &CardRepository<'_>) -> Option<String> {
+    let hand = &state.player_one().hand;
+    if hand.is_empty() {
+        return None;
+    }
+    let mut lines = Vec::with_capacity(hand.len() + 1);
+    lines.push(format!(
+        "{} active DON!! available this turn.",
+        state.player_one().don_active
+    ));
+    // One lookup per iteration: each `get_by_id` takes the database lock.
+    for card in hand {
+        lines.push(match repo.get_by_id(&card.card_id) {
+            Ok(def) => card_line(&def),
+            Err(_) => format!("{} — {UNKNOWN_CARD}", card.card_id),
+        });
+    }
+    Some(lines.join("\n"))
+}
+
+/// Printed text for every card visible on the table, for both players.
+///
+/// Combos and answers depend on exact wording (types, "up to", once-per-turn
+/// limits, triggers), so the coach is given the words rather than a name to
+/// recall. Your hand is briefed separately; this covers what is in play and
+/// what has been revealed, including the opponent's known cards.
+fn table_readout(state: &GameState, repo: &CardRepository<'_>) -> Option<String> {
+    const MAX_CARDS_PER_SIDE: usize = 24;
+    let mut sections = Vec::new();
+
+    for (label, player) in [
+        ("Your cards", state.player_one()),
+        ("Opponent's cards", state.player_two()),
+    ] {
+        let mut ids: Vec<String> = Vec::new();
+        let mut push = |id: &str| {
+            if !id.is_empty() && !ids.iter().any(|seen| seen == id) {
+                ids.push(id.to_string());
+            }
+        };
+        push(&player.leader.card_id);
+        for card in &player.characters {
+            push(&card.card_id);
+        }
+        if let Some(stage) = &player.stage {
+            push(&stage.card_id);
+        }
+        for id in &player.known_cards {
+            push(id);
+        }
+        // Your hand has its own section.
+        let in_hand: Vec<&str> = if std::ptr::eq(player, state.player_one()) {
+            player.hand.iter().map(|c| c.card_id.as_str()).collect()
+        } else {
+            Vec::new()
+        };
+        ids.retain(|id| !in_hand.contains(&id.as_str()));
+        ids.truncate(MAX_CARDS_PER_SIDE);
+
+        let mut lines = Vec::new();
+        for id in &ids {
+            lines.push(match repo.get_by_id(id) {
+                Ok(def) => card_line(&def),
+                Err(_) => format!("{id} — {UNKNOWN_CARD}"),
+            });
+        }
+        if !lines.is_empty() {
+            sections.push(format!("{label}:\n{}", lines.join("\n")));
+        }
+    }
+
+    if sections.is_empty() {
+        None
+    } else {
+        Some(sections.join("\n\n"))
+    }
 }
 
 fn side_readout(player: &optcg_core::PlayerState) -> String {
@@ -557,6 +707,15 @@ fn deck_readout(decks: &DeckContext) -> String {
             decks.opponent_deck, decks.opponent_leader
         ));
     }
+    if let Some(staples) = decks.your_leader_staples.as_ref() {
+        lines.push(format!("What winning decks with your Leader play: {staples}"));
+    }
+    if let Some(staples) = decks.opponent_leader_staples.as_ref() {
+        lines.push(format!(
+            "What winning decks with the opponent's Leader play (their likely cards; \
+             this is a popularity guide, not what they hold): {staples}"
+        ));
+    }
     if let Some(plan) = decks.plan.as_ref().filter(|p| !p.trim().is_empty()) {
         lines.push(format!("Your game plan: {plan}"));
     }
@@ -598,6 +757,99 @@ mod tests {
     }
 
     #[test]
+    fn your_hand_is_briefed_with_rules_not_just_a_count() {
+        let db = db();
+        let repo = CardRepository::new(&db);
+        let (sink, _recorder) = recording_sink();
+        let mut state = sample_state();
+        state.player_one_mut().set_observed_hand(&[
+            "ST01-002".to_string(),
+            "ZZ99-999".to_string(),
+        ]);
+
+        let prompt = build_context(
+            &state,
+            &repo,
+            &DeckContext::default(),
+            ContextScope::default(),
+            &sink,
+        )
+        .to_prompt();
+
+        assert!(prompt.contains("## Your hand"), "hand missing: {prompt}");
+        assert!(prompt.contains("ST01-002 — "), "known card unnamed: {prompt}");
+        assert!(
+            prompt.contains("ZZ99-999 — not in the card database"),
+            "unknown card must be flagged, not invented: {prompt}"
+        );
+    }
+
+    #[test]
+    fn winning_deck_staples_reach_the_briefing_for_both_leaders() {
+        let db = db();
+        let repo = CardRepository::new(&db);
+        let (sink, _recorder) = recording_sink();
+        let decks = DeckContext {
+            your_leader_staples: Some("14 lists: Usopp (9 of 14 lists, usually 4x)".into()),
+            opponent_leader_staples: Some("8 lists: Loki (8 of 8 lists, usually 4x)".into()),
+            ..Default::default()
+        };
+        let prompt = build_context(&sample_state(), &repo, &decks, ContextScope::default(), &sink)
+            .to_prompt();
+        assert!(prompt.contains("winning decks with your Leader play: 14 lists"), "{prompt}");
+        assert!(prompt.contains("not what they hold"), "must not read as the opponent's hand: {prompt}");
+    }
+
+    #[test]
+    fn card_text_covers_both_players_and_names_who_you_are() {
+        let db = db();
+        let repo = CardRepository::new(&db);
+        let (sink, _recorder) = recording_sink();
+        let mut state = sample_state();
+        state.player_one_mut().note_card("ST01-002");
+        state.player_two_mut().note_card("ST01-003");
+        state.player_two_mut().note_card("ZZ99-999");
+
+        let prompt = build_context(
+            &state,
+            &repo,
+            &DeckContext::default(),
+            ContextScope::default(),
+            &sink,
+        )
+        .to_prompt();
+
+        assert!(prompt.contains("## Card text"), "{prompt}");
+        assert!(prompt.contains("Your cards:"), "{prompt}");
+        assert!(prompt.contains("Opponent's cards:"), "{prompt}");
+        assert!(
+            prompt.contains("ZZ99-999 — not in the card database"),
+            "opponent's unknown card must be flagged: {prompt}"
+        );
+        assert!(prompt.contains("You are the HUD player"), "{prompt}");
+    }
+
+    #[test]
+    fn withholding_the_board_also_withholds_the_hand() {
+        let db = db();
+        let repo = CardRepository::new(&db);
+        let (sink, _recorder) = recording_sink();
+        let mut state = sample_state();
+        state
+            .player_one_mut()
+            .set_observed_hand(&["ST01-002".to_string()]);
+        let prompt = build_context(
+            &state,
+            &repo,
+            &DeckContext::default(),
+            ContextScope { board: false, deck: true },
+            &sink,
+        )
+        .to_prompt();
+        assert!(!prompt.contains("Your hand"), "{prompt}");
+    }
+
+    #[test]
     fn context_includes_board_phase_and_decks() {
         let db = db();
         let repo = CardRepository::new(&db);
@@ -610,6 +862,7 @@ mod tests {
             opponent_leader: "ST01-001".into(),
             plan: Some("Race with cheap attackers".into()),
             vs_opponent: None,
+            ..Default::default()
         };
 
         let context = build_context(

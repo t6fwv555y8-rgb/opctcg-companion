@@ -172,6 +172,31 @@ function extractSelfHandCards(playerId: string, doc: Document): string[] {
   return ids;
 }
 
+/** Your hand in on-screen order, keeping duplicates (two copies matter). */
+export function extractSelfHandList(playerId: string, doc: Document): string[] {
+  const ids: string[] = [];
+  const els = doc.querySelectorAll(
+    `[data-card-zone="${ZONES.hand}"][data-card-player-id="${playerId}"]`,
+  );
+  for (const el of els) {
+    const id = extractCardId(el);
+    if (id) ids.push(id);
+  }
+  return ids;
+}
+
+/**
+ * Whose turn it is, read from the board's own wording. Returns null rather
+ * than guessing when the page does not say, so callers can fall back.
+ */
+export function extractActivePlayer(doc: Document): "self" | "opponent" | null {
+  const board = doc.querySelector(SELECTORS.gameBoard);
+  const text = board?.textContent ?? "";
+  if (/opponent'?s?\s+turn/i.test(text)) return "opponent";
+  if (/your\s+turn/i.test(text)) return "self";
+  return null;
+}
+
 function extractTrashCards(playerId: string, doc: Document): string[] {
   const ids: string[] = [];
   const els = doc.querySelectorAll(
@@ -241,6 +266,7 @@ function buildPlayerSnapshot(
     leader_id: leaderId,
     deck_name: extractDeckName(playerId, doc),
     known_cards: [...known],
+    ...(isSelf ? { hand: extractSelfHandList(playerId, doc) } : {}),
     board,
   };
 }
@@ -254,6 +280,30 @@ function extractPhase(doc: Document): string | null {
   return null;
 }
 
+/**
+ * Whether the game has ended and, if the page says so, who won.
+ *
+ * "Game over" comes from the phase text. The result is only read once the game
+ * is over, so ordinary card text mentioning "win" or "defeat" cannot trigger
+ * it. The wording is a best guess: when it is not found, `result` stays null
+ * and the HUD asks the player instead.
+ */
+export function extractGameOutcome(doc: Document): {
+  over: boolean;
+  result: "win" | "loss" | null;
+} {
+  const board = doc.querySelector(SELECTORS.gameBoard);
+  const text = board?.textContent ?? "";
+  const phase = text.match(/Phase:\s*([^\n]+)/i)?.[1] ?? "";
+  const over = /game[-\s]?over/i.test(phase) || /game[-\s]?over/i.test(text.slice(0, 4000));
+  if (!over) return { over: false, result: null };
+  if (/opponent\s+(?:has\s+)?conceded/i.test(text)) return { over: true, result: "win" };
+  if (/you\s+(?:have\s+)?conceded/i.test(text)) return { over: true, result: "loss" };
+  if (/\b(?:victory|you\s+win|you\s+won)\b/i.test(text)) return { over: true, result: "win" };
+  if (/\b(?:defeat|you\s+lose|you\s+lost)\b/i.test(text)) return { over: true, result: "loss" };
+  return { over: true, result: null };
+}
+
 function extractTurn(doc: Document): number | null {
   const board = doc.querySelector(SELECTORS.gameBoard);
   if (!board) return null;
@@ -261,9 +311,15 @@ function extractTurn(doc: Document): number | null {
   return m ? Number(m[1]) : null;
 }
 
-function extractCombat(doc: Document): BrowserCombatSnapshot | null {
-  const observed = observeCombat(doc);
-  if (observed) return combatToSnapshot(observed);
+function extractCombat(
+  doc: Document,
+  selfId: string | null,
+  oppId: string | null,
+): BrowserCombatSnapshot | null {
+  const active = extractActivePlayer(doc);
+  const activePlayerId = active === "self" ? selfId : active === "opponent" ? oppId : null;
+  const observed = observeCombat(doc, { activePlayerId });
+  if (observed) return combatToSnapshot(observed, selfId);
   return null;
 }
 
@@ -289,15 +345,18 @@ export function extractOneSimulatorSnapshot(
   const selfId = selfPid ?? ids[0] ?? "0";
   const oppId = ids.find((id) => id !== selfId) ?? (selfId === "0" ? "1" : "0");
 
+  const outcome = extractGameOutcome(doc);
   return {
     timestamp: Date.now(),
     source: "onesimulator",
+    game_over: outcome.over,
+    result: outcome.result,
     turn: extractTurn(doc),
     phase: extractPhase(doc),
-    active_player: null,
+    active_player: extractActivePlayer(doc),
     self: buildPlayerSnapshot(selfId, doc, true),
     opponent: buildPlayerSnapshot(oppId, doc, false),
-    combat: extractCombat(doc),
+    combat: extractCombat(doc, selfId, oppId),
     diagnostics: {
       ...diag,
       found: {

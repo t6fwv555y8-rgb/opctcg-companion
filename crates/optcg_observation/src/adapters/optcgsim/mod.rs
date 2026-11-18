@@ -81,7 +81,11 @@ impl OptcgSimAdapter {
         *self.installation.lock() = install.clone();
 
         let combat_logs = discover_combat_logs(&install);
-        let mode = if combat_logs.live_capable {
+        // On a Mac the simulator can only be followed by reading its window.
+        // The reader waits for the simulator to open, so it starts either way.
+        let mode = if cfg!(target_os = "macos") {
+            ObservationMode::MacScreenReader
+        } else if combat_logs.live_capable {
             ObservationMode::StructuredLog
         } else if combat_logs.path.is_some() {
             ObservationMode::ReplayOnly
@@ -99,7 +103,7 @@ impl OptcgSimAdapter {
             label: mode.label(),
         };
 
-        let found = apps.first().is_some() || install.is_some();
+        let found = apps.first().is_some() || install.is_some() || cfg!(target_os = "macos");
         *self.status.lock() = if found {
             AdapterStatus::Connected
         } else {
@@ -182,6 +186,80 @@ impl ObservationAdapter for OptcgSimAdapter {
                     }
                     *status.lock() = AdapterStatus::Disconnected;
                 });
+            }
+            ObservationMode::MacScreenReader => {
+                #[cfg(target_os = "macos")]
+                {
+                    use crate::diff::SnapshotDiffer;
+                    use crate::macsim::{ReaderStatus, SimReader};
+                    info!("OPTCGSim screen reader starting");
+                    let seq = Arc::clone(&seq);
+                    let status = Arc::clone(&status);
+                    let sim_status = Arc::clone(&sim_status);
+                    std::thread::spawn(move || {
+                        let mut reader = SimReader::new();
+                        let mut differ = SnapshotDiffer::new(ConfidenceConfig::default());
+                        let base_label = ObservationMode::MacScreenReader.label();
+                        let mut last_note = String::new();
+                        loop {
+                            if stop_rx.try_recv().is_ok() {
+                                break;
+                            }
+                            let poll = reader.poll();
+                            *status.lock() = match poll.status {
+                                ReaderStatus::Reading | ReaderStatus::OddWindowShape => AdapterStatus::Observing,
+                                ReaderStatus::NotInGame => AdapterStatus::Connected,
+                                ReaderStatus::NoWindow => AdapterStatus::Detecting,
+                                _ => AdapterStatus::Degraded,
+                            };
+                            sim_status.lock().label = if poll.status == ReaderStatus::Reading {
+                                base_label.clone()
+                            } else {
+                                format!("OPTCGSim · {}", poll.status.message())
+                            };
+                            // One line whenever what the reader sees changes (no player names or log text).
+                            let note = format!(
+                                "{} | you {:?} vs {:?} | turn {:?} | active {:?} | combat {} | over {:?} | hand {:?} | board you {} opp {}",
+                                poll.status.message(),
+                                poll.snapshot.as_ref().and_then(|s| s.self_player.as_ref()).and_then(|p| p.leader_id.clone()),
+                                poll.snapshot.as_ref().and_then(|s| s.opponent.as_ref()).and_then(|p| p.leader_id.clone()),
+                                poll.snapshot.as_ref().and_then(|s| s.turn),
+                                poll.snapshot.as_ref().and_then(|s| s.active_player.clone()),
+                                poll.snapshot.as_ref().is_some_and(|s| s.combat.is_some()),
+                                poll.snapshot.as_ref().and_then(|s| s.game_over),
+                                poll.snapshot.as_ref().and_then(|s| s.self_player.as_ref()).and_then(|p| p.hand.clone()),
+                                poll.snapshot.as_ref().and_then(|s| s.self_player.as_ref()).map_or(0, |p| p.board.len()),
+                                poll.snapshot.as_ref().and_then(|s| s.opponent.as_ref()).map_or(0, |p| p.board.len()),
+                            );
+                            if note != last_note {
+                                info!("optcgsim reader: {note}");
+                                last_note = note;
+                            }
+                            if let Some(snapshot) = poll.snapshot {
+                                for event in differ.diff(&snapshot) {
+                                    *seq.lock() += 1;
+                                    let envelope = ObservationEnvelope {
+                                        sequence: *seq.lock(),
+                                        timestamp_ms: Utc::now().timestamp_millis(),
+                                        source: ObservationSource::DesktopSimulator,
+                                        event,
+                                    };
+                                    if sender.blocking_send(envelope).is_err() {
+                                        *status.lock() = AdapterStatus::Disconnected;
+                                        return;
+                                    }
+                                }
+                            }
+                            std::thread::sleep(Duration::from_millis(600));
+                        }
+                        *status.lock() = AdapterStatus::Disconnected;
+                    });
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    let _ = (&stop_rx, &sender);
+                    return Err(ObservationError::Unavailable("the screen reader is macOS only".into()));
+                }
             }
             ObservationMode::VisualFallback | ObservationMode::ReplayOnly => {
                 let regions = config.vision_regions.clone();

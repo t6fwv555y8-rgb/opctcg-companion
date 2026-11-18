@@ -1,6 +1,7 @@
 pub mod adapter;
 pub mod adapters;
 pub mod analysis;
+pub mod art;
 pub mod bridge_protocol;
 pub mod calibration;
 pub mod capture;
@@ -8,6 +9,7 @@ pub mod confidence;
 pub mod diff;
 pub mod error;
 pub mod latency;
+pub mod macsim;
 pub mod manager;
 pub mod pipeline;
 pub mod process_detect;

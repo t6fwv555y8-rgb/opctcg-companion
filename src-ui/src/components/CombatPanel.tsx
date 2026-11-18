@@ -1,3 +1,4 @@
+import { GlossaryText } from "./Glossary";
 import type { CombatAnalysis, CombatState } from "../types/game";
 
 interface Props {
@@ -30,18 +31,18 @@ export function CombatPanel({ combat, analysis }: Props) {
         <div className="space-y-2">
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <div className="text-[10px] uppercase text-slate-400">ATK</div>
+              <div className="text-[10px] uppercase text-slate-400">Attacker</div>
               <div className="stat-value text-hud-accent">
                 {fmt(analysis.attacker_power)}
               </div>
             </div>
             <div>
-              <div className="text-[10px] uppercase text-slate-400">DEF</div>
+              <div className="text-[10px] uppercase text-slate-400">Defender</div>
               <div className="stat-value">{fmt(analysis.defender_power)}</div>
             </div>
           </div>
           <div className="rounded border border-slate-600/50 bg-slate-800/50 p-2">
-            <div className="text-[10px] text-slate-400">Delta</div>
+            <div className="text-[10px] text-slate-400">Power gap</div>
             <div
               className={`stat-value ${analysis.power_differential > 0 ? "text-hud-danger" : "text-hud-success"}`}
             >
@@ -50,13 +51,17 @@ export function CombatPanel({ combat, analysis }: Props) {
             </div>
           </div>
           <div className="flex justify-between text-xs">
-            <span className="text-slate-300">Required Counter</span>
+            <span className="text-slate-300">
+              <GlossaryText text="Counter needed to survive" />
+            </span>
             <span className="stat-value text-hud-warn">
               {fmt(analysis.required_counter)}
             </span>
           </div>
           <div className="flex justify-between text-xs">
-            <span className="text-slate-300">Available Counter</span>
+            <span className="text-slate-300">
+              <GlossaryText text="Counter you can add" />
+            </span>
             <span className="stat-value">
               {fmt(analysis.calculation.available_counter)}
             </span>

@@ -262,6 +262,10 @@ pub struct PlayerState {
     pub leader_power: u32,
     #[serde(default)]
     pub leader_rested: bool,
+    /// True once a Leader was actually seen for this player. Until then
+    /// `leader` holds a placeholder that must not be mistaken for the real one.
+    #[serde(default)]
+    pub leader_observed: bool,
 }
 
 fn default_leader_power() -> u32 {
@@ -289,6 +293,32 @@ impl PlayerState {
             leader_id,
             leader_power: 5000,
             leader_rested: false,
+            leader_observed: false,
+        }
+    }
+
+    /// The Leader the game actually showed, or `None` while it is still the placeholder.
+    pub fn observed_leader(&self) -> Option<&str> {
+        (self.leader_observed && !self.leader.card_id.is_empty())
+            .then_some(self.leader.card_id.as_str())
+    }
+
+    /// Replace the visible hand with what the simulator currently shows.
+    ///
+    /// Hand size is the observed count when known, so a partial read never
+    /// shrinks it; the list can only add detail.
+    pub fn set_observed_hand(&mut self, card_ids: &[String]) {
+        let owner = self.player_index;
+        self.hand = card_ids
+            .iter()
+            .map(|id| {
+                let mut card = CardInstance::new(id.clone(), owner, Zone::Hand);
+                card.known = true;
+                card
+            })
+            .collect();
+        for id in card_ids {
+            self.note_card(id);
         }
     }
 
@@ -307,6 +337,7 @@ impl PlayerState {
             return;
         }
         self.leader.card_id = id.clone();
+        self.leader_observed = true;
         self.note_card(&id);
         self.sync_leader_fields();
     }
@@ -416,6 +447,9 @@ pub struct GameState {
     pub event_log: Vec<String>,
     pub timestamp: DateTime<Utc>,
     pub last_processed_fingerprint: Option<String>,
+    /// How the match ended from the HUD player's side: "win" or "loss", when known.
+    #[serde(default)]
+    pub outcome: Option<String>,
 }
 
 impl Default for GameState {
@@ -442,6 +476,7 @@ impl GameState {
             event_log: Vec::new(),
             timestamp: Utc::now(),
             last_processed_fingerprint: None,
+            outcome: None,
         }
     }
 

@@ -1,3 +1,4 @@
+import { GlossaryText } from "./Glossary";
 import type { CombatAnalysis, CombatState } from "../types/game";
 
 interface Props {
@@ -17,11 +18,13 @@ export function BlockerWarning({ combat, analysis }: Props) {
 
   return (
     <div className={`hud-panel p-3 ${urgent ? "border-hud-warn animate-pulse" : ""}`}>
-      <div className="hud-title text-hud-warn">Blocker Warning</div>
+      <div className="hud-title text-hud-warn">
+        <GlossaryText text="Blocker warning" />
+      </div>
       <p className="text-xs text-slate-300">
         {combat?.blocker_offered
-          ? "Blocker window open — decide now"
-          : "Blocker available on field"}
+          ? "A Blocker can step in on this attack"
+          : "A Blocker is ready on the field"}
       </p>
       {combat?.blocker_id && (
         <div className="mt-1 font-mono text-xs text-hud-accent">

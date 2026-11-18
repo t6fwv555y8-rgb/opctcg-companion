@@ -14,6 +14,12 @@ pub struct BrowserGameSnapshot {
     pub self_player: Option<BrowserPlayerSnapshot>,
     pub opponent: Option<BrowserPlayerSnapshot>,
     pub combat: Option<BrowserCombatSnapshot>,
+    /// True while the page shows the game-over state.
+    #[serde(default)]
+    pub game_over: Option<bool>,
+    /// "win" or "loss" from the HUD player's side, when the page says so.
+    #[serde(default)]
+    pub result: Option<String>,
     pub diagnostics: Option<AdapterDiagnostics>,
 }
 
@@ -30,6 +36,10 @@ pub struct BrowserPlayerSnapshot {
     /// Unique known card IDs for this player (visible zones only).
     #[serde(default)]
     pub known_cards: Vec<String>,
+    /// The player's own hand, on-screen order, duplicates kept. Absent for the
+    /// opponent: their hand is hidden information.
+    #[serde(default)]
+    pub hand: Option<Vec<String>>,
     #[serde(default)]
     pub board: Vec<ObservedCard>,
 }
@@ -48,6 +58,14 @@ pub struct BrowserCombatSnapshot {
     pub attacker: Option<ObservedCard>,
     pub target: Option<ObservedCard>,
     pub displayed_power: Option<u32>,
+    /// "self" or "opponent": whose card is attacking / being attacked.
+    #[serde(default)]
+    pub attacker_owner: Option<String>,
+    #[serde(default)]
+    pub target_owner: Option<String>,
+    /// True when the target is a Leader rather than a Character.
+    #[serde(default)]
+    pub target_is_leader: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]

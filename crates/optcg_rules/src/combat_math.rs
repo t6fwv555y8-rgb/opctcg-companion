@@ -130,7 +130,7 @@ impl CombatMath {
 
         let recommended_block = !survives_without && blocker_available && differential < 8000;
 
-        info!(
+        debug!(
             target: "optcg::combat",
             atk = attacker_power,
             def = defender_power,
@@ -173,7 +173,7 @@ impl CombatMath {
 }
 
 use optcg_core::CardDefinition;
-use tracing::info;
+use tracing::debug;
 
 impl CombatMath {
     pub fn optimal_counter_play(

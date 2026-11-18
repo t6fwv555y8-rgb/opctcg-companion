@@ -16,6 +16,8 @@ export interface BrowserPlayerSnapshot {
   leader_id?: string | null;
   deck_name?: string | null;
   known_cards?: string[];
+  /** Your own hand, in on-screen order, duplicates kept. Never set for the opponent. */
+  hand?: string[];
   board?: ObservedCard[];
 }
 
@@ -23,6 +25,10 @@ export interface BrowserCombatSnapshot {
   attacker?: ObservedCard | null;
   target?: ObservedCard | null;
   displayed_power?: number | null;
+  /** "self" or "opponent": whose card is attacking / being attacked. */
+  attacker_owner?: "self" | "opponent" | null;
+  target_owner?: "self" | "opponent" | null;
+  target_is_leader?: boolean | null;
 }
 
 export interface AdapterDiagnostics {
@@ -39,10 +45,15 @@ export interface BrowserGameSnapshot {
   sequence?: number | null;
   turn?: number | null;
   phase?: string | null;
-  active_player?: string | null;
+  /** "self" or "opponent" when the page says whose turn it is, else null. */
+  active_player?: "self" | "opponent" | null;
   self?: BrowserPlayerSnapshot | null;
   opponent?: BrowserPlayerSnapshot | null;
   combat?: BrowserCombatSnapshot | null;
+  /** True while the page shows the game-over state. */
+  game_over?: boolean | null;
+  /** How it ended for you, when the page says so; null when it does not. */
+  result?: "win" | "loss" | null;
   diagnostics?: AdapterDiagnostics | null;
 }
 

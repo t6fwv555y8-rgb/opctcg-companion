@@ -38,7 +38,7 @@ export function DebugPanel({ enabled }: Props) {
   if (!enabled || !debug) return null;
 
   return (
-    <div className="hud-panel mt-2 space-y-1 p-2 font-mono text-[9px] text-slate-400">
+    <div className="hud-panel mt-2 space-y-1 p-2 font-mono text-[10px] text-slate-400">
       <div className="hud-title text-[10px]">Debug</div>
       <div>OBS SEQ · {debug.observation_sequence}</div>
       <div>EVENT SEQ · {debug.event_sequence}</div>

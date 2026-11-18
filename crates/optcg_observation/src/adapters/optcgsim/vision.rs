@@ -98,6 +98,7 @@ impl VisionObservation {
         }
         if self.combat_power.is_some() || self.combat_attacker.is_some() {
             events.push(ObservationEvent::AttackObserved {
+                attacker_player: None,
                 attacker: None,
                 attacker_card_id: self.combat_attacker.clone(),
                 target: self

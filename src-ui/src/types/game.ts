@@ -268,6 +268,8 @@ export interface OverlaySettings {
 }
 
 export interface CompanionBridge {
+  /** Re-read the whole state, e.g. after importing decks. */
+  refresh: () => Promise<void>;
   snapshot: StateUpdatePayload | null;
   observation: ObservationStatusDto | null;
   loading: boolean;
@@ -288,4 +290,122 @@ export interface CompanionBridge {
   activateDeck: (id: string) => Promise<void>;
   deleteDeck: (id: string) => Promise<void>;
   renameDeck: (id: string, name: string) => Promise<void>;
+}
+
+/** How a deck compares with tournament top-cut lists (from compare_deck_to_meta). */
+export interface CardAdviceDto {
+  card_id: string;
+  name: string;
+  in_lists_pct: number;
+  in_lists: number;
+  avg_copies: number;
+  your_copies: number;
+}
+
+export interface DeckComparisonDto {
+  leader_id: string;
+  leader_name: string;
+  lists: number;
+  enough_data: boolean;
+  archetypes: string[];
+  format: string;
+  formats: { format: string; lists: number }[];
+  violations: { card_id: string; name: string; kind: string; reason: string }[];
+  banlist_updated: string;
+  builds: VariantInfoDto[];
+  your_build: VariantInfoDto | null;
+  has_list: boolean;
+  popular: CardAdviceDto[];
+  events: string;
+  all_official_lists: number;
+  all_unofficial_lists: number;
+  official_lists: number;
+  unofficial_lists: number;
+  missing: CardAdviceDto[];
+  rarely_played: CardAdviceDto[];
+  fewer_copies: CardAdviceDto[];
+  your_counter_cards: number;
+  avg_counter_cards: number;
+  unknown_cards: number;
+  source: string;
+  generated_at: string;
+  available_leaders: { leader_id: string; name: string; lists: number }[];
+}
+
+/** A match you played, as recorded on this machine (from get_match_history). */
+export interface MatchRecordDto {
+  id: string;
+  started_ms: number;
+  ended_ms: number;
+  your_leader: string;
+  opponent_leader: string;
+  went_first: boolean | null;
+  turns: number;
+  result: "win" | "loss" | null;
+  result_source: string;
+  your_deck: string;
+}
+
+export interface TallyDto {
+  leader: string;
+  games: number;
+  wins: number;
+  losses: number;
+  unknown: number;
+}
+
+export interface MatchHistoryDto {
+  recent: MatchRecordDto[];
+  stats: {
+    games: number;
+    wins: number;
+    losses: number;
+    unknown: number;
+    first_games: number;
+    first_wins: number;
+    second_games: number;
+    second_wins: number;
+    by_your_leader: TallyDto[];
+    by_opponent_leader: TallyDto[];
+  };
+  names: Record<string, string>;
+}
+
+/** A build of a Leader: a group of winning lists that share most of their cards. */
+export interface VariantInfoDto {
+  id: number;
+  label: string;
+  lists: number;
+  share_pct: number;
+  signature: string[];
+}
+
+export interface GeneratedCardDto {
+  card_id: string;
+  name: string;
+  quantity: number;
+  cost: number;
+  card_type: string;
+  in_lists: number;
+  tags: string[];
+}
+
+export interface GeneratedDeckDto {
+  leader_id: string;
+  leader_name: string;
+  format: string;
+  variant: VariantInfoDto | null;
+  variants: VariantInfoDto[];
+  based_on_lists: number;
+  total_cards: number;
+  cards: GeneratedCardDto[];
+  notes: string[];
+  deck_text: string;
+  builder_url: string;
+}
+
+export interface GeneratorLeaderDto {
+  leader_id: string;
+  name: string;
+  lists: number;
 }

@@ -28,9 +28,47 @@ pub struct CoachRuntime {
     scope: Arc<Mutex<ContextScope>>,
 }
 
+/// Fill in the model connection from `llm.json` in the app's data folder when
+/// no environment variable supplies one. The key is never logged.
+fn apply_saved_settings(config: &mut optcg_coach::openai::OpenAiConfig) {
+    let Some(path) = dirs::data_local_dir().map(|d| d.join("optcg-companion").join("llm.json"))
+    else {
+        return;
+    };
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return;
+    };
+    let Ok(saved) = serde_json::from_str::<serde_json::Value>(&text) else {
+        tracing::warn!(path = %path.display(), "could not read saved model settings");
+        return;
+    };
+    let field = |name: &str| {
+        saved
+            .get(name)
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(str::to_string)
+    };
+    if let Some(key) = field("api_key") {
+        config.api_key = key;
+        if let Some(model) = field("model") {
+            config.model = model;
+        }
+        if let Some(url) = field("base_url") {
+            config.base_url = url.trim_end_matches('/').to_string();
+        }
+        tracing::info!("using the model settings saved in llm.json");
+    }
+}
+
 impl CoachRuntime {
     pub fn from_env() -> Self {
-        let provider = optcg_coach::provider_from_env();
+        let mut config = optcg_coach::openai::OpenAiConfig::from_env();
+        if !config.is_configured() {
+            apply_saved_settings(&mut config);
+        }
+        let provider = optcg_coach::provider_from_config(config);
         tracing::info!(
             provider = %provider.label(),
             live = provider.is_live(),
@@ -113,6 +151,8 @@ fn deck_context(state: &AppState) -> DeckContext {
             .collect(),
         opponent_deck: opponent.name.clone(),
         opponent_leader: leader_label(&opponent),
+        your_leader_staples: state.winners_summary(&yours.leader_id),
+        opponent_leader_staples: state.winners_summary(&opponent.leader_id),
         plan: strategy.as_ref().map(|brief| brief.your_plan.clone()),
         vs_opponent: strategy.as_ref().map(|brief| brief.vs_opponent.clone()),
     }

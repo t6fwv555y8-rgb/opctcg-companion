@@ -1,5 +1,17 @@
+//! The "Game plan" shown in the HUD, built from data.
+//!
+//! Every line here is a fact with a source: how winning tournament lists for a
+//! Leader are built, what the opponent's winning lists tend to run, what is in
+//! your hand and on the board right now, and how your list compares. Nothing is
+//! inferred from a deck's colour or name, and nothing is a hard-coded opinion
+//! about a particular card. With too little data a section says so rather than
+//! guessing.
+
 use crate::deck_list::DeckListEntry;
-use optcg_core::{GameState, Phase};
+use crate::leader_stats::{card_tags, CoreCard, LeaderStats};
+use crate::meta::DeckComparison;
+use optcg_core::{CardType, GameState, Phase};
+use optcg_database::CardRepository;
 use serde::{Deserialize, Serialize};
 
 /// Snapshot of one side's deck identity used for matchup advice.
@@ -27,13 +39,21 @@ pub struct DeckStrategyBrief {
     pub this_turn: Vec<String>,
     pub threats: Vec<String>,
     pub priorities: Vec<String>,
-    /// Card-specific lines derived from the pasted list (empty if none).
+    /// Card-specific lines derived from your list (empty if none).
     #[serde(default)]
     pub list_notes: Vec<String>,
     pub refreshed_at: String,
 }
 
-/// Builds human-readable strategy text tailored to the decks in play.
+/// The data a brief is built from. Any of it can be missing.
+pub struct StrategyContext<'a> {
+    pub repo: &'a CardRepository<'a>,
+    pub you: Option<&'a LeaderStats>,
+    pub opponent: Option<&'a LeaderStats>,
+    pub comparison: Option<&'a DeckComparison>,
+}
+
+/// Builds the plan text from data.
 pub struct DeckStrategyCoach;
 
 impl DeckStrategyCoach {
@@ -41,28 +61,17 @@ impl DeckStrategyCoach {
         state: &GameState,
         you: &DeckProfile,
         opp: &DeckProfile,
+        ctx: &StrategyContext<'_>,
     ) -> DeckStrategyBrief {
-        let matchup = format!(
-            "{} vs {}",
-            display_name(you),
-            display_name(opp)
-        );
-        let your_plan = your_game_plan(you);
-        let vs_opponent = matchup_plan(you, opp);
-        let this_turn = turn_priorities(state, you, opp);
-        let threats = opponent_threats(opp);
-        let priorities = overall_priorities(you, opp, state);
-        let list_notes = list_specific_notes(you);
-
         DeckStrategyBrief {
-            matchup,
-            your_plan,
-            vs_opponent,
-            this_turn,
-            threats,
-            priorities,
-            list_notes,
-            refreshed_at: chrono_now(),
+            matchup: format!("{} vs {}", display_name(you), display_name(opp)),
+            your_plan: your_plan(you, ctx),
+            vs_opponent: vs_opponent(state, opp, ctx),
+            this_turn: this_turn(state, ctx),
+            threats: threats(opp, ctx),
+            priorities: priorities(state, ctx),
+            list_notes: list_notes(ctx),
+            refreshed_at: now_label(),
         }
     }
 }
@@ -83,551 +92,318 @@ fn display_name(d: &DeckProfile) -> String {
     }
 }
 
-fn color_key(d: &DeckProfile) -> String {
-    d.leader_color.trim().to_ascii_lowercase()
+fn names(cards: &[CoreCard], n: usize, lists: usize) -> String {
+    cards
+        .iter()
+        .take(n)
+        .map(|c| format!("{} ({} of {})", c.name, c.in_lists, lists))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
-fn archetype_hint(d: &DeckProfile) -> &'static str {
-    let name = format!(
-        "{} {} {}",
-        d.name.to_ascii_lowercase(),
-        d.leader_name.to_ascii_lowercase(),
-        d.leader_id.to_ascii_lowercase()
-    );
-    let color = color_key(d);
-
-    // Exact-list packages
-    if d.list_entries.iter().any(|e| e.card_id == "OP17-079")
-        || d.leader_id.eq_ignore_ascii_case("OP17-079")
-    {
-        return "elbaph";
-    }
-
-    if name.contains("aggro") || name.contains("rush") {
-        return "aggro";
-    }
-    if name.contains("control") || name.contains("midrange") {
-        return "control";
-    }
-    if name.contains("combo") || name.contains("otk") {
-        return "combo";
-    }
-
-    match color.as_str() {
-        "red" => "aggro",
-        "green" => "ramp",
-        "blue" => "control",
-        "purple" => "combo",
-        "black" => "removal",
-        "yellow" => "life",
-        _ => "midrange",
+fn one_decimal(x: f32) -> String {
+    let rounded = (x * 10.0).round() / 10.0;
+    if rounded.fract() == 0.0 {
+        format!("{rounded:.0}")
+    } else {
+        format!("{rounded:.1}")
     }
 }
 
-fn your_game_plan(you: &DeckProfile) -> String {
-    let label = display_name(you);
-    let arch = archetype_hint(you);
-    let color = color_key(you);
-    let mut parts = vec![format!("{label} game plan ({arch}):")];
-
-    match arch {
-        "elbaph" => parts.push(
-            "Black Elbaph Luffy plan: establish a 12+ cost Character (Saul +12 / Loki +12), then turn on the package — Leader Blocker on 12+ bodies, board buffs (+3000), Usopp/Saul Elbaph searches, and Rush Luffy (OP17-093) for the kill."
-                .into(),
-        ),
-        "aggro" => parts.push(
-            "Curve out early characters, attach DON to push leader/character swings, and race life before the opponent stabilizes."
-                .into(),
-        ),
-        "control" => parts.push(
-            "Trade efficiently, protect life with counters/blockers, and convert late-game resources once the board is clean."
-                .into(),
-        ),
-        "ramp" => parts.push(
-            "Accelerate DON, develop medium-cost bodies, then overwhelm with larger plays once ahead on resources."
-                .into(),
-        ),
-        "combo" => parts.push(
-            "Survive early pressure, assemble key pieces, and sequence your combo turn carefully — don't overextend into removal."
-                .into(),
-        ),
-        "removal" => parts.push(
-            "Answer opposing threats on curve, keep life healthy, then close with sticky midrange attackers."
-                .into(),
-        ),
-        "life" => parts.push(
-            "Manage life as a resource, leverage life-gain / life-pay effects, and time lethal when the opponent is low."
-                .into(),
-        ),
-        _ => parts.push(
-            "Develop on curve, contest board, and look for profitable attacks when ahead on power or life."
-                .into(),
-        ),
-    }
-
-    if color == "red" {
-        parts.push("Red tip: prefer aggressive DON attachment and direct leader pressure.".into());
-    } else if color == "blue" {
-        parts.push("Blue tip: hold counters for lethal turns; don't over-commit early.".into());
-    } else if color == "green" {
-        parts.push("Green tip: value DON ramp; don't waste early turns if you can accelerate.".into());
-    } else if color == "purple" {
-        parts.push("Purple tip: trash/cost reduction matters — track key pieces in hand/trash.".into());
-    } else if color == "black" {
-        parts.push("Black tip: keep removal for high-value targets, not weak early bodies.".into());
-    } else if color == "yellow" {
-        parts.push("Yellow tip: watch life totals closely; your triggers can swing races.".into());
-    }
-
-    if !you.list_entries.is_empty() {
-        parts.push(list_composition_summary(you));
-        if let Some(key) = key_finishers(you).into_iter().next() {
-            parts.push(format!("Key closer in list: {key}."));
+/// "about 4 Blockers, 9 Counter cards" from the averages worth mentioning.
+fn habits(stats: &LeaderStats) -> String {
+    let mut parts = Vec::new();
+    let mut add = |avg: f32, label: &str| {
+        if avg >= 0.5 {
+            parts.push(format!("{} {label}", one_decimal(avg)));
         }
-    } else if !you.known_card_names.is_empty() {
-        let sample: Vec<_> = you.known_card_names.iter().take(4).cloned().collect();
-        parts.push(format!(
-            "Cards seen in your list so far: {}.",
-            sample.join(", ")
-        ));
-    }
+    };
+    add(stats.avg_counter_cards, "Counter cards");
+    add(stats.avg_blockers, "Blockers");
+    add(stats.avg_rush, "Rush cards");
+    add(stats.avg_double_attack, "Double Attack cards");
+    add(stats.avg_banish, "Banish cards");
+    add(stats.avg_ko_effects, "cards with a K.O. effect");
+    add(stats.avg_bounce, "cards that return Characters to hand");
+    parts.join(", ")
+}
 
+fn your_plan(you: &DeckProfile, ctx: &StrategyContext<'_>) -> String {
+    let Some(stats) = ctx.you else {
+        return if you.leader_id.is_empty() {
+            "Waiting to see your Leader in a game.".into()
+        } else {
+            format!(
+                "No winning-list data for {} yet, so there is no plan to show. \
+                 Run the winning-deck download to add it.",
+                display_name(you)
+            )
+        };
+    };
+    if !stats.enough_data {
+        return format!(
+            "Only {} winning list{} for {} in the data: too few to describe how it is played.",
+            stats.lists,
+            if stats.lists == 1 { "" } else { "s" },
+            stats.leader_name
+        );
+    }
+    let mut parts = vec![format!(
+        "{} recent winning {} lists ({}):",
+        stats.lists, stats.leader_name, stats.format
+    )];
+    if let Some((t, avg)) = stats.top_types.first() {
+        parts.push(format!("built around {t} (about {} of 50 cards).", avg.round()));
+    }
+    let habits = habits(stats);
+    if !habits.is_empty() {
+        parts.push(format!("They run about {habits}."));
+    }
+    if !stats.core.is_empty() {
+        parts.push(format!("Core cards: {}.", names(&stats.core, 8, stats.lists)));
+    }
     parts.join(" ")
 }
 
-fn list_composition_summary(you: &DeckProfile) -> String {
-    let total = you.list_total_cards.max(
-        you.list_entries
-            .iter()
-            .map(|e| u32::from(e.quantity))
-            .sum(),
-    );
-    let blockers: u32 = you
-        .list_entries
-        .iter()
-        .filter(|e| e.blocker)
-        .map(|e| u32::from(e.quantity))
-        .sum();
-    let rush: u32 = you
-        .list_entries
-        .iter()
-        .filter(|e| e.rush)
-        .map(|e| u32::from(e.quantity))
-        .sum();
-    let counters: u32 = you
-        .list_entries
-        .iter()
-        .filter(|e| e.counter > 0)
-        .map(|e| u32::from(e.quantity))
-        .sum();
-    let low: u32 = you
-        .list_entries
-        .iter()
-        .filter(|e| e.card_type != "leader" && e.cost <= 2)
-        .map(|e| u32::from(e.quantity))
-        .sum();
-    let mid: u32 = you
-        .list_entries
-        .iter()
-        .filter(|e| e.cost >= 3 && e.cost <= 5)
-        .map(|e| u32::from(e.quantity))
-        .sum();
-    let high: u32 = you
-        .list_entries
-        .iter()
-        .filter(|e| e.cost >= 6)
-        .map(|e| u32::from(e.quantity))
-        .sum();
-
-    format!(
-        "Your pasted list ({total} cards): curve low≤2:{low} / mid3–5:{mid} / high6+:{high}; blockers×{blockers}, rush×{rush}, counter cards×{counters}."
-    )
-}
-
-fn key_finishers(you: &DeckProfile) -> Vec<String> {
-    let mut scored: Vec<(i32, String)> = you
-        .list_entries
-        .iter()
-        .filter(|e| e.card_type != "leader")
-        .map(|e| {
-            let mut s = e.cost as i32 * 10 + e.quantity as i32;
-            if e.rush {
-                s += 40;
-            }
-            if e.blocker {
-                s += 15;
-            }
-            (
-                s,
-                format!("{}×{} (cost {})", e.quantity, e.name, e.cost),
-            )
-        })
-        .collect();
-    scored.sort_by(|a, b| b.0.cmp(&a.0));
-    scored.into_iter().take(3).map(|(_, s)| s).collect()
-}
-
-fn list_specific_notes(you: &DeckProfile) -> Vec<String> {
-    if you.list_entries.is_empty() {
-        return vec![
-            "Paste your exact deck list for card-by-card lines (4x ID / Leader: / Deck: formats)."
-                .into(),
-        ];
-    }
-
-    let mut notes = Vec::new();
-    notes.push(list_composition_summary(you));
-
-    // Black Elbaph Luffy (OP17-079) package — exact-list coaching
-    let is_elbaph = you.list_entries.iter().any(|e| e.card_id == "OP17-079")
-        || you.leader_id.eq_ignore_ascii_case("OP17-079");
-    if is_elbaph {
-        notes.push(
-            "Win condition: get ANY Character to effective cost 12+ (Saul +12 / Loki +12), which turns on Leader Blocker + Straw Hat pumps/Rush."
-                .into(),
-        );
-        if let Some(saul) = you.list_entries.iter().find(|e| e.card_id == "OP17-089") {
-            notes.push(format!(
-                "{}× Jaguar.D.Saul — primary 12+ enabler (+12 cost) and Elbaph dig; prioritize landing him by turn 4–5.",
-                saul.quantity
-            ));
-        }
-        if let Some(loki) = you.list_entries.iter().find(|e| e.card_id == "OP17-119") {
-            notes.push(format!(
-                "{}× Loki — secondary enabler (+12 cost), K.O. ≤4 total cost, 11k on their turn.",
-                loki.quantity
-            ));
-        }
-        if let Some(luffy) = you.list_entries.iter().find(|e| e.card_id == "OP17-093") {
-            notes.push(format!(
-                "{}× Luffy (8c) — Rush if 12+ is out; On Play recycles ≤2 from trash. Drop him the turn Saul/Loki sticks.",
-                luffy.quantity
-            ));
-        }
-        if let Some(usopp) = you.list_entries.iter().find(|e| e.card_id == "OP17-080") {
-            notes.push(format!(
-                "{}× Usopp — Elbaph search + Counter 1000; becomes 5k with 12+ online.",
-                usopp.quantity
-            ));
-        }
-        if let Some(kong) = you.list_entries.iter().find(|e| e.card_id == "OP17-098") {
-            notes.push(format!(
-                "{}× Gum-Gum Kong Gun — Main clear (rest 6 DON, need 12+) or Leader Counter +3000.",
-                kong.quantity
-            ));
-        }
-        if let Some(patch) = you.list_entries.iter().find(|e| e.card_id == "OP05-094") {
-            notes.push(format!(
-                "{}× Haute Couture Patch★Work — −3 cost / freeze; shrink blockers before a pumped swing.",
-                patch.quantity
-            ));
-        }
-        notes.push(
-            "Curve: flood 1–2 drops early, dig with Usopp/Saul, slam 12+, then convert with Rush Luffy / Kong Gun."
-                .into(),
-        );
-        return notes;
-    }
-
-    for e in you
-        .list_entries
-        .iter()
-        .filter(|e| e.rush)
-        .take(3)
-    {
-        notes.push(format!(
-            "{}×{} has Rush — keep DON ready to swing the turn it lands.",
-            e.quantity, e.name
-        ));
-    }
-    for e in you
-        .list_entries
-        .iter()
-        .filter(|e| e.blocker)
-        .take(3)
-    {
-        notes.push(format!(
-            "{}×{} is a Blocker — hold for lethal turns or vs tall attackers.",
-            e.quantity, e.name
-        ));
-    }
-    for e in you
-        .list_entries
-        .iter()
-        .filter(|e| e.counter >= 2000)
-        .take(3)
-    {
-        notes.push(format!(
-            "{}×{} offers Counter +{} — save for lethal defense.",
-            e.quantity, e.name, e.counter
-        ));
-    }
-
-    // Curve advice from exact counts
-    let twos: u32 = you
-        .list_entries
-        .iter()
-        .filter(|e| e.cost == 2)
-        .map(|e| u32::from(e.quantity))
-        .sum();
-    let fives: u32 = you
-        .list_entries
-        .iter()
-        .filter(|e| e.cost == 5)
-        .map(|e| u32::from(e.quantity))
-        .sum();
-    if twos >= 6 {
-        notes.push(format!(
-            "Heavy 2-drops ({twos}) — prioritize early board presence every turn 2–3."
-        ));
-    }
-    if fives >= 4 {
-        notes.push(format!(
-            "Strong 5-drop density ({fives}) — bank DON so you can deploy on curve."
-        ));
-    }
-
-    for finisher in key_finishers(you).into_iter().take(2) {
-        notes.push(format!("Pilot around {finisher}."));
-    }
-
-    notes
-}
-
-fn matchup_plan(you: &DeckProfile, opp: &DeckProfile) -> String {
-    let you_a = archetype_hint(you);
-    let opp_a = archetype_hint(opp);
-    let opp_label = display_name(opp);
-
-    let core = match (you_a, opp_a) {
-        ("elbaph", _) => {
+fn vs_opponent(state: &GameState, opp: &DeckProfile, ctx: &StrategyContext<'_>) -> String {
+    let Some(stats) = ctx.opponent else {
+        return if opp.leader_id.is_empty() {
+            "Waiting to see the opponent's Leader.".into()
+        } else {
             format!(
-                "Vs {opp_label}: race to a 12+ cost piece (4× Saul or 4× Loki). Once it's online, your low-cost Straw Hats pump, Leader gives Blocker to 12+ bodies, and 4× Luffy (OP17-093) can Rush for lethal. Use Patch★Work / Kong Gun to clear blockers before the swing."
+                "No winning-list data for the opponent's Leader ({}).",
+                display_name(opp)
             )
-        }
-        ("aggro", "control") => {
-            format!(
-                "Vs {opp_label} (control): race hard. Force them to spend counters early, attack leader every turn you can, and don't slow-roll development."
-            )
-        }
-        ("aggro", "aggro") => {
-            format!(
-                "Vs {opp_label} (mirror aggro): race math matters. Protect life when behind on board, and swing for lethal the turn you go ahead on power."
-            )
-        }
-        ("control", "aggro") => {
-            format!(
-                "Vs {opp_label} (aggro): stabilize first. Block/counter key swings, clear their early board, then take over once their gas runs out."
-            )
-        }
-        ("control", "control") => {
-            format!(
-                "Vs {opp_label} (control mirror): value and patience. Don't dump hand into bad trades; win the late resource war."
-            )
-        }
-        ("ramp", "aggro") => {
-            format!(
-                "Vs {opp_label} (aggro): survive the rush. Use blockers/life carefully while you ramp, then drop larger bodies once stable."
-            )
-        }
-        ("combo", _) => {
-            format!(
-                "Vs {opp_label}: buy turns. Keep life above lethal range, assemble combo pieces, and only go off when you can finish or protect the line."
-            )
-        }
-        ("removal", "aggro") | ("removal", "midrange") => {
-            format!(
-                "Vs {opp_label}: remove their best attacker each turn and keep pressure modest until you stabilize."
-            )
-        }
-        ("life", "aggro") => {
-            format!(
-                "Vs {opp_label} (aggro): your life buffer is the plan — absorb early hits, then convert life advantage into a winning race."
-            )
-        }
-        _ => {
-            format!(
-                "Vs {opp_label} ({opp_a}): play to your {you_a} strengths — contest board, track life totals, and only commit DON when the attack is profitable."
-            )
-        }
+        };
     };
+    if !stats.enough_data {
+        return format!(
+            "Only {} winning list{} for {} in the data: too few to say what they run.",
+            stats.lists,
+            if stats.lists == 1 { "" } else { "s" },
+            stats.leader_name
+        );
+    }
+    let mut parts = vec![format!(
+        "Winning {} lists ({} lists, {}) run about {}.",
+        stats.leader_name,
+        stats.lists,
+        stats.format,
+        habits(stats)
+    )];
+    let hand = state.player_two().hand_count;
+    if hand > 0 && stats.avg_counter_cards > 0.0 {
+        // Their lists are 50 cards, so this is a density, not a count in hand.
+        let expected = hand as f32 * stats.avg_counter_cards / 50.0;
+        parts.push(format!(
+            "With {hand} cards in their hand, about {} may be Counter cards (a rough estimate from their lists, not a read of their hand).",
+            one_decimal(expected)
+        ));
+    }
+    if !stats.core.is_empty() {
+        parts.push(format!("Their core cards: {}.", names(&stats.core, 6, stats.lists)));
+    }
+    parts.join(" ")
+}
 
-    let mut out = core;
-    if !opp.known_card_names.is_empty() {
-        let seen: Vec<_> = opp.known_card_names.iter().take(5).cloned().collect();
-        out.push_str(&format!(
-            " Opponent cards observed: {} — play around those lines.",
-            seen.join(", ")
+fn card_line(id: &str, repo: &CardRepository<'_>) -> Option<(String, u32, CardType, Vec<&'static str>, i32)> {
+    let def = repo.get_by_id(id).ok()?;
+    let tags = card_tags(&def);
+    Some((def.name.clone(), def.cost, def.card_type, tags, def.counter))
+}
+
+/// Facts about right now: DON!!, what is in hand, what is ready.
+fn this_turn(state: &GameState, ctx: &StrategyContext<'_>) -> Vec<String> {
+    let me = state.player_one();
+    let opp = state.player_two();
+    let mut steps = Vec::new();
+
+    // The opponent's turn: what you hold to answer with.
+    if state.active_player != 0 {
+        steps.push("It is the opponent's turn.".into());
+        let counters: i32 = me
+            .hand
+            .iter()
+            .filter_map(|c| card_line(&c.card_id, ctx.repo))
+            .map(|(_, _, _, _, counter)| counter.max(0))
+            .sum();
+        let counter_cards = me
+            .hand
+            .iter()
+            .filter(|c| card_line(&c.card_id, ctx.repo).is_some_and(|l| l.4 > 0))
+            .count();
+        if counter_cards > 0 {
+            steps.push(format!(
+                "You hold {counter_cards} Counter card{} worth +{counters} in total.",
+                if counter_cards == 1 { "" } else { "s" }
+            ));
+        }
+        let blockers: Vec<String> = me
+            .characters
+            .iter()
+            .filter(|c| !c.rested)
+            .filter_map(|c| card_line(&c.card_id, ctx.repo))
+            .filter(|l| l.3.contains(&"Blocker"))
+            .map(|l| l.0)
+            .collect();
+        if !blockers.is_empty() {
+            steps.push(format!("Ready Blockers: {}.", blockers.join(", ")));
+        }
+        return steps;
+    }
+
+    match state.phase {
+        Phase::Draw => steps.push("Draw phase: draw a card, then you get DON!!.".into()),
+        Phase::Don => steps.push("DON!! phase: you add DON!!, then the Main Phase starts.".into()),
+        Phase::End => steps.push("Your turn is ending.".into()),
+        Phase::Combat => {
+            if state.combat.active {
+                steps.push("A battle is open: see the combat panel for the numbers.".into());
+            }
+        }
+        Phase::Main => {}
+    }
+
+    if matches!(state.phase, Phase::Main | Phase::Don) {
+        steps.push(format!("You have {} active DON!!.", me.don_active));
+        let mut playable: Vec<String> = Vec::new();
+        for card in &me.hand {
+            if let Some((name, cost, kind, tags, _)) = card_line(&card.card_id, ctx.repo) {
+                if matches!(kind, CardType::Leader) || cost > me.don_active {
+                    continue;
+                }
+                let label = if tags.is_empty() {
+                    format!("{name} (cost {cost})")
+                } else {
+                    format!("{name} (cost {cost}, {})", tags.join(", "))
+                };
+                if !playable.contains(&label) {
+                    playable.push(label);
+                }
+            }
+        }
+        if playable.is_empty() && !me.hand.is_empty() {
+            steps.push("Nothing in your hand costs this little or less.".into());
+        } else if !playable.is_empty() {
+            steps.push(format!("You can play now: {}.", playable.join("; ")));
+        }
+        let ready = me.characters.iter().filter(|c| !c.rested).count();
+        if ready > 0 {
+            steps.push(format!(
+                "{ready} of your Characters {} ready to attack.",
+                if ready == 1 { "is" } else { "are" }
+            ));
+        }
+        let their_blockers: Vec<String> = opp
+            .characters
+            .iter()
+            .filter(|c| !c.rested)
+            .filter_map(|c| card_line(&c.card_id, ctx.repo))
+            .filter(|l| l.3.contains(&"Blocker"))
+            .map(|l| l.0)
+            .collect();
+        if !their_blockers.is_empty() {
+            steps.push(format!("Their ready Blockers: {}.", their_blockers.join(", ")));
+        }
+        steps.push(format!("Opponent Life: {}.", opp.life));
+    }
+    steps
+}
+
+fn threats(opp: &DeckProfile, ctx: &StrategyContext<'_>) -> Vec<String> {
+    let mut out = Vec::new();
+    // Cards they have actually shown that do something notable.
+    for id in opp.known_card_ids.iter().take(40) {
+        if let Some((name, _, _, tags, _)) = card_line(id, ctx.repo) {
+            if !tags.is_empty() {
+                out.push(format!("Seen: {name} ({})", tags.join(", ")));
+            }
+        }
+    }
+    // Notable cards their winning lists run that have not appeared yet.
+    if let Some(stats) = ctx.opponent.filter(|s| s.enough_data) {
+        for card in &stats.notable {
+            if opp.known_card_ids.iter().any(|id| id == &card.card_id) {
+                continue;
+            }
+            out.push(format!(
+                "Not seen yet: {} ({}), in {} of {} of their winning lists",
+                card.name,
+                card.tags.join(", "),
+                card.in_lists,
+                stats.lists
+            ));
+            if out.len() >= 8 {
+                break;
+            }
+        }
+    }
+    if out.is_empty() {
+        out.push("No notable opponent cards seen yet.".into());
+    }
+    out
+}
+
+fn priorities(state: &GameState, ctx: &StrategyContext<'_>) -> Vec<String> {
+    let me = state.player_one();
+    let opp = state.player_two();
+    let mut out = vec![
+        format!("Life: you {} · opponent {}.", me.life, opp.life),
+        format!(
+            "Characters in play: you {} · opponent {}.",
+            me.characters.len(),
+            opp.characters.len()
+        ),
+    ];
+    match ctx.comparison {
+        Some(c) if c.has_list && c.enough_data => out.push(format!(
+            "Counter cards: your list has {}, winning lists average {}.",
+            c.your_counter_cards,
+            one_decimal(c.avg_counter_cards)
+        )),
+        Some(c) if !c.has_list && c.enough_data => {
+            out.push("Add your deck list to compare it with the winners.".into());
+        }
+        _ => {}
+    }
+    out
+}
+
+fn list_notes(ctx: &StrategyContext<'_>) -> Vec<String> {
+    let Some(c) = ctx.comparison.filter(|c| c.has_list) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for v in &c.violations {
+        out.push(format!("Not legal in Standard: {} ({}).", v.name, v.reason));
+    }
+    if !c.enough_data {
+        return out;
+    }
+    for m in c.missing.iter().take(5) {
+        out.push(format!(
+            "Most winners also play {} ({} of {} lists).",
+            m.name, m.in_lists, c.lists
+        ));
+    }
+    for f in c.fewer_copies.iter().take(3) {
+        out.push(format!(
+            "{}: you run {}x, winners usually {}x.",
+            f.name,
+            f.your_copies,
+            one_decimal(f.avg_copies)
+        ));
+    }
+    for r in c.rarely_played.iter().take(3) {
+        out.push(format!(
+            "{} is unusual: only {} of {} winning lists run it.",
+            r.name, r.in_lists, c.lists
         ));
     }
     out
 }
 
-fn turn_priorities(state: &GameState, you: &DeckProfile, _opp: &DeckProfile) -> Vec<String> {
-    let you_p = &state.players[state.active_player as usize];
-    let opp_p = &state.players[(1 - state.active_player) as usize];
-    let arch = archetype_hint(you);
-    let mut steps = Vec::new();
-
-    match state.phase {
-        Phase::Draw => {
-            steps.push("Draw for turn, then move to DON with a plan for attachments.".into());
-        }
-        Phase::Don => {
-            if you_p.don_active > 0 {
-                if arch == "aggro" {
-                    steps.push(format!(
-                        "Attach {} DON toward lethal pressure (leader or your best attacker).",
-                        you_p.don_active
-                    ));
-                } else if opp_p.characters.iter().any(|c| !c.rested) {
-                    steps.push(
-                        "Attach DON to match or beat their active threat before Main attacks."
-                            .into(),
-                    );
-                } else {
-                    steps.push(format!(
-                        "Bank or attach {} active DON for your planned Main play.",
-                        you_p.don_active
-                    ));
-                }
-            } else {
-                steps.push("No active DON — advance to Main and develop/attack.".into());
-            }
-        }
-        Phase::Main => {
-            if state.combat.active {
-                steps.push("Resolve the open combat first (block/counter), then continue Main."
-                    .into());
-            } else if you_p.characters.is_empty() {
-                steps.push(format!(
-                    "{}: develop at least one character before attacking.",
-                    display_name(you)
-                ));
-            } else if opp_p.life <= 2 {
-                steps.push(
-                    "Opponent is low life — calculate leader attacks for lethal / near-lethal."
-                        .into(),
-                );
-            } else if arch == "control" && !opp_p.characters.is_empty() {
-                steps.push(
-                    "Clear or neutralize their board before racing; don't gift them free trades."
-                        .into(),
-                );
-            } else {
-                steps.push(
-                    "Play your best affordable character, then attack with active units / leader."
-                        .into(),
-                );
-            }
-            if you_p.don_active >= 2 && arch == "aggro" {
-                steps.push("Keep enough DON attached to win the key swing this turn.".into());
-            }
-            // Exact-list affordability hints
-            if !you.list_entries.is_empty() {
-                let don = you_p.don_active + you_p.don_rested;
-                let plays: Vec<_> = you
-                    .list_entries
-                    .iter()
-                    .filter(|e| e.card_type == "character" && e.cost > 0 && e.cost <= don)
-                    .take(3)
-                    .map(|e| format!("{} (c{})", e.name, e.cost))
-                    .collect();
-                if !plays.is_empty() {
-                    steps.push(format!(
-                        "From your list, curve options at ≤{don} DON: {}.",
-                        plays.join(", ")
-                    ));
-                }
-                if let Some(rush) = you.list_entries.iter().find(|e| e.rush && e.cost <= don) {
-                    steps.push(format!(
-                        "If you have {} in hand, Rush swing is on-curve this turn.",
-                        rush.name
-                    ));
-                }
-            }
-        }
-        Phase::Combat => {
-            if state.combat.blocker_offered {
-                steps.push("Decide blocker vs take life — preserve lethal math next turn.".into());
-            } else {
-                steps.push("Compare powers; counter only if the life save is worth the card."
-                    .into());
-            }
-            if let Some(b) = you.list_entries.iter().find(|e| e.blocker) {
-                steps.push(format!(
-                    "Your list includes Blocker {} — use it if this hit is lethal.",
-                    b.name
-                ));
-            }
-        }
-        Phase::End => {
-            steps.push("End cleanly; note remaining DON and known opponent threats.".into());
-        }
-    }
-
-    if you_p.life + 1 < opp_p.life {
-        steps.push("You are behind on life — prioritize pressure over slow development.".into());
-    }
-
-    steps
-}
-
-fn opponent_threats(opp: &DeckProfile) -> Vec<String> {
-    let mut threats = Vec::new();
-    let arch = archetype_hint(opp);
-    threats.push(format!(
-        "{} plays like a {} deck — expect {}.",
-        display_name(opp),
-        arch,
-        match arch {
-            "aggro" => "early swings and DON-stacked attacks",
-            "control" => "counters, answers, and late-game value",
-            "ramp" => "accelerated high-cost plays",
-            "combo" => "a burst turn once pieces assemble",
-            "removal" => "targeted KO / bounce on your best body",
-            "life" => "life manipulation and trigger swings",
-            _ => "standard midrange board contests",
-        }
-    ));
-
-    for name in opp.known_card_names.iter().take(6) {
-        threats.push(format!("Seen: {name} — respect it in combat/math."));
-    }
-
-    if threats.len() == 1 {
-        threats.push("Few opponent cards identified yet — refresh again as more appear.".into());
-    }
-    threats
-}
-
-fn overall_priorities(you: &DeckProfile, opp: &DeckProfile, state: &GameState) -> Vec<String> {
-    let you_p = state.player_one();
-    let opp_p = state.player_two();
-    let mut p = Vec::new();
-    p.push(format!("Play your {} plan; don't drift into their pace.", archetype_hint(you)));
-    p.push(format!(
-        "Matchup focus: {}",
-        matchup_plan(you, opp)
-            .split(". ")
-            .next()
-            .unwrap_or("contest board and life")
-    ));
-    p.push(format!(
-        "Life check: you {} — opp {}.",
-        you_p.life, opp_p.life
-    ));
-    p.push(format!(
-        "Board: you {} characters · opp {} characters.",
-        you_p.characters.len(),
-        opp_p.characters.len()
-    ));
-    p
-}
-
-fn chrono_now() -> String {
-    // Keep dependency-light: RFC3339-ish from system time if chrono unavailable in this crate.
-    // optcg_core already uses chrono; rules crate may not — use simple UTC via std if needed.
+fn now_label() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -639,81 +415,103 @@ fn chrono_now() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use optcg_core::GameState;
+    use crate::leader_stats::leader_stats;
+    use crate::meta::{MetaData, MetaDeck};
+    use optcg_core::{CardInstance, Zone};
+    use optcg_database::{AssetParser, Database};
 
-    #[test]
-    fn brief_mentions_both_decks() {
-        let state = GameState::new();
-        let you = DeckProfile {
-            name: "Red Luffy Aggro".into(),
-            leader_id: "ST01-001".into(),
-            leader_name: "Monkey.D.Luffy".into(),
-            leader_color: "Red".into(),
-            known_card_ids: vec!["ST01-002".into()],
-            known_card_names: vec!["Usopp".into()],
-            list_entries: vec![],
-            list_total_cards: 0,
-        };
-        let opp = DeckProfile {
-            name: "Blue Control".into(),
-            leader_id: "OP01-001".into(),
-            leader_name: "Trafalgar Law".into(),
-            leader_color: "Blue".into(),
-            known_card_ids: vec![],
-            known_card_names: vec![],
-            list_entries: vec![],
-            list_total_cards: 0,
-        };
-        let brief = DeckStrategyCoach::brief(&state, &you, &opp);
-        assert!(brief.matchup.contains("Red Luffy Aggro"));
-        assert!(brief.matchup.contains("Blue Control"));
-        assert!(!brief.your_plan.is_empty());
-        assert!(!brief.vs_opponent.is_empty());
-        assert!(!brief.this_turn.is_empty());
-        assert!(!brief.priorities.is_empty());
-        assert!(!brief.list_notes.is_empty());
+    fn db() -> Database {
+        let db = Database::open_in_memory().unwrap();
+        AssetParser::seed_defaults(&db).unwrap();
+        db
+    }
+
+    fn profile(leader: &str, name: &str) -> DeckProfile {
+        DeckProfile {
+            name: name.into(),
+            leader_id: leader.into(),
+            leader_name: name.into(),
+            ..Default::default()
+        }
+    }
+
+    fn data() -> MetaData {
+        MetaData {
+            decks: (0..4)
+                .map(|_| MetaDeck {
+                    leader: "ST01-001".into(),
+                    format: "OP17".into(),
+                    cards: [("ST01-002".to_string(), 4u8), ("ST01-003".to_string(), 4u8)].into(),
+                    ..Default::default()
+                })
+                .collect(),
+            ..Default::default()
+        }
     }
 
     #[test]
-    fn brief_uses_pasted_list_notes() {
-        use crate::deck_list::DeckListEntry;
-        let state = GameState::new();
-        let you = DeckProfile {
-            name: "Red Luffy Aggro".into(),
-            leader_id: "ST01-001".into(),
-            leader_name: "Monkey.D.Luffy".into(),
-            leader_color: "Red".into(),
-            known_card_ids: vec![],
-            known_card_names: vec![],
-            list_entries: vec![
-                DeckListEntry {
-                    card_id: "ST01-012".into(),
-                    name: "Sanji".into(),
-                    quantity: 4,
-                    cost: 5,
-                    card_type: "character".into(),
-                    color: "Red".into(),
-                    rush: true,
-                    blocker: false,
-                    counter: 0,
-                },
-                DeckListEntry {
-                    card_id: "ST01-010".into(),
-                    name: "Nami".into(),
-                    quantity: 2,
-                    cost: 3,
-                    card_type: "character".into(),
-                    color: "Red".into(),
-                    rush: false,
-                    blocker: true,
-                    counter: 0,
-                },
-            ],
-            list_total_cards: 6,
-        };
-        let opp = DeckProfile::default();
-        let brief = DeckStrategyCoach::brief(&state, &you, &opp);
-        assert!(brief.your_plan.contains("pasted list") || brief.list_notes.iter().any(|n| n.contains("Rush") || n.contains("Sanji")));
-        assert!(brief.list_notes.iter().any(|n| n.contains("Blocker") || n.contains("Nami")));
+    fn the_plan_comes_from_winning_lists_and_names_how_many() {
+        let db = db();
+        let repo = CardRepository::new(&db);
+        let stats = leader_stats(&data(), &repo, None, "ST01-001", None);
+        let ctx = StrategyContext { repo: &repo, you: Some(&stats), opponent: Some(&stats), comparison: None };
+        let brief = DeckStrategyCoach::brief(
+            &GameState::new(),
+            &profile("ST01-001", "Luffy"),
+            &profile("ST01-001", "Zoro"),
+            &ctx,
+        );
+        assert!(brief.your_plan.contains("4 recent winning"), "{}", brief.your_plan);
+        assert!(brief.your_plan.contains("Core cards"), "{}", brief.your_plan);
+        assert_eq!(brief.matchup, "Luffy vs Zoro");
+        assert!(brief.vs_opponent.contains("Winning"), "{}", brief.vs_opponent);
+    }
+
+    #[test]
+    fn without_data_it_says_so_instead_of_guessing_by_colour() {
+        let db = db();
+        let repo = CardRepository::new(&db);
+        let ctx = StrategyContext { repo: &repo, you: None, opponent: None, comparison: None };
+        let mut you = profile("OP05-001", "Red Thing");
+        you.leader_color = "Red".into();
+        let brief = DeckStrategyCoach::brief(&GameState::new(), &you, &profile("OP05-002", "Other"), &ctx);
+        assert!(brief.your_plan.contains("No winning-list data"), "{}", brief.your_plan);
+        assert!(!brief.your_plan.to_lowercase().contains("aggro"), "no colour-based archetype guess");
+        assert!(brief.vs_opponent.contains("No winning-list data"));
+    }
+
+    #[test]
+    fn this_turn_lists_what_your_hand_can_actually_play() {
+        let db = db();
+        let repo = CardRepository::new(&db);
+        let mut state = GameState::new();
+        state.phase = Phase::Main;
+        state.player_one_mut().don_active = 2;
+        state
+            .player_one_mut()
+            .hand
+            .push(CardInstance::new("ST01-003", 0, Zone::Hand));
+        let ctx = StrategyContext { repo: &repo, you: None, opponent: None, comparison: None };
+        let brief = DeckStrategyCoach::brief(&state, &profile("ST01-001", "A"), &profile("ST01-001", "B"), &ctx);
+        let text = brief.this_turn.join(" | ");
+        assert!(text.contains("2 active DON!!"), "{text}");
+        assert!(text.contains("You can play now"), "{text}");
+    }
+
+    #[test]
+    fn the_opponents_turn_reports_what_you_hold_to_defend_with() {
+        let db = db();
+        let repo = CardRepository::new(&db);
+        let mut state = GameState::new();
+        state.active_player = 1;
+        state
+            .player_one_mut()
+            .hand
+            .push(CardInstance::new("ST01-002", 0, Zone::Hand));
+        let ctx = StrategyContext { repo: &repo, you: None, opponent: None, comparison: None };
+        let brief = DeckStrategyCoach::brief(&state, &profile("ST01-001", "A"), &profile("ST01-001", "B"), &ctx);
+        let text = brief.this_turn.join(" | ");
+        assert!(text.contains("opponent's turn"), "{text}");
+        assert!(text.contains("Counter card"), "{text}");
     }
 }
