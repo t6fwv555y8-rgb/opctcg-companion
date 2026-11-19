@@ -16,6 +16,21 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - **`AppState` locks are always taken game state first, then the others** (`scout`, `deck_collection`, `list_cache`, `pasted_deck`). `AppState::scout_position` and `build_update_payload` both hold `game_state.read()` while reaching for a second lock, so reversing the order anywhere introduces a cycle. Also note `parking_lot::RwLock` is not reentrant: `scout_position` scopes its write guard in a block precisely so `persist_scouting` can take a read guard afterwards.
 - A regression test for a deadlock that can freeze tokio's I/O/timer driver must bound itself from a plain OS thread (`std::thread::spawn` + `std::sync::mpsc::Receiver::recv_timeout`), not `tokio::time::timeout` — the in-runtime timeout can itself hang. See `pipeline::tests::pipeline_keeps_processing_after_reconnect` in `crates/optcg_observation/src/pipeline.rs` for the pattern.
 
+## Cloud / headless Linux dev environment
+
+- Toolchain floor is higher than the README's "Rust 1.75+": the locked dependency tree pulls `icu_normalizer 2.3.0`, which needs **edition 2024 (Rust ≥ 1.85)**. On an older default toolchain the whole workspace fails to build with `feature 'edition2024' is required`; run `rustup default stable && rustup update stable`.
+- Tauri v2 on Ubuntu 24.04 needs these system packages (no `webkit2gtk-4.0` on noble — use the `-4.1` stack): `libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf build-essential curl wget file libssl-dev libxdo-dev`.
+- The mock stream needs Python `websockets` (`apt-get install -y python3-websockets`).
+- Run the native HUD headlessly (no physical display) under Xvfb; WebKit needs its GPU paths disabled or it renders blank/crashes:
+  ```bash
+  Xvfb :99 -screen 0 1280x1024x24 &
+  export DISPLAY=:99 WEBKIT_DISABLE_COMPOSITING_MODE=1 WEBKIT_DISABLE_DMABUF_RENDERER=1 LIBGL_ALWAYS_SOFTWARE=1
+  OPTCG_SOURCE=mock npm --prefix src-ui run tauri:dev     # native window titled "OPTCG Companion HUD"
+  python3 scripts/mock_stream.py                           # second shell: drives ws://127.0.0.1:9002
+  ```
+  Use `OPTCG_SOURCE=mock` in headless/cloud runs — the default (`onesimulator`, browser bridge on :9003) has no data without the extension. `mock_stream.py` is a client; start the HUD first.
+- Fast end-to-end sanity without a GUI: `cargo test --workspace` (Rust) and `cd browser-companion && npm test` (extension extract/combat/session).
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this project.
