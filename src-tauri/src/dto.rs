@@ -468,6 +468,26 @@ pub struct OverlaySettings {
     pub opacity: f64,
 }
 
+/// Your recorded matches and what they add up to.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct MatchHistoryDto {
+    pub recent: Vec<optcg_rules::MatchRecord>,
+    pub stats: optcg_rules::MatchStats,
+    /// Leader id to card name, for every Leader in `recent` and `stats`.
+    pub names: std::collections::BTreeMap<String, String>,
+}
+
+/// What an import from the OPTCGSim folder did.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct ImportSummaryDto {
+    pub found: usize,
+    pub imported: usize,
+    pub already_saved: usize,
+    pub skipped: usize,
+    /// A plain-language line for the HUD.
+    pub message: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

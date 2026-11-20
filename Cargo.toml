@@ -44,3 +44,23 @@ async-trait = "0.1"
 axum = { version = "0.7", features = ["json", "ws"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["limit"] }
+
+# Decoding card pictures is far too slow unoptimised; speed up only these crates in dev builds.
+[profile.dev.package.image]
+opt-level = 3
+[profile.dev.package.png]
+opt-level = 3
+[profile.dev.package.zune-jpeg]
+opt-level = 3
+[profile.dev.package.zune-core]
+opt-level = 3
+[profile.dev.package.fdeflate]
+opt-level = 3
+[profile.dev.package.miniz_oxide]
+opt-level = 3
+[profile.dev.package.crc32fast]
+opt-level = 3
+
+# Card recognition does a lot of arithmetic per frame; keep it fast in dev builds.
+[profile.dev.package.optcg_observation]
+opt-level = 2

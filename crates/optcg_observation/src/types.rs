@@ -80,6 +80,7 @@ pub enum ObservationEvent {
     AttackObserved {
         attacker: Option<CardInstanceId>,
         attacker_card_id: Option<String>,
+        /// Who is attacking. `None` means the source did not say.
         #[serde(default)]
         attacker_player: Option<PlayerId>,
         target: Option<AttackTarget>,

@@ -41,6 +41,10 @@ pub fn spawn_pipeline_listener(
                 let pipe = Arc::clone(&pipeline);
                 let _ = app_handle.run_on_main_thread(move || {
                     if let Some(app_state) = handle.try_state::<crate::state::AppState>() {
+                        if app_state.track_match() {
+                            use tauri::Emitter;
+                            let _ = handle.emit("matches-updated", ());
+                        }
                         let observation = Some(build_observation_status(&mgr, &pipe));
                         crate::commands::emit_state_update(&handle, app_state.inner(), observation);
                     }

@@ -4,7 +4,7 @@ Use this guide to validate the OPTCG Companion on a real laptop. The cloud build
 
 | Platform | OneSimulator | OPTCGSim live capture |
 |----------|--------------|------------------------|
-| **macOS** | Supported (recommended) | Not implemented (Windows-only in M6) |
+| **macOS** | Supported (recommended) | Screen reader (see below); validated by hand on OPTCGSim 1.43a |
 | **Windows** | Supported | Supported |
 
 Branch: `cursor/milestone-6-live-validation-4c31`
@@ -13,7 +13,19 @@ Branch: `cursor/milestone-6-live-validation-4c31`
 
 ## macOS (MacBook)
 
-On Mac, **OneSimulator is the live path**. The Tauri HUD and Chrome/Edge extension are cross-platform. OPTCGSim window capture is Windows-only in Milestone 6 — selecting OPTCGSim on macOS will not produce live visual observation.
+On Mac, **OneSimulator is the most complete live path**. OPTCGSim is read from its window by a screen reader (below). The Tauri HUD and Chrome/Edge extension are cross-platform.
+
+### OPTCGSim on macOS (screen reader)
+
+Pick **OPTCGSim** as the source (or start with `OPTCG_SOURCE=optcgsim npm run dev`). Requirements:
+
+- Screen & System Audio Recording permission for the app that runs the HUD (System Settings > Privacy & Security).
+- Xcode command line tools (`xcode-select --install`): the text reader is built once with `swiftc`.
+- The OPTCGSim window visible and not minimised, at about its default shape (roughly 2:1). Other shapes are read less reliably and the HUD says so.
+
+What it reads: both Leaders, whose turn it is and the turn number, the live game log (plays, effects, attacks, concessions, game over), your hand (including overlapped cards), and the Characters in each side's slots. What it does **not** read yet: life totals, DON!! counts, the opponent's hand size, and a rested state in later slots (only the first slot on each side was verified). It never reads hidden information.
+
+Check it: start a match, then confirm the HUD source shows `OPTCGSIM · LIVE`, the turn strip matches the game, and asking the coach about your turn names the cards in your hand. Debug aids: `cargo run -p optcg_observation --example macsim_live` (prints what the reader understands), `macsim_snapshot` (saves a picture of the window), `macsim_board` (reads a saved picture).
 
 ### Prerequisites
 
@@ -187,7 +199,7 @@ After successful live testing, set in code or report:
 | Adapter       | Implementation | Fixture Tests | Live Validation |
 |---------------|----------------|---------------|-----------------|
 | OneSimulator  | COMPLETE       | PASS          | PASS (you)      |
-| OPTCGSim      | COMPLETE       | PASS          | PASS (you) — Windows only |
+| OPTCGSim      | COMPLETE       | PASS          | macOS screen reader: partial (see above); Windows: not re-checked |
 
 Until then, status remains **Live Validation: REQUIRED**.
 

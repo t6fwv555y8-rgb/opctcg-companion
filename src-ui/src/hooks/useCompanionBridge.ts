@@ -192,6 +192,7 @@ export function useCompanionBridge(): CompanionBridge {
     setOpacity,
     setObservationSource,
     refreshDeckStrategy,
+    refresh: refreshSnapshot,
     setPastedDeck,
     clearPastedDeck,
     saveDeck,

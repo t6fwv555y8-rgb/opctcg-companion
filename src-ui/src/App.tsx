@@ -4,15 +4,20 @@ import { CoachLlmPanel } from "./components/CoachLlmPanel";
 import { CoachChatPanel } from "./components/CoachChatPanel";
 import { ConnectionStatus } from "./components/ConnectionStatus";
 import { DebugPanel } from "./components/DebugPanel";
+import { DeckBuilderPanel } from "./components/DeckBuilderPanel";
 import { DeckPanel } from "./components/DeckPanel";
+import { GlossaryPanel, TermSheet, useGlossary } from "./components/Glossary";
 import { MatchBar } from "./components/MatchBar";
+import { MatchHistoryPanel, PendingResultBanner } from "./components/MatchHistoryPanel";
 import { MatchReviewPanel } from "./components/MatchReviewPanel";
 import { MatchupPanel } from "./components/MatchupPanel";
+import { MetaComparePanel } from "./components/MetaComparePanel";
 import { NowPanel } from "./components/NowPanel";
 import { ScoutingPanel } from "./components/ScoutingPanel";
 import { SourceSelector } from "./components/SourceSelector";
 import { useCoachStream } from "./hooks/useCoachStream";
 import { useCompanionBridge } from "./hooks/useCompanionBridge";
+import { useMatchHistory } from "./hooks/useMatchHistory";
 
 const DEBUG = Boolean((import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV);
 
@@ -28,6 +33,8 @@ const TABS: { id: Tab; label: string }[] = [
 export default function App() {
   const bridge = useCompanionBridge();
   const coach = useCoachStream();
+  const glossary = useGlossary();
+  const matches = useMatchHistory();
   const gs = bridge.snapshot?.game_state ?? null;
   const combat = gs?.combat ?? null;
   const [tab, setTab] = useState<Tab>("play");
@@ -94,6 +101,10 @@ export default function App() {
           </div>
         ) : (
           <>
+            <PendingResultBanner
+              history={matches.history}
+              onSetResult={matches.setResult}
+            />
             {tab === "play" && (
               showRecap && recap ? (
                 <MatchReviewPanel review={recap} />
@@ -146,7 +157,64 @@ export default function App() {
                   onDeleteDeck={bridge.deleteDeck}
                   onRenameDeck={bridge.renameDeck}
                   onClearPaste={bridge.clearPastedDeck}
+                  onImported={bridge.refresh}
                 />
+                <details className="hud-panel group">
+                  <summary className="flex cursor-pointer select-none items-center justify-between gap-2 px-3 py-2 text-sm font-semibold text-slate-200">
+                    <span>My games</span>
+                    {matches.history && matches.history.stats.games > 0 && (
+                      <span className="text-xs font-normal text-slate-400">
+                        {matches.history.stats.games} saved
+                      </span>
+                    )}
+                  </summary>
+                  <div className="p-3 pt-0">
+                    <MatchHistoryPanel
+                      history={matches.history}
+                      error={matches.error}
+                      onSetResult={matches.setResult}
+                      onDelete={matches.remove}
+                      onImported={matches.refresh}
+                    />
+                  </div>
+                </details>
+                <details className="hud-panel group">
+                  <summary className="cursor-pointer select-none px-3 py-2 text-sm font-semibold text-slate-200">
+                    Build a deck from winners
+                  </summary>
+                  <div className="p-3 pt-0">
+                    <DeckBuilderPanel
+                      yourLeaderId={bridge.snapshot?.your_deck?.leader_id ?? ""}
+                      onSave={bridge.saveDeck}
+                    />
+                  </div>
+                </details>
+                <details className="hud-panel group">
+                  <summary className="cursor-pointer select-none px-3 py-2 text-sm font-semibold text-slate-200">
+                    Compare to winning decks
+                  </summary>
+                  <div className="p-3 pt-0">
+                    <MetaComparePanel
+                      deckKey={`${bridge.snapshot?.your_deck?.name ?? ""}|${bridge.snapshot?.your_deck?.leader_id ?? ""}`}
+                    />
+                  </div>
+                </details>
+                <details className="hud-panel group">
+                  <summary className="cursor-pointer select-none px-3 py-2 text-sm font-semibold text-slate-200">
+                    Learn the game
+                  </summary>
+                  <div className="p-3 pt-0">
+                    <GlossaryPanel />
+                  </div>
+                </details>
+                <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-200">
+                  <input
+                    type="checkbox"
+                    checked={glossary.enabled}
+                    onChange={(e) => glossary.setEnabled(e.target.checked)}
+                  />
+                  Explain game terms (tap underlined words)
+                </label>
                 <ConnectionStatus
                   connection={bridge.snapshot?.connection ?? null}
                 />
@@ -166,6 +234,7 @@ export default function App() {
           </>
         )}
       </div>
+      <TermSheet />
     </div>
   );
 }

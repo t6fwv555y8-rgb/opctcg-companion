@@ -141,6 +141,105 @@ pub fn get_deck_collection(state: State<'_, AppState>) -> crate::dto::DeckCollec
     state.inner().deck_collection_dto()
 }
 
+/// A leader the deck builder can work from.
+#[derive(Debug, Serialize)]
+pub struct GeneratorLeaderDto {
+    pub leader_id: String,
+    pub name: String,
+    pub lists: usize,
+}
+
+#[command]
+pub fn get_generator_leaders(
+    state: State<'_, AppState>,
+    format: Option<String>,
+) -> Vec<GeneratorLeaderDto> {
+    state
+        .inner()
+        .generator_leaders(format.as_deref())
+        .into_iter()
+        .map(|(leader_id, name, lists)| GeneratorLeaderDto { leader_id, name, lists })
+        .collect()
+}
+
+/// Build a 50-card list for a Leader from what winning lists run.
+#[command]
+pub fn generate_deck(
+    state: State<'_, AppState>,
+    leader_id: String,
+    format: Option<String>,
+    variant: Option<usize>,
+) -> Result<optcg_rules::GeneratedDeck, String> {
+    state
+        .inner()
+        .generate_deck(&leader_id, format.as_deref(), variant)
+}
+
+/// Add your OPTCGSim decks to your deck lists.
+#[command]
+pub fn import_optcgsim_decks(
+    state: State<'_, AppState>,
+) -> Result<crate::dto::ImportSummaryDto, String> {
+    state.inner().import_optcgsim_decks()
+}
+
+/// Add finished OPTCGSim games to your match history.
+#[command]
+pub fn import_optcgsim_games(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<crate::dto::ImportSummaryDto, String> {
+    let summary = state.inner().import_optcgsim_games()?;
+    if summary.imported > 0 {
+        let _ = app.emit("matches-updated", ());
+    }
+    Ok(summary)
+}
+
+/// Your recorded matches (newest first) and totals.
+#[command]
+pub fn get_match_history(state: State<'_, AppState>) -> crate::dto::MatchHistoryDto {
+    state.inner().match_history(50)
+}
+
+/// Set how a match ended (you pick it when the simulator did not say).
+/// `result` is "win", "loss", or null to clear it.
+#[command]
+pub fn set_match_result(
+    state: State<'_, AppState>,
+    id: String,
+    result: Option<String>,
+) -> Result<(), String> {
+    match result.as_deref() {
+        None | Some("win") | Some("loss") => {}
+        Some(_) => return Err("result must be win or loss".into()),
+    }
+    state.inner().set_match_result(&id, result.as_deref())
+}
+
+#[command]
+pub fn delete_match(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    state.inner().delete_match(&id)
+}
+
+/// How the active deck compares with tournament top-cut lists.
+#[command]
+pub fn compare_deck_to_meta(
+    state: State<'_, AppState>,
+    format: Option<String>,
+    events: Option<String>,
+) -> Result<optcg_rules::DeckComparison, String> {
+    state
+        .inner()
+        .compare_active_deck_to_meta(format.as_deref(), events.as_deref())
+}
+
+/// Re-read the downloaded tournament lists (after running sync_meta.py).
+#[command]
+pub fn reload_meta_data(state: State<'_, AppState>) -> usize {
+    state.inner().reload_meta()
+}
+
 /// Which side a deck command applies to, defaulting to your own.
 fn parse_side(side: Option<&str>) -> Result<Side, String> {
     match side {

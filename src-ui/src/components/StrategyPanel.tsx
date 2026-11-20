@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+import { GlossaryText } from "./Glossary";
 import type {
   DeckStrategyBrief,
   GameStateDto,
@@ -15,184 +17,204 @@ interface Props {
   onRefresh?: () => void;
 }
 
+/** Display-only cleanup: drop "[ST01-001]" style ids and a trailing "(X vs Y)". */
+function tidyCoachLine(text: string): string {
+  return text
+    .replace(/\[[A-Za-z]{1,4}\d{1,3}-\d{2,3}\]\s*/g, "")
+    .replace(/\s*\([^()]*\svs\s[^()]*\)\s*$/i, "")
+    .trim();
+}
+
+function confidenceLabel(c: number): string {
+  return c >= 0.75 ? "High" : c >= 0.45 ? "Medium" : "Low";
+}
+
+function Section({
+  title,
+  tone = "text-slate-400",
+  children,
+}: {
+  title: string;
+  tone?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div>
+      <div className={`mb-0.5 text-[10px] uppercase tracking-wide ${tone}`}>{title}</div>
+      {children}
+    </div>
+  );
+}
+
 export function StrategyPanel({
   strategy,
   options = [],
   phaseCoach,
   deckStrategy = null,
-  gameState,
   paused = false,
   refreshing = false,
   onRefresh,
 }: Props) {
+  const coachLine = phaseCoach ? tidyCoachLine(phaseCoach) : "";
+  const hasPlan = Boolean(deckStrategy);
+
   return (
     <div className="hud-panel space-y-2 p-3">
       <div className="flex items-center justify-between gap-2">
-        <div className="hud-title">Coach · Next Steps</div>
-        <div className="flex items-center gap-1">
-          {gameState && (
-            <span className="rounded bg-hud-accent/20 px-2 py-0.5 text-[10px] font-semibold text-hud-accent">
-              {gameState.phase}
+        <div className="hud-title">Suggested play</div>
+        {strategy && (
+          <span className="text-[10px] text-slate-400">
+            Confidence{" "}
+            <span className="font-semibold text-slate-100">
+              {confidenceLabel(strategy.confidence)}
             </span>
-          )}
-          {onRefresh && (
-            <button
-              type="button"
-              onClick={onRefresh}
-              disabled={refreshing}
-              className="rounded border border-hud-accent/40 bg-hud-accent/10 px-2 py-0.5 text-[10px] font-semibold text-hud-accent hover:bg-hud-accent/20 disabled:opacity-50"
-              title="Rebuild detailed strategy for these decks"
-            >
-              {refreshing ? "Refreshing…" : "Refresh"}
-            </button>
-          )}
-        </div>
+          </span>
+        )}
+        {!hasPlan && onRefresh && (
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={refreshing}
+            className="rounded border border-slate-600/60 px-2 py-0.5 text-[10px] text-slate-300 hover:bg-slate-800/60 disabled:opacity-50"
+            title="Build a detailed strategy for these decks"
+          >
+            {refreshing ? "Building…" : "Build plan"}
+          </button>
+        )}
       </div>
 
-      {phaseCoach && (
-        <p className="rounded border border-hud-accent/20 bg-hud-accent/10 px-2 py-1 text-[11px] leading-snug text-hud-accent">
-          {phaseCoach}
-        </p>
-      )}
-
-      {deckStrategy && (
-        <div className="space-y-1.5 rounded border border-slate-700/60 bg-slate-900/40 px-2 py-1.5">
-          <div className="flex items-center justify-between gap-2">
-            <div className="text-[9px] uppercase tracking-wide text-slate-500">
-              Deck strategy
-            </div>
-            <div className="truncate text-[9px] text-slate-500">
-              {deckStrategy.matchup}
-            </div>
-          </div>
-          <p className="text-[10px] leading-relaxed text-slate-200">
-            {deckStrategy.your_plan}
-          </p>
-          <p className="text-[10px] leading-relaxed text-slate-300">
-            {deckStrategy.vs_opponent}
-          </p>
-          {deckStrategy.this_turn.length > 0 && (
-            <div>
-              <div className="mb-0.5 text-[9px] uppercase tracking-wide text-hud-accent/80">
-                This turn
-              </div>
-              <ul className="space-y-0.5">
-                {deckStrategy.this_turn.map((step, i) => (
-                  <li key={i} className="text-[10px] leading-snug text-slate-300">
-                    <span className="mr-1 text-slate-500">{i + 1}.</span>
-                    {step}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-          {deckStrategy.priorities.length > 0 && (
-            <div>
-              <div className="mb-0.5 text-[9px] uppercase tracking-wide text-slate-500">
-                Priorities
-              </div>
-              <ul className="space-y-0.5">
-                {deckStrategy.priorities.slice(0, 4).map((p, i) => (
-                  <li key={i} className="text-[10px] leading-snug text-slate-400">
-                    · {p}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-          {deckStrategy.threats.length > 0 && (
-            <div>
-              <div className="mb-0.5 text-[9px] uppercase tracking-wide text-amber-400/80">
-                Threats
-              </div>
-              <ul className="max-h-16 space-y-0.5 overflow-y-auto">
-                {deckStrategy.threats.slice(0, 5).map((t, i) => (
-                  <li key={i} className="text-[10px] leading-snug text-amber-100/80">
-                    · {t}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-          {deckStrategy.list_notes && deckStrategy.list_notes.length > 0 && (
-            <div>
-              <div className="mb-0.5 text-[9px] uppercase tracking-wide text-hud-accent/80">
-                From your list
-              </div>
-              <ul className="max-h-24 space-y-0.5 overflow-y-auto">
-                {deckStrategy.list_notes.slice(0, 8).map((n, i) => (
-                  <li key={i} className="text-[10px] leading-snug text-slate-300">
-                    · {n}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
-      )}
-
       {paused && (
-        <p className="text-[10px] text-amber-400/90">
-          State confidence is low — options shown are provisional.
+        <p className="text-[10px] text-hud-warn">
+          Not sure what’s on the board — treat this as a guess.
         </p>
       )}
 
-      {strategy ? (
-        <div className="rounded border border-hud-success/30 bg-hud-success/5 px-2 py-1.5">
-          <div className="text-[9px] uppercase tracking-wide text-hud-success/80">
-            Best line
-          </div>
-          <div className="font-mono text-sm text-hud-success">
-            {strategy.action.description}
-          </div>
-          <div className="mt-1 flex gap-3 text-[10px] text-slate-400">
-            <span>
-              Score{" "}
-              <span className="text-hud-accent">{strategy.score.toFixed(1)}</span>
-            </span>
-            <span>
-              Conf{" "}
-              <span className="text-slate-200">
-                {(strategy.confidence * 100).toFixed(0)}%
-              </span>
-            </span>
-          </div>
-          <p className="mt-1 text-[10px] leading-relaxed text-slate-400">
-            {strategy.reasoning}
-          </p>
+      {coachLine || strategy ? (
+        <div className="space-y-1">
+          {coachLine && (
+            <p className="text-[13px] font-semibold leading-snug text-white">
+              <GlossaryText text={coachLine} />
+            </p>
+          )}
+          {strategy && (
+            <p
+              className={`leading-snug ${
+                coachLine ? "text-[11px] text-slate-300" : "text-[13px] font-semibold text-white"
+              }`}
+            >
+              {coachLine ? "Best line: " : ""}
+              <GlossaryText text={tidyCoachLine(strategy.action.description)} />
+            </p>
+          )}
+          {strategy?.reasoning && (
+            <details>
+              <summary className="cursor-pointer select-none text-[10px] text-slate-400">
+                Why
+              </summary>
+              <p className="mt-1 text-[11px] leading-snug text-slate-300">
+                <GlossaryText text={strategy.reasoning} />
+              </p>
+            </details>
+          )}
         </div>
       ) : (
-        <p className="text-xs text-slate-400">Waiting for readable board state…</p>
+        <p className="text-[11px] text-slate-400">Waiting for a game to read…</p>
       )}
 
-      {options.length > 0 && (
-        <div>
-          <div className="mb-1 text-[9px] uppercase tracking-wide text-slate-500">
-            All options this step
-          </div>
-          <ol className="max-h-40 space-y-1 overflow-y-auto">
-            {options.map((opt, i) => (
+      {options.length > 1 && (
+        <details>
+          <summary className="cursor-pointer select-none text-[10px] text-slate-400">
+            Other options ({options.length - 1})
+          </summary>
+          <ol className="mt-1 max-h-40 space-y-1 overflow-y-auto">
+            {options.slice(1).map((opt, i) => (
               <li
                 key={`${opt.action.description}-${i}`}
-                className={`rounded px-2 py-1 text-[10px] ${
-                  i === 0
-                    ? "bg-slate-800/80 text-slate-100"
-                    : "bg-slate-900/40 text-slate-300"
-                }`}
+                className="flex items-start justify-between gap-2 rounded bg-slate-800/60 px-2 py-1 text-[11px] text-slate-200"
               >
-                <div className="flex items-start justify-between gap-2">
-                  <span>
-                    <span className="mr-1 text-slate-500">{i + 1}.</span>
-                    {opt.action.description}
-                  </span>
-                  <span className="shrink-0 font-mono text-hud-accent">
-                    {opt.score.toFixed(1)}
-                  </span>
-                </div>
+                <span>{tidyCoachLine(opt.action.description)}</span>
+                <span className="shrink-0 font-mono text-slate-400">
+                  {opt.score.toFixed(1)}
+                </span>
               </li>
             ))}
           </ol>
-        </div>
+        </details>
+      )}
+
+      {hasPlan && deckStrategy && (
+        <details className="border-t border-slate-700/60 pt-2">
+          <summary className="flex cursor-pointer select-none items-center justify-between gap-2 text-[11px] font-semibold text-slate-300">
+            <span>Game plan</span>
+            <span className="min-w-0 truncate text-[10px] font-normal text-slate-400">
+              {deckStrategy.matchup}
+            </span>
+          </summary>
+          <div className="mt-2 space-y-2">
+            <Section title="Plan">
+              <p className="text-[11px] leading-snug text-slate-200"><GlossaryText text={deckStrategy.your_plan} /></p>
+            </Section>
+            <Section title="Vs opponent">
+              <p className="text-[11px] leading-snug text-slate-300"><GlossaryText text={deckStrategy.vs_opponent} /></p>
+            </Section>
+            {deckStrategy.this_turn.length > 0 && (
+              <Section title="This turn" tone="text-hud-accent">
+                <ol className="space-y-0.5">
+                  {deckStrategy.this_turn.map((step, i) => (
+                    <li key={i} className="text-[11px] leading-snug text-slate-300">
+                      <span className="mr-1 text-slate-500">{i + 1}.</span>
+                      <GlossaryText text={tidyCoachLine(step)} />
+                    </li>
+                  ))}
+                </ol>
+              </Section>
+            )}
+            {deckStrategy.priorities.length > 0 && (
+              <Section title="Priorities">
+                <ul className="space-y-0.5">
+                  {deckStrategy.priorities.slice(0, 4).map((p, i) => (
+                    <li key={i} className="text-[11px] leading-snug text-slate-300">
+                      · <GlossaryText text={p} />
+                    </li>
+                  ))}
+                </ul>
+              </Section>
+            )}
+            {deckStrategy.threats.length > 0 && (
+              <Section title="Threats" tone="text-hud-warn">
+                <ul className="max-h-20 space-y-0.5 overflow-y-auto">
+                  {deckStrategy.threats.slice(0, 5).map((t, i) => (
+                    <li key={i} className="text-[11px] leading-snug text-slate-300">
+                      · <GlossaryText text={t} />
+                    </li>
+                  ))}
+                </ul>
+              </Section>
+            )}
+            {deckStrategy.list_notes && deckStrategy.list_notes.length > 0 && (
+              <Section title="From your list">
+                <ul className="max-h-28 space-y-0.5 overflow-y-auto">
+                  {deckStrategy.list_notes.slice(0, 8).map((n, i) => (
+                    <li key={i} className="text-[11px] leading-snug text-slate-300">
+                      · <GlossaryText text={n} />
+                    </li>
+                  ))}
+                </ul>
+              </Section>
+            )}
+            {onRefresh && (
+              <button
+                type="button"
+                onClick={onRefresh}
+                disabled={refreshing}
+                className="rounded border border-slate-600/60 px-2 py-0.5 text-[10px] text-slate-300 hover:bg-slate-800/60 disabled:opacity-50"
+                title="Rebuild detailed strategy for these decks"
+              >
+                {refreshing ? "Refreshing\u2026" : "Refresh plan"}
+              </button>
+            )}
+          </div>
+        </details>
       )}
     </div>
   );
