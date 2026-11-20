@@ -45,3 +45,28 @@ test("duplicate card IDs use distinct instance keys", async () => {
   assert.equal(dupes.length, 2);
   assert.notEqual(dupes[0]?.instance_key, dupes[1]?.instance_key);
 });
+
+test("turn owner is null when the page does not say", async () => {
+  const { document } = parseHTML(fixture);
+  const { extractOneSimulatorSnapshot } = await import("../dist/adapters/onesimulator/extract.js");
+  const snap = extractOneSimulatorSnapshot(document);
+  assert.equal(snap.active_player, null);
+});
+
+test("active player is read from the board's turn wording", async () => {
+  const { extractActivePlayer } = await import("../dist/adapters/onesimulator/extract.js");
+  const make = (t) => parseHTML(`<div class="game-board-shell">${t}</div>`).document;
+  assert.equal(extractActivePlayer(make("Opponent's Turn")), "opponent");
+  assert.equal(extractActivePlayer(make("Your turn")), "self");
+  assert.equal(extractActivePlayer(make("Phase: Main")), null);
+});
+
+test("game over and its result are read only once the game has ended", async () => {
+  const { extractGameOutcome } = await import("../dist/adapters/onesimulator/extract.js");
+  const make = (t) => parseHTML(`<div class="game-board-shell">${t}</div>`).document;
+  assert.deepEqual(extractGameOutcome(make("Phase: main. This card can win the game")), { over: false, result: null });
+  assert.deepEqual(extractGameOutcome(make("Phase: game-over Victory")), { over: true, result: "win" });
+  assert.deepEqual(extractGameOutcome(make("Phase: game-over You lost")), { over: true, result: "loss" });
+  assert.deepEqual(extractGameOutcome(make("Phase: game-over Opponent conceded")), { over: true, result: "win" });
+  assert.deepEqual(extractGameOutcome(make("Phase: game-over")), { over: true, result: null });
+});

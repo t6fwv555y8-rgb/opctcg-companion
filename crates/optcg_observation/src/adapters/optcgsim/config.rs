@@ -6,6 +6,8 @@ use super::regions::RegionConfig;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ObservationMode {
+    /// macOS: watch the simulator's window and read its log panel and board.
+    MacScreenReader,
     StructuredLog,
     VisualFallback,
     ReplayOnly,
@@ -16,6 +18,7 @@ pub enum ObservationMode {
 impl ObservationMode {
     pub fn label(&self) -> String {
         match self {
+            Self::MacScreenReader => "OPTCGSim · LIVE — SCREEN READER".into(),
             Self::StructuredLog => "OPTCGSim · LIVE — STRUCTURED".into(),
             Self::VisualFallback => "OPTCGSim · LIVE — VISUAL".into(),
             Self::ReplayOnly => "OPTCGSim · REPLAY LOGS ONLY".into(),

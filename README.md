@@ -76,6 +76,37 @@ Walkthrough, real-match setup, and what success looks like: **[docs/MAC_RUN.md](
 
 No display? `./start --terminal` prints the same HUD in the shell.
 
+## Card text and winning-deck data
+
+The coach and the "Compare to winning decks" panel use two downloads, saved in the
+app's data folder (re-run any time, then restart the app or tap "Reload data"):
+
+```bash
+python3 scripts/sync_cards.py   # every card's printed text (OneSimulator + Egman for the newest sets)
+python3 scripts/sync_meta.py    # recent tournament top-cut decklists (Egman; --source limitless is also supported)
+```
+
+Both scripts cache what they download, space out requests, and never store player names.
+
+## OPTCGSim (the desktop simulator)
+
+On a Mac, OPTCGSim is followed live by a **screen reader** (see `docs/LIVE_VALIDATION.md`): it
+needs the Screen Recording permission and Xcode command line tools, reads the Leaders, turn, game
+log, your hand and each side's Characters, and does not yet read life or DON!! counts. Select the
+OPTCGSim source in Settings. Independently of that, the HUD can import from its folder using the
+buttons: **Import my decks from OPTCGSim** (your own
+deck files; the built-in starter decks are skipped and your active deck is not changed) and **Import
+games from OPTCGSim** (your saved combat logs, into *My games*). The logs contain the opponent's
+hand and draws; the importer ignores those and never saves the opponent's player name. Set
+`OPTCG_SIM_DIR` if the simulator keeps its files somewhere else.
+
+## Your own games
+
+The HUD saves each finished match (your Leader, the opponent's Leader, turn count, who went
+first, and the result) to `matches.jsonl` in the app's data folder. It stays on your computer.
+Only things both players could see are recorded, never a hand. If the simulator does not say
+who won, the HUD asks you with one tap. See the **My games** section.
+
 ## Individual Commands
 
 | Command | Description |

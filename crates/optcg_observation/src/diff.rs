@@ -44,7 +44,19 @@ impl SnapshotDiffer {
             }
         }
 
-        if let Some(turn) = snapshot.turn {
+        // Trust the page's own "whose turn" wording. Turn parity is only a
+        // fallback: it is wrong whenever the opponent goes first.
+        let stated = snapshot.active_player.as_deref().and_then(|a| match a {
+            "self" => Some(PlayerId::Player1),
+            "opponent" => Some(PlayerId::Player2),
+            _ => None,
+        });
+        let prev_stated = prev.and_then(|p| p.active_player.as_deref());
+        if let Some(player) = stated {
+            if prev_stated != snapshot.active_player.as_deref() || prev.is_none() {
+                events.push(ObservationEvent::TurnObserved { player, confidence });
+            }
+        } else if let Some(turn) = snapshot.turn {
             let changed = prev.and_then(|p| p.turn) != Some(turn);
             if changed || prev.is_none() {
                 let player = if turn % 2 == 1 {
@@ -127,6 +139,29 @@ impl SnapshotDiffer {
                         });
                     }
                 }
+            }
+        }
+
+        // Report the end of a game once, and again if the result shows up later.
+        // The browser page reports the end as `page_state: "ended"`; the
+        // screen reader sets `game_over` itself.
+        let is_over = |s: &BrowserGameSnapshot| {
+            s.game_over == Some(true) || s.page_state.as_deref() == Some("ended")
+        };
+        if is_over(snapshot) {
+            let was_over = prev.is_some_and(is_over);
+            let result_changed = prev.map(|p| p.result.clone()) != Some(snapshot.result.clone());
+            if !was_over || result_changed {
+                let word = match snapshot.result.as_deref() {
+                    Some("win") => "WIN",
+                    Some("loss") => "LOSS",
+                    _ => "UNKNOWN",
+                };
+                events.push(ObservationEvent::StructuredRaw {
+                    raw: format!("GAME_OVER|{word}"),
+                    source: ObservationSource::BrowserSimulator,
+                    confidence,
+                });
             }
         }
 
@@ -472,6 +507,46 @@ fn zone_from_instance_key(key: Option<&str>) -> Zone {
 mod tests {
     use super::*;
     use crate::bridge_protocol::{BrowserCombatSnapshot, BrowserPlayerSnapshot, ObservedCard};
+
+    #[test]
+    fn game_over_is_reported_once_and_again_when_the_result_appears() {
+        let mut differ = SnapshotDiffer::new(ConfidenceConfig::default());
+        let snap = |over: bool, result: Option<&str>| BrowserGameSnapshot {
+            timestamp: 1,
+            game_over: Some(over),
+            result: result.map(str::to_string),
+            ..Default::default()
+        };
+        let raws = |events: Vec<ObservationEvent>| -> Vec<String> {
+            events
+                .into_iter()
+                .filter_map(|e| match e {
+                    ObservationEvent::StructuredRaw { raw, .. } if raw.starts_with("GAME_OVER") => Some(raw),
+                    _ => None,
+                })
+                .collect()
+        };
+        assert!(raws(differ.diff(&snap(false, None))).is_empty());
+        assert_eq!(raws(differ.diff(&snap(true, None))), vec!["GAME_OVER|UNKNOWN"]);
+        assert!(raws(differ.diff(&snap(true, None))).is_empty(), "no repeat");
+        assert_eq!(raws(differ.diff(&snap(true, Some("win")))), vec!["GAME_OVER|WIN"]);
+    }
+
+    #[test]
+    fn stated_active_player_beats_turn_parity() {
+        let mut differ = SnapshotDiffer::new(ConfidenceConfig::default());
+        // Turn 1 would be Player1 by parity, but the page says it is the opponent's.
+        let events = differ.diff(&BrowserGameSnapshot {
+            timestamp: 1,
+            turn: Some(1),
+            active_player: Some("opponent".into()),
+            ..Default::default()
+        });
+        assert!(events.iter().any(|e| matches!(
+            e,
+            ObservationEvent::TurnObserved { player: PlayerId::Player2, .. }
+        )));
+    }
 
     #[test]
     fn diff_detects_life_change() {

@@ -17,7 +17,7 @@ function BoardList({
 }) {
   return (
     <div>
-      <div className="text-[9px] uppercase tracking-wide text-slate-500">{title}</div>
+      <div className="text-[10px] uppercase tracking-wide text-slate-500">{title}</div>
       <div className="mt-0.5 font-mono text-[10px] text-slate-200">
         Leader {leaderId || "?"} · {leaderPower}
       </div>

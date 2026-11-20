@@ -6,8 +6,15 @@ pub mod deck_list;
 pub mod deck_strategy;
 pub mod engine;
 pub mod error;
+pub mod generator;
+pub mod leader_stats;
+pub mod legality;
+pub mod matches;
 pub mod mcts;
+pub mod optcgsim_log;
+pub mod meta;
 pub mod sim;
+pub mod variants;
 
 pub use beam_search::{BeamSearch, BeamSearchConfig, ScoredAction};
 pub use combat_math::{
@@ -19,3 +26,9 @@ pub use deck_strategy::{DeckProfile, DeckStrategyBrief, DeckStrategyCoach};
 pub use engine::{Action, ActionType, LegalAction, RulesEngine, StrategyRecommendation};
 pub use error::RulesError;
 pub use mcts::{MctsConfig, MctsEngine, MctsResult};
+pub use matches::{summarize, MatchRecord, MatchStats, MatchStore, MatchTracker, Observed, Step, Tally};
+pub use leader_stats::{card_tags, leader_stats, CoreCard, LeaderStats};
+pub use generator::{generatable_leaders, generate, GeneratedCard, GeneratedDeck, DECK_SIZE, MIN_LISTS_TO_GENERATE};
+pub use variants::{cluster, closest, Cluster, VariantInfo};
+pub use legality::{BanList, PairBan, Violation};
+pub use meta::{CardAdvice, DeckComparison, LeaderCount, MetaData, MIN_LISTS_FOR_ADVICE};

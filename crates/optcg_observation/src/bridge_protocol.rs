@@ -17,6 +17,12 @@ pub struct BrowserGameSnapshot {
     pub self_player: Option<BrowserPlayerSnapshot>,
     pub opponent: Option<BrowserPlayerSnapshot>,
     pub combat: Option<BrowserCombatSnapshot>,
+    /// True while the page shows the game-over state.
+    #[serde(default)]
+    pub game_over: Option<bool>,
+    /// "win" or "loss" from the HUD player's side, when the page says so.
+    #[serde(default)]
+    pub result: Option<String>,
     pub diagnostics: Option<AdapterDiagnostics>,
 }
 

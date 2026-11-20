@@ -13,14 +13,20 @@ const OPTIONS: { value: SourceSelectionKind; label: string }[] = [
   { value: "replay", label: "Replay" },
 ];
 
+const DEV = Boolean((import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV);
+
+// Mock and Replay are test feeds; regular players only need real games.
+const TEST_SOURCES: SourceSelectionKind[] = ["mock", "replay"];
+
 export function SourceSelector({ observation, onSelect }: Props) {
   const current = observation?.selection ?? "auto";
+  const options = OPTIONS.filter((o) => DEV || !TEST_SOURCES.includes(o.value));
 
   return (
     <div className="hud-panel p-3">
       <div className="hud-title">Game Source</div>
       <div className="mt-2 grid grid-cols-2 gap-1">
-        {OPTIONS.map((opt) => (
+        {options.map((opt) => (
           <button
             key={opt.value}
             onClick={() => onSelect(opt.value)}

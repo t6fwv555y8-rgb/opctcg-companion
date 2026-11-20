@@ -126,6 +126,30 @@ impl ObservationReconciler {
                     confidence,
                 });
             }
+            if let Some(word) = raw.strip_prefix("GAME_OVER|") {
+                session.state.outcome = Some(match word {
+                    "WIN" => "win".to_string(),
+                    "LOSS" => "loss".to_string(),
+                    _ => "over".to_string(),
+                });
+                return Ok(ReconcileOutcome {
+                    applied: true,
+                    game_events: vec![],
+                    corrected: false,
+                    rejection_reason: None,
+                    confidence,
+                });
+            }
+            if raw == "COMBAT_CLEARED" {
+                session.state.combat = optcg_core::CombatState::default();
+                return Ok(ReconcileOutcome {
+                    applied: true,
+                    game_events: vec![],
+                    corrected: false,
+                    rejection_reason: None,
+                    confidence,
+                });
+            }
             if let Some((player_idx, card_id)) = parse_note_card_raw(raw) {
                 if let Some(p) = session.state.player_mut(player_idx) {
                     p.note_card(&card_id);
@@ -595,6 +619,69 @@ mod tests {
         assert_eq!(you.hand[0].card_id, "ST01-007");
         assert_eq!(you.hand[1].card_id, "ST01-013");
         assert!(you.known_cards.iter().any(|c| c == "ST01-007"));
+    }
+
+    #[test]
+    fn an_opponent_attack_starts_combat_against_you_and_clears_after() {
+        let mut reconciler = ObservationReconciler::default();
+        let mut session = GameSession::new(ObservationSource::BrowserSimulator);
+        let attack = ObservationEvent::AttackObserved {
+            attacker: None,
+            attacker_player: Some(PlayerId::Player2),
+            attacker_card_id: Some("ST01-002".into()),
+            target: Some(optcg_core::AttackTarget::Leader { player: PlayerId::Player1 }),
+            observed_power: Some(6000),
+            confidence: 0.9,
+        };
+        assert!(reconciler.reconcile(&mut session, &attack).unwrap().applied);
+        assert!(session.state.combat.active);
+        assert_eq!(session.state.combat.attacker_player, Some(1));
+        assert_eq!(session.state.combat.target_player, Some(0));
+
+        let clear = ObservationEvent::StructuredRaw {
+            raw: "COMBAT_CLEARED".into(),
+            source: ObservationSource::BrowserSimulator,
+            confidence: 0.9,
+        };
+        reconciler.reconcile(&mut session, &clear).unwrap();
+        assert!(!session.state.combat.active);
+    }
+
+    #[test]
+    fn game_over_records_the_outcome() {
+        let mut reconciler = ObservationReconciler::default();
+        let mut session = GameSession::new(ObservationSource::BrowserSimulator);
+        for (raw, expected) in [("GAME_OVER|UNKNOWN", "over"), ("GAME_OVER|WIN", "win"), ("GAME_OVER|LOSS", "loss")] {
+            let obs = ObservationEvent::StructuredRaw {
+                raw: raw.into(),
+                source: ObservationSource::BrowserSimulator,
+                confidence: 0.95,
+            };
+            assert!(reconciler.reconcile(&mut session, &obs).unwrap().applied);
+            assert_eq!(session.state.outcome.as_deref(), Some(expected));
+        }
+    }
+
+    #[test]
+    fn hand_structured_raw_replaces_the_visible_hand() {
+        let mut reconciler = ObservationReconciler::default();
+        let mut session = GameSession::new(ObservationSource::BrowserSimulator);
+        for raw in ["HAND|PLAYER_1|ST01-002,ST01-002,ST01-010", "HAND|PLAYER_1|ST01-010"] {
+            let obs = ObservationEvent::StructuredRaw {
+                raw: raw.into(),
+                source: ObservationSource::BrowserSimulator,
+                confidence: 0.95,
+            };
+            assert!(reconciler.reconcile(&mut session, &obs).unwrap().applied);
+        }
+        let hand: Vec<_> = session
+            .state
+            .player_one()
+            .hand
+            .iter()
+            .map(|c| c.card_id.as_str())
+            .collect();
+        assert_eq!(hand, vec!["ST01-010"]);
     }
 
     #[test]

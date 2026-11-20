@@ -309,6 +309,27 @@ impl PlayerState {
         }
     }
 
+    /// The Leader the game actually showed, or `None` while it is still the placeholder.
+    pub fn observed_leader(&self) -> Option<&str> {
+        (self.leader.observed && !self.leader.card_id.is_empty())
+            .then_some(self.leader.card_id.as_str())
+    }
+
+    /// Replace the visible hand with what the simulator currently shows.
+    pub fn set_observed_hand(&mut self, card_ids: &[String]) {
+        let owner = self.player_index;
+        self.hand = card_ids
+            .iter()
+            .map(|id| CardInstance::new(id.clone(), owner, Zone::Hand))
+            .collect();
+        if !card_ids.is_empty() {
+            self.hand_count = card_ids.len() as u32;
+        }
+        for id in card_ids {
+            self.note_card(id);
+        }
+    }
+
     pub fn note_card(&mut self, card_id: &str) {
         if card_id.is_empty() {
             return;
@@ -448,6 +469,9 @@ pub struct GameState {
     /// `queue`, `lobby`, `match`, or `ended` when the live page reports it.
     #[serde(default)]
     pub page_state: String,
+    /// How the match ended from the HUD player's side: "win" or "loss", when known.
+    #[serde(default)]
+    pub outcome: Option<String>,
 }
 
 impl Default for GameState {
@@ -475,6 +499,7 @@ impl GameState {
             timestamp: Utc::now(),
             last_processed_fingerprint: None,
             page_state: String::new(),
+            outcome: None,
         }
     }
 

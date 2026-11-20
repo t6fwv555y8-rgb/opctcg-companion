@@ -213,6 +213,8 @@ fn deck_context(state: &AppState) -> DeckContext {
         opponent_scouting: scouting_brief(state, &opponent),
         matchup: matchup_brief(state, &yours, &opponent),
         last_review: review_brief(state),
+        your_leader_staples: state.winners_summary(&yours.leader_id),
+        opponent_leader_staples: state.winners_summary(&opponent.leader_id),
         plan: strategy.as_ref().map(|brief| brief.your_plan.clone()),
         vs_opponent: strategy.as_ref().map(|brief| brief.vs_opponent.clone()),
     }

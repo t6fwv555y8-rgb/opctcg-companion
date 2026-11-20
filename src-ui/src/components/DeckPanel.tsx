@@ -8,6 +8,7 @@ import type {
   Side as DeckSide,
 } from "../types/game";
 import { DeckCollectionPanel } from "./DeckCollectionPanel";
+import { ImportButton } from "./ImportButton";
 
 interface Props {
   yourDeck: DeckInfoDto | null;
@@ -29,6 +30,8 @@ interface Props {
     side: DeckSide,
     deckId: string | null,
   ) => void | Promise<void>;
+  /** Called after decks are imported, so the list is re-read. */
+  onImported?: () => void;
 }
 
 /// How a reading is described in the HUD, in the same words the coach is given.
@@ -214,6 +217,7 @@ export function DeckPanel({
   onRenameDeck,
   onClearPaste,
   onSetDeckSource,
+  onImported,
 }: Props) {
   const [open, setOpen] = useState(false);
   const manageable =
@@ -261,6 +265,14 @@ export function DeckPanel({
           collection={collection}
           busy={applying}
           onSetDeckSource={onSetDeckSource}
+        />
+      </div>
+
+      <div className="mt-2">
+        <ImportButton
+          command="import_optcgsim_decks"
+          label="Import my decks from OPTCGSim"
+          onDone={onImported}
         />
       </div>
 

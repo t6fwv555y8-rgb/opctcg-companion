@@ -33,7 +33,10 @@ function extractCardFromEl(el: Element | null): ObservedCard | null {
 }
 
 /** Dedicated combat DOM observer — inspects visible battle UI structure. */
-export function observeCombat(doc: Document = document): CombatObservation | null {
+export function observeCombat(
+  doc: Document = document,
+  options: { activePlayerId?: string | null } = {},
+): CombatObservation | null {
   const board = doc.querySelector(SELECTORS.gameBoard);
   if (!board) return null;
 
@@ -56,14 +59,27 @@ export function observeCombat(doc: Document = document): CombatObservation | nul
     return null;
   }
 
-  const attackerEl =
-    selected ??
-    board.querySelector('[data-card-zone="character"][data-card-player-id="0"]') ??
-    board.querySelector('[data-card-zone="leader"][data-card-player-id="0"]');
-
-  const targetEl = board.querySelector(
-    '[data-card-zone="character"][data-card-player-id="1"][class*="ring-"], [data-card-zone="leader"][data-card-player-id="1"][class*="ring-"]',
-  );
+  // Marked cards (selection ring) can be on either side: the attacker belongs
+  // to whoever's turn it is and the target to the other player. Never assume
+  // the attacker is ours, or the opponent's attacks are read as our own.
+  const marked = [
+    ...board.querySelectorAll(
+      '[data-card-zone="character"][class*="ring-"], [data-card-zone="leader"][class*="ring-"], [data-card-zone="character"][class*="border-yellow"], [data-card-zone="leader"][class*="border-yellow"]',
+    ),
+  ];
+  const owner = (el: Element) => el.getAttribute("data-card-player-id");
+  const activePid = options.activePlayerId ?? null;
+  let attackerEl: Element | null = null;
+  let targetEl: Element | null = null;
+  if (activePid) {
+    attackerEl = marked.find((el) => owner(el) === activePid) ?? null;
+    targetEl = marked.find((el) => owner(el) !== activePid) ?? null;
+  } else if (marked.length >= 2) {
+    attackerEl = marked[0];
+    targetEl = marked.find((el) => owner(el) !== owner(marked[0])) ?? null;
+  } else {
+    attackerEl = marked[0] ?? null;
+  }
 
   const text = board.textContent ?? "";
   const powerMatches = [...text.matchAll(/(\d{4,5})\s*(?:→|->|power)/gi)];
@@ -87,11 +103,27 @@ export function observeCombat(doc: Document = document): CombatObservation | nul
   };
 }
 
-export function combatToSnapshot(combat: CombatObservation): BrowserCombatSnapshot {
+function ownerFromKey(
+  card: ObservedCard | null,
+  selfId: string | null,
+): "self" | "opponent" | null {
+  const pid = card?.instance_key?.split(":")[0];
+  if (!pid || pid === "?" || !selfId) return null;
+  return pid === selfId ? "self" : "opponent";
+}
+
+export function combatToSnapshot(
+  combat: CombatObservation,
+  selfId: string | null = null,
+): BrowserCombatSnapshot {
+  const targetZone = combat.target?.instance_key?.split(":")[1];
   return {
     attacker: combat.attacker,
     target: combat.target,
     displayed_power: combat.attackerPower,
+    attacker_player: ownerFromKey(combat.attacker, selfId),
+    target_player: ownerFromKey(combat.target, selfId),
+    target_is_leader: combat.target ? targetZone === "leader" : null,
   };
 }
 
